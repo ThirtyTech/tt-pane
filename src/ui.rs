@@ -6,7 +6,70 @@ use crate::{
 };
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
 use gpui::{prelude::*, *};
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
+
+const PREVIEW_AREA: crate::geometry::Rect = crate::geometry::Rect {
+    x: 0,
+    y: 0,
+    width: 232,
+    height: 144,
+};
+const PREVIEW_DURATION: Duration = Duration::from_millis(180);
+
+struct PositionPreview {
+    action: Action,
+    from: [f32; 4],
+    started: Option<Instant>,
+}
+
+impl PositionPreview {
+    fn target(action: Action) -> [f32; 4] {
+        let rect = action.target(PREVIEW_AREA, PREVIEW_AREA);
+        [
+            rect.x as f32,
+            rect.y as f32,
+            rect.width as f32,
+            rect.height as f32,
+        ]
+    }
+
+    fn new(action: Action) -> Self {
+        Self {
+            action,
+            from: Self::target(action),
+            started: None,
+        }
+    }
+
+    fn sample(&self, now: Instant) -> ([f32; 4], bool) {
+        let target = Self::target(self.action);
+        let Some(started) = self.started else {
+            return (target, false);
+        };
+        let progress =
+            now.saturating_duration_since(started).as_secs_f32() / PREVIEW_DURATION.as_secs_f32();
+        if progress >= 1.0 {
+            return (target, false);
+        }
+        let eased = ease_in_out(progress);
+        (
+            std::array::from_fn(|i| self.from[i] + (target[i] - self.from[i]) * eased),
+            true,
+        )
+    }
+
+    fn select(&mut self, action: Action, now: Instant) {
+        if action != self.action {
+            // Retarget from the in-flight position rather than jumping to its endpoint.
+            self.from = self.sample(now).0;
+            self.action = action;
+            self.started = Some(now);
+        }
+    }
+}
 
 struct Settings {
     draft: Config,
@@ -17,7 +80,7 @@ struct Settings {
     focus: FocusHandle,
     status: String,
     error: bool,
-    selected: Action,
+    preview: PositionPreview,
     window: Option<WindowHandle<Settings>>,
     _tray: tray_icon::TrayIcon,
 }
@@ -49,7 +112,8 @@ impl Settings {
             return;
         }
         self.recording = Some(index);
-        self.selected = self.draft.bindings[index].action;
+        self.preview
+            .select(self.draft.bindings[index].action, Instant::now());
         self.focus.focus(window);
         self.message(
             "Press a shortcut · Escape cancels · Backspace disables",
@@ -220,20 +284,13 @@ fn button(id: impl Into<ElementId>, text: &str) -> Stateful<Div> {
 }
 
 impl Render for Settings {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = self.selected;
-        let preview_area = crate::geometry::Rect {
-            x: 0,
-            y: 0,
-            width: 232,
-            height: 144,
-        };
-        let preview_window = crate::geometry::Rect {
-            width: 124,
-            height: 90,
-            ..preview_area
-        };
-        let preview = selected.target(preview_area, preview_window);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected = self.preview.action;
+        let ([preview_x, preview_y, preview_width, preview_height], animating) =
+            self.preview.sample(Instant::now());
+        if animating {
+            window.request_animation_frame();
+        }
         let rows = self
             .draft
             .bindings
@@ -241,14 +298,28 @@ impl Render for Settings {
             .enumerate()
             .map(|(index, binding)| {
                 let active = self.recording == Some(index);
+                let action = binding.action;
                 div()
+                    .id(("binding-row", index))
+                    .on_hover(cx.listener(move |this, hovered, _, cx| {
+                        if *hovered && this.preview.action != action {
+                            this.preview.select(action, Instant::now());
+                            cx.notify();
+                        }
+                    }))
                     .flex()
                     .items_center()
                     .justify_between()
                     .gap_4()
                     .p_3()
                     .rounded_md()
-                    .bg(rgb(if active { 0x203e48 } else { 0x172231 }))
+                    .bg(rgb(if active {
+                        0x203e48
+                    } else if selected == action {
+                        0x1b3040
+                    } else {
+                        0x172231
+                    }))
                     .child(div().text_sm().child(binding.action.label()))
                     .child(
                         button(
@@ -276,15 +347,16 @@ impl Render for Settings {
                 .child(div().text_xs().text_color(rgb(0x6ee7c0)).child(platform::description())))
             .child(div().flex().flex_1().min_h_0().gap_6()
                 .child(div().id("bindings").flex().flex_col().gap_2().flex_1().overflow_y_scroll()
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).mb_2().child("KEYBOARD SHORTCUTS · CLICK TO RECORD"))
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).mb_2().child("HOVER TO PREVIEW · CLICK A SHORTCUT TO RECORD"))
                     .children(rows))
                 .child(div().id("placement-options").w(px(264.)).flex_shrink_0().min_h_0().overflow_y_scroll().flex().flex_col().gap_4().p_4().rounded_lg().bg(rgb(0x131e2c))
-                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("On the current monitor"))
-                    .child(div().relative().flex_shrink_0().w(px(232.)).h(px(144.)).rounded_md().bg(rgb(0x090f19)).border_1().border_color(rgb(0x354961))
-                        .child(div().absolute().left(px(preview.x as f32)).top(px(preview.y as f32))
-                            .w(px(preview.width as f32)).h(px(preview.height as f32)).rounded_sm()
+                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Position preview"))
+                    .child(div().relative().flex_shrink_0().w(px(PREVIEW_AREA.width as f32)).h(px(PREVIEW_AREA.height as f32)).rounded_md().overflow_hidden().bg(rgb(0x090f19)).border_1().border_color(rgb(0x354961))
+                        .child(div().absolute().left(px(preview_x)).top(px(preview_y))
+                            .w(px(preview_width)).h(px(preview_height)).rounded_sm()
                             .bg(rgb(0x258c78)).border_1().border_color(rgb(0x6ee7c0))))
                     .child(div().text_sm().child(selected.label()))
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Hover a keybinding to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."))
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Repeat shortcut to grow"))
                     .child(div().text_sm().child("Growth per press"))
@@ -435,7 +507,7 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             focus: cx.focus_handle(),
             status,
             error,
-            selected: Action::Left,
+            preview: PositionPreview::new(Action::Left),
             window: None,
             _tray: tray,
         });

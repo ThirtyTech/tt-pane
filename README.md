@@ -16,6 +16,8 @@ sTile starts in the system tray without a settings window. Open **Settings…** 
 
 Closing Settings leaves the tray and shortcuts running. **Quit sTile** in the tray menu exits the app. `stile settings` opens settings immediately when starting an instance. Start one tray instance at a time; single-instance forwarding is not implemented yet.
 
+Hover over a keybinding row to animate **Position preview** to that action's initial placement. The green rectangle represents the window and the dark rectangle represents the monitor's usable space. The preview keeps the last hovered action when the pointer leaves. Clicking the shortcut button starts recording; hovering only changes the illustration.
+
 Windows GUI builds do not allocate a console. macOS uses an accessory app with a menu-bar icon and no Dock icon. Linux uses the StatusNotifierItem D-Bus protocol; enable a tray host such as KDE, a Waybar tray module, or the GNOME AppIndicator extension. No GTK tray event loop is required.
 
 Launch-at-login installation, signed application bundles, and automatic configuration-file watching remain future work.
