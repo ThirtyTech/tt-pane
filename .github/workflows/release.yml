@@ -1,0 +1,127 @@
+name: Release
+
+# Like tt-git: native builds, a tag/version guard, archives and checksums.
+# Manual runs build downloadable artifacts without publishing a release.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Validate release version
+        id: version
+        shell: bash
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[] | select(.name == "stile") | .version')
+          tag="v$version"
+          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "$tag" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo version $version"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, platform: windows-x64 }
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, platform: linux-x64 }
+          - { os: macos-latest, target: aarch64-apple-darwin, platform: macos-arm64 }
+    runs-on: ${{ matrix.os }}
+    env:
+      RELEASE_TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - name: Linux native dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang cmake pkg-config libssl-dev libfontconfig1-dev libfreetype-dev libx11-dev libx11-xcb-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev
+      - name: Link Windows CRT statically
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '"RUSTFLAGS=-C target-feature=+crt-static" >> $env:GITHUB_ENV'
+      - name: Test
+        run: cargo test --workspace --locked --no-default-features --target ${{ matrix.target }}
+      - name: Build desktop app
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package Windows installer and portable ZIP
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
+          ./packaging/windows/package.ps1 -BinDir 'target/${{ matrix.target }}/release' -Tag $env:RELEASE_TAG
+      - name: Verify Windows install, upgrade and uninstall
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./packaging/windows/test-installer.ps1 -BinDir 'target/${{ matrix.target }}/release' -Tag $env:RELEASE_TAG
+      - name: Package Linux / macOS archive
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          name="stile-$RELEASE_TAG-${{ matrix.platform }}"
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/stile" README.md "dist/$name/"
+          tar -czf "dist/$name.tar.gz" -C dist "$name"
+          rm -r "dist/$name"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stile-${{ matrix.platform }}
+          path: |
+            dist/*.zip
+            dist/*-setup.exe
+            dist/*.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: stile-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum stile-* > SHA256SUMS.txt
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          prerelease=()
+          [[ "$GITHUB_REF_NAME" == *-* ]] && prerelease=(--prerelease)
+          {
+            echo '## Install sTile'
+            echo
+            echo 'Windows x64: download the setup.exe for a per-user install, or unpack the portable ZIP.'
+            echo 'Linux x64 / macOS Apple Silicon: unpack the tar.gz and run stile. See README.md in the archive for runtime dependencies and macOS Accessibility access.'
+            echo 'sTile starts in the system tray. Quit an existing instance before upgrading.'
+            echo 'These packages are unsigned. SHA256SUMS.txt contains the SHA-256 checksum of each download.'
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
+            --title "sTile $GITHUB_REF_NAME" --notes-file notes.md --generate-notes "${prerelease[@]}"

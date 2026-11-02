@@ -4,7 +4,20 @@ A keyboard-first window position manager written in Rust, with a GPUI settings s
 
 Every action targets the **active window on its current monitor**, using that monitor's work area. Windows spanning displays use the display with the largest overlap; an off-screen window uses the nearest display. The first Center press resizes the window to 50% of the work area's width and height and centers it on both axes. There is no primary-monitor assumption in the positioning engine.
 
-## Run
+## Install
+
+Download packages from [GitHub Releases](https://github.com/jsheely/sTile/releases). Release packages become available after a matching version tag is published.
+
+- **Windows x64:** run `stile-vVERSION-windows-x64-setup.exe`. It installs for your account without administrator rights, adds a Start menu shortcut, and offers optional desktop and sign-in shortcuts. Launch sTile from Start, then open Settings from its tray menu. The portable ZIP can be unpacked anywhere instead.
+- **Linux x64 / macOS Apple Silicon:** extract the matching `.tar.gz` and run `./stile`. These are standalone executables, not system packages or a macOS app bundle. See the platform prerequisites below; macOS requires Accessibility permission and Linux requires its native libraries and a tray host.
+
+Packages are unsigned. Each release includes `SHA256SUMS.txt`; compare your download with `Get-FileHash -Algorithm SHA256` (Windows), `sha256sum` (Linux), or `shasum -a 256` (macOS).
+
+Quit the existing tray instance before upgrading. On Windows, rerun the installer; deselecting a previously selected shortcut removes it. Uninstall through **Settings → Apps → Installed apps → sTile**. Your configuration in `%APPDATA%\stile\config` is preserved. The installer does not change PATH; use the installed executable's full path for CLI commands. Login startup is available through the Windows installer; other platforms still require manual setup.
+
+For local packaging, release workflow details, and installer artwork, see [packaging/README.md](packaging/README.md).
+
+## Run from source
 
 Install a recent stable Rust toolchain, then:
 
@@ -20,7 +33,7 @@ Hover over a keybinding row to animate **Position preview** to that action's ini
 
 Windows GUI builds do not allocate a console. macOS uses an accessory app with a menu-bar icon and no Dock icon. Linux uses the StatusNotifierItem D-Bus protocol; enable a tray host such as KDE, a Waybar tray module, or the GNOME AppIndicator extension. No GTK tray event loop is required.
 
-Launch-at-login installation, signed application bundles, and automatic configuration-file watching remain future work.
+Signed application bundles, launch-at-login installation outside Windows, and automatic configuration-file watching remain future work.
 
 ### Build prerequisites
 
