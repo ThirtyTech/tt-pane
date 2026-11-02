@@ -200,12 +200,23 @@ pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect) -> Result<Rect> 
     set_size(&window, &size)?;
     let actual_position = read_position(&attribute(&window, "AXPosition")?)?;
     let actual_size = read_size(&attribute(&window, "AXSize")?)?;
-    Ok(Rect {
+    let actual = Rect {
         x: actual_position.x.round() as i32,
         y: actual_position.y.round() as i32,
         width: actual_size.width.round() as i32,
         height: actual_size.height.round() as i32,
-    })
+    };
+    let aligned = current.align_width_result(target, actual);
+    if aligned.x != actual.x {
+        set_position(&window, &CGPoint::new(aligned.x as f64, actual.y as f64))?;
+        let point = read_position(&attribute(&window, "AXPosition")?)?;
+        return Ok(Rect {
+            x: point.x.round() as i32,
+            y: point.y.round() as i32,
+            ..actual
+        });
+    }
+    Ok(actual)
 }
 
 #[cfg(test)]

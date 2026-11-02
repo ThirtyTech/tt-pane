@@ -113,12 +113,31 @@ fn apply_inner(window: HWND, resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect) 
             SWP_NOZORDER | SWP_NOACTIVATE,
         )?;
         GetWindowRect(window, &mut outer)?;
-        Ok(Rect {
+        let actual = Rect {
             x: outer.left + left,
             y: outer.top + top,
             width: outer.right - outer.left - left - right,
             height: outer.bottom - outer.top - top - bottom,
-        })
+        };
+        let aligned = from_rect(visible).align_width_result(target, actual);
+        if aligned.x != actual.x {
+            SetWindowPos(
+                window,
+                None,
+                aligned.x - left,
+                actual.y - top,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            )?;
+            GetWindowRect(window, &mut outer)?;
+            return Ok(Rect {
+                x: outer.left + left,
+                y: outer.top + top,
+                ..actual
+            });
+        }
+        Ok(actual)
     }
 }
 

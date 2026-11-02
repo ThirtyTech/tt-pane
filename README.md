@@ -52,12 +52,22 @@ cargo build --release --no-default-features
 | Ctrl+Alt+8 | Top center (top half) |
 | Ctrl+Alt+9 | Top right quarter |
 | Ctrl+Alt+0 | Fill work area |
+| Ctrl+Alt+- | Shrink width by 25% |
+| Ctrl+Alt+= | Expand width by 25% |
 
-These are number-row keys (Digit0 through Digit9), matching the recorded working 1 and 2 bindings. The recorder also supports distinct numpad keys when explicitly assigned. macOS uses the same Control+Option defaults; Command shortcuts can be recorded too. System and application shortcuts can reserve combinations; choose alternatives where needed. Some applications impose minimum window sizes, so requested bounds are not always achievable.
+The digit shortcuts use number-row keys (Digit0 through Digit9). The minus shortcut uses the `-` key; expansion uses the single key normally labeled `=` and `+`. **Shift is not required**. Ctrl+Alt+Shift+= also expands, unless that combination is explicitly assigned to another action. The recorder also supports distinct numpad keys when explicitly assigned. macOS uses the same Control+Option defaults; Command shortcuts can be recorded too. System and application shortcuts can reserve combinations; choose alternatives where needed. Some applications impose minimum window sizes, so requested bounds are not always achievable.
+
+### Width adjustment
+
+**Ctrl+Alt+-** reduces the current width by 25%; **Ctrl+Alt+=** increases it by 25%. Both preserve height and vertical position. The last matching placement supplies the anchor: left positions keep their left edge, right positions keep their right edge, and centered positions keep their midpoint. For a manually placed window, its horizontal position on the current monitor determines the anchor. Shrinking a bottom-left window moves only its right edge inward.
+
+Repeated presses keep resizing, with no reset cycle. Expansion stops at the available monitor boundary for that anchor, and shrinking stops at the application's minimum width (at least one pixel). Percentages apply to the current width, so shrinking and expanding once are not inverse operations: 1000 → 750 → 938 pixels. Adjust the shared percentage under **Width adjustment → Width change per press** in Settings (1–99%, default 25%). The two-dimensional growth controls below it apply only to repeated positioning shortcuts.
+
+In Position preview, hover a placement first, then Shrink width or Expand width to see how the width changes for that placement. The preview uses the configured width percentage.
 
 ### Repeated shortcuts
 
-Press the same shortcut again on the same window to grow it. By default, each repeat multiplies its width and height by **1.15**, with **two growth steps** before returning to the original placement:
+Press the same positioning shortcut again on the same window to grow it. By default, each repeat multiplies its width and height by **1.15**, with **two growth steps** before returning to the original placement:
 
 **Place → 115% → 132.25% → original placement → repeat.** Percentages describe dimensions, not area; dimensions round to the nearest pixel.
 
@@ -115,6 +125,9 @@ version = 1
 percent = 15
 steps = 2
 
+[width_resize]
+percent = 25
+
 [[bindings]]
 action = "left"
 shortcut = "Ctrl+Alt+1"
@@ -122,20 +135,30 @@ shortcut = "Ctrl+Alt+1"
 [[bindings]]
 action = "top-left"
 shortcut = "Ctrl+Alt+7"
+
+[[bindings]]
+action = "shrink-width"
+shortcut = "Ctrl+Alt+-"
+
+[[bindings]]
+action = "expand-width"
+shortcut = "Ctrl+Alt+="
 ```
 
 ```sh
 stile apply top-left
 stile apply center
+stile apply shrink-width
+stile apply expand-width
 stile config
 stile --config ./my-config.toml
 ```
 
-`apply` acts immediately on the current foreground window and reads the configuration's growth options (or defaults when the file is absent). It does not require GPUI, a tray instance, or global key registration. Repeated commands advance the same cycle; use `--config PATH` to select a configuration and its independent cycle. Older configuration files without `[growth]` use 15% and two steps without changing their bindings. Exported Wayland shortcuts include the selected configuration path, so custom growth settings are retained.
+`apply` acts immediately on the current foreground window and reads the configuration's resize options (or defaults when the file is absent). It does not require GPUI, a tray instance, or global key registration. Repeated positioning commands advance the same growth cycle; width commands resize continually. Use `--config PATH` to select a configuration and its independent state. Older files without `[growth]` use 15% and two steps; missing `[width_resize]` uses 25%. Existing bindings are preserved: add the two width bindings above, record them in Settings, or reset defaults to enable them in an older file. Exported Wayland shortcuts include the selected configuration path and the shifted-plus alias when available.
 
 ## Executable plugin interface
 
-The root `herdr-plugin.toml` follows [Herdr’s executable plugin contract](https://herdr.dev/tui/docs/plugins/): an argv command per action, without a shell wrapper or plugin SDK. It declares all ten positions and a build step for the standalone CLI. For a local checkout:
+The root `herdr-plugin.toml` follows [Herdr’s executable plugin contract](https://herdr.dev/tui/docs/plugins/): an argv command per action, without a shell wrapper or plugin SDK. It declares all ten positions, two width adjustments, and a build step for the standalone CLI. For a local checkout:
 
 ```sh
 cargo build --release --locked --no-default-features --target-dir target/plugin
@@ -164,7 +187,7 @@ GPUI 0.2.2 normally exits after closing its last Windows/X11/Wayland window. The
 
 ## Native tests without Computer Use
 
-Command-level tests spawn the actual binary and verify JSON and exit codes. On Windows, tests create a hidden disposable window, invoke all ten positioning commands and their growth/reset cycles for every attached monitor, and read back bounds with Win32. Each press is a separate CLI process. They cover default 15%/two-step and custom 25%/one-step settings in isolated temporary configurations. They do not activate a window, inject input, or move user windows. This was verified against four attached monitors (280 position checks).
+Command-level tests spawn the actual binary and verify JSON and exit codes. On Windows, tests create a hidden disposable window, invoke all ten positioning commands and their growth/reset cycles for every attached monitor, and read back bounds with Win32. They also repeatedly shrink/expand bottom-left, bottom-right, and centered windows, verifying width-only changes and maximum-width clamping. Each press is a separate CLI process. Coverage includes default and custom growth/width settings in isolated temporary configurations. They do not activate a window, inject input, or move user windows. This was verified against four attached monitors (664 bounds checks).
 
 An opt-in Windows GPU/desktop test verifies windowless tray startup and closing Settings while keeping the process alive:
 

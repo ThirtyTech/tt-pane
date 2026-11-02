@@ -85,6 +85,9 @@ fn binary_positions_disposable_window_on_every_monitor() {
         let path = dir.path().join("config.toml");
         let config = stile::config::Config {
             growth,
+            width_resize: stile::config::WidthResize {
+                percent: if growth.steps == 1 { 40 } else { 25 },
+            },
             ..Default::default()
         };
         config.save(&path).unwrap();
@@ -95,6 +98,7 @@ fn binary_positions_disposable_window_on_every_monitor() {
             path.to_str().unwrap(),
             growth.percent,
             growth.steps,
+            config.width_resize.percent,
         );
     }
 }

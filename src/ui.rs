@@ -21,7 +21,9 @@ const PREVIEW_DURATION: Duration = Duration::from_millis(180);
 
 struct PositionPreview {
     action: Action,
+    placement: Action,
     from: [f32; 4],
+    to: [f32; 4],
     started: Option<Instant>,
 }
 
@@ -39,13 +41,15 @@ impl PositionPreview {
     fn new(action: Action) -> Self {
         Self {
             action,
+            placement: action,
             from: Self::target(action),
+            to: Self::target(action),
             started: None,
         }
     }
 
     fn sample(&self, now: Instant) -> ([f32; 4], bool) {
-        let target = Self::target(self.action);
+        let target = self.to;
         let Some(started) = self.started else {
             return (target, false);
         };
@@ -61,11 +65,31 @@ impl PositionPreview {
         )
     }
 
-    fn select(&mut self, action: Action, now: Instant) {
-        if action != self.action {
+    fn select(&mut self, action: Action, percent: u32, now: Instant) {
+        if !action.adjusts_width() {
+            self.placement = action;
+        }
+        let target = if action.adjusts_width() {
+            let base = self.placement.target(PREVIEW_AREA, PREVIEW_AREA);
+            let rect = base.adjust_width(
+                PREVIEW_AREA,
+                self.placement.horizontal_anchor().unwrap(),
+                percent as i32 * if action == Action::ShrinkWidth { -1 } else { 1 },
+            );
+            [
+                rect.x as f32,
+                rect.y as f32,
+                rect.width as f32,
+                rect.height as f32,
+            ]
+        } else {
+            Self::target(action)
+        };
+        if action != self.action || target != self.to {
             // Retarget from the in-flight position rather than jumping to its endpoint.
             self.from = self.sample(now).0;
             self.action = action;
+            self.to = target;
             self.started = Some(now);
         }
     }
@@ -112,8 +136,11 @@ impl Settings {
             return;
         }
         self.recording = Some(index);
-        self.preview
-            .select(self.draft.bindings[index].action, Instant::now());
+        self.preview.select(
+            self.draft.bindings[index].action,
+            self.draft.width_resize.percent,
+            Instant::now(),
+        );
         self.focus.focus(window);
         self.message(
             "Press a shortcut · Escape cancels · Backspace disables",
@@ -169,6 +196,7 @@ impl Settings {
                 "pagedown" => "PageDown",
                 "home" => "Home",
                 "end" => "End",
+                "+" => "Equal",
                 key => key,
             };
             parts.push(key.to_string());
@@ -303,7 +331,11 @@ impl Render for Settings {
                     .id(("binding-row", index))
                     .on_hover(cx.listener(move |this, hovered, _, cx| {
                         if *hovered && this.preview.action != action {
-                            this.preview.select(action, Instant::now());
+                            this.preview.select(
+                                action,
+                                this.draft.width_resize.percent,
+                                Instant::now(),
+                            );
                             cx.notify();
                         }
                     }))
@@ -358,6 +390,21 @@ impl Render for Settings {
                     .child(div().text_sm().child(selected.label()))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Hover a keybinding to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."))
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap."))
+                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Width adjustment"))
+                    .child(div().text_sm().child("Width change per press"))
+                    .child(div().flex().items_center().justify_between()
+                        .child(button("width-less", "−").on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.width_resize.percent = this.draft.width_resize.percent.saturating_sub(1).max(1);
+                            this.preview.select(this.preview.action, this.draft.width_resize.percent, Instant::now());
+                            this.message("Width adjustment updated. Save to activate.", false, cx);
+                        })))
+                        .child(format!("{}%", self.draft.width_resize.percent))
+                        .child(button("width-more", "+").on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.width_resize.percent = (this.draft.width_resize.percent + 1).min(99);
+                            this.preview.select(this.preview.action, this.draft.width_resize.percent, Instant::now());
+                            this.message("Width adjustment updated. Save to activate.", false, cx);
+                        }))))
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Shrink/Expand width keep height and the left edge, right edge, or center fixed. Repeats keep resizing; expansion stops at the work-area edge. Hover a position first to preview its width adjustment."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Repeat shortcut to grow"))
                     .child(div().text_sm().child("Growth per press"))
                     .child(div().flex().items_center().justify_between()
@@ -392,6 +439,7 @@ impl Render for Settings {
                     this.recording = None;
                     let result = this.resume();
                     this.draft = Config::default();
+                    this.preview.select(this.preview.action, this.draft.width_resize.percent, Instant::now());
                     this.message(result.err().map(|e| format!("{e:#}")).unwrap_or_else(|| "Defaults restored. Save to activate.".into()), false, cx);
                 })))
                 .child(div().flex().gap_3()

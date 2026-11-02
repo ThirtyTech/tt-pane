@@ -11,6 +11,30 @@ pub struct Rect {
     pub height: i32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HorizontalAnchor {
+    Left,
+    Center,
+    Right,
+}
+
+impl HorizontalAnchor {
+    /// Keep the edge on the window's side of the monitor, or its center when centered.
+    pub fn for_window(area: Rect, current: Rect) -> Self {
+        let offset = 2 * i64::from(current.x) + i64::from(current.width)
+            - 2 * i64::from(area.x)
+            - i64::from(area.width);
+        if offset.abs() <= 2 {
+            Self::Center
+        } else if offset < 0 {
+            Self::Left
+        } else {
+            Self::Right
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum Action {
@@ -24,10 +48,12 @@ pub enum Action {
     BottomRight,
     Center,
     Maximize,
+    ShrinkWidth,
+    ExpandWidth,
 }
 
 impl Action {
-    pub const ALL: [Self; 10] = [
+    pub const POSITIONS: [Self; 10] = [
         Self::Left,
         Self::Right,
         Self::Top,
@@ -39,6 +65,36 @@ impl Action {
         Self::Center,
         Self::Maximize,
     ];
+
+    pub const ALL: [Self; 12] = [
+        Self::Left,
+        Self::Right,
+        Self::Top,
+        Self::Bottom,
+        Self::TopLeft,
+        Self::TopRight,
+        Self::BottomLeft,
+        Self::BottomRight,
+        Self::Center,
+        Self::Maximize,
+        Self::ShrinkWidth,
+        Self::ExpandWidth,
+    ];
+
+    pub fn adjusts_width(self) -> bool {
+        matches!(self, Self::ShrinkWidth | Self::ExpandWidth)
+    }
+
+    pub fn horizontal_anchor(self) -> Option<HorizontalAnchor> {
+        match self {
+            Self::Left | Self::TopLeft | Self::BottomLeft => Some(HorizontalAnchor::Left),
+            Self::Right | Self::TopRight | Self::BottomRight => Some(HorizontalAnchor::Right),
+            Self::Top | Self::Bottom | Self::Center | Self::Maximize => {
+                Some(HorizontalAnchor::Center)
+            }
+            Self::ShrinkWidth | Self::ExpandWidth => None,
+        }
+    }
 
     pub fn name(self) -> &'static str {
         match self {
@@ -52,6 +108,8 @@ impl Action {
             Self::BottomRight => "bottom-right",
             Self::Center => "center",
             Self::Maximize => "maximize",
+            Self::ShrinkWidth => "shrink-width",
+            Self::ExpandWidth => "expand-width",
         }
     }
 
@@ -67,14 +125,23 @@ impl Action {
             Self::BottomRight => "Bottom right quarter",
             Self::Center => "Center window",
             Self::Maximize => "Fill work area",
+            Self::ShrinkWidth => "Shrink width",
+            Self::ExpandWidth => "Expand width",
         }
     }
 
-    pub fn target(self, area: Rect, _current: Rect) -> Rect {
+    pub fn target(self, area: Rect, current: Rect) -> Rect {
         let half_w = area.width / 2;
         let half_h = area.height / 2;
         let mut target = area;
         match self {
+            Self::ShrinkWidth | Self::ExpandWidth => {
+                return current.adjust_width(
+                    area,
+                    HorizontalAnchor::for_window(area, current),
+                    if self == Self::ShrinkWidth { -25 } else { 25 },
+                );
+            }
             Self::Center => {
                 target.width = half_w;
                 target.height = half_h;
@@ -146,6 +213,85 @@ impl Action {
 }
 
 impl Rect {
+    /// Preserve a width-only request's anchor when an application enforces size limits.
+    pub fn align_width_result(self, requested: Self, actual: Self) -> Self {
+        if requested.y != self.y
+            || requested.height != self.height
+            || requested.width == self.width
+            || actual.width == requested.width
+            || requested.x == self.x
+        {
+            return actual;
+        }
+        let right = i64::from(self.x) + i64::from(self.width);
+        let x = if i64::from(requested.x) + i64::from(requested.width) == right {
+            right - i64::from(actual.width)
+        } else if (2 * i64::from(requested.x) + i64::from(requested.width)
+            - 2 * i64::from(self.x)
+            - i64::from(self.width))
+        .abs()
+            <= 1
+        {
+            i64::from(self.x) + (i64::from(self.width) - i64::from(actual.width)).div_euclid(2)
+        } else {
+            return actual;
+        };
+        Self {
+            x: x as i32,
+            ..actual
+        }
+    }
+
+    /// Adjust only width, preserving the chosen edge or midpoint and all vertical geometry.
+    pub fn adjust_width(self, area: Rect, anchor: HorizontalAnchor, percent: i32) -> Self {
+        self.adjust_width_from(area, anchor, percent, self)
+    }
+
+    /// Reuse the initial rectangle's anchor to avoid half-pixel drift over many presses.
+    pub fn adjust_width_from(
+        self,
+        area: Rect,
+        anchor: HorizontalAnchor,
+        percent: i32,
+        reference: Rect,
+    ) -> Self {
+        let current_width = i64::from(self.width.max(1));
+        let width = ((current_width * i64::from(100 + percent.clamp(-99, 100)) + 50) / 100).max(1);
+        let width = if percent < 0 {
+            width.min((current_width - 1).max(1))
+        } else if percent > 0 {
+            width.max(current_width + 1)
+        } else {
+            width
+        };
+        let left = i64::from(reference.x);
+        let right = left + i64::from(reference.width);
+        let area_left = i64::from(area.x);
+        let area_right = area_left + i64::from(area.width);
+        let max_width = match anchor {
+            HorizontalAnchor::Left => area_right - left,
+            HorizontalAnchor::Right => right - area_left,
+            HorizontalAnchor::Center => {
+                (left + right - 2 * area_left).min(2 * area_right - left - right)
+            }
+        }
+        .clamp(1, i64::from(i32::MAX));
+        // Expanding an already oversized/off-screen window must not shrink it.
+        let width = if percent > 0 {
+            width.min(max_width).max(current_width)
+        } else {
+            width
+        };
+        let width = width.min(i64::from(i32::MAX)) as i32;
+        let x = match anchor {
+            HorizontalAnchor::Left => reference.x,
+            HorizontalAnchor::Right => (right - i64::from(width)) as i32,
+            HorizontalAnchor::Center => {
+                (left + (i64::from(reference.width) - i64::from(width)).div_euclid(2)) as i32
+            }
+        };
+        Self { x, width, ..self }
+    }
     pub fn intersection(self, other: Self) -> Option<Self> {
         let x = self.x.max(other.x);
         let y = self.y.max(other.y);
@@ -187,6 +333,103 @@ mod tests {
         width: 1920,
         height: 1040,
     };
+    #[test]
+    fn width_adjustments_preserve_vertical_bounds_and_anchor() {
+        for (action, expected_x) in [
+            (Action::BottomLeft, -1920),
+            (Action::BottomRight, -720),
+            (Action::Center, -1320),
+        ] {
+            let base = action.target(LEFT, LEFT);
+            let anchor = action.horizontal_anchor().unwrap();
+            let smaller = base.adjust_width(LEFT, anchor, -25);
+            assert_eq!(
+                smaller,
+                Rect {
+                    x: expected_x,
+                    width: 720,
+                    ..base
+                }
+            );
+            let larger = base.adjust_width(LEFT, anchor, 25);
+            assert_eq!(larger.width, 1200);
+            assert_eq!((larger.y, larger.height), (base.y, base.height));
+            let max = base.adjust_width(LEFT, anchor, 100);
+            assert_eq!((max.x, max.width), (LEFT.x, LEFT.width));
+            assert_eq!(max.adjust_width(LEFT, anchor, 25), max);
+        }
+    }
+
+    #[test]
+    fn offcenter_expansion_stops_at_nearest_available_boundary() {
+        let current = Rect {
+            x: -1700,
+            y: 320,
+            width: 800,
+            height: 500,
+        };
+        for (anchor, expected_x, expected_width) in [
+            (HorizontalAnchor::Left, -1700, 1700),
+            (HorizontalAnchor::Right, -1920, 1020),
+            (HorizontalAnchor::Center, -1920, 1240),
+        ] {
+            let mut window = current;
+            for _ in 0..20 {
+                window = window.adjust_width_from(LEFT, anchor, 25, current);
+            }
+            assert_eq!(
+                window,
+                Rect {
+                    x: expected_x,
+                    width: expected_width,
+                    ..current
+                }
+            );
+        }
+        assert_eq!(
+            HorizontalAnchor::for_window(LEFT, current),
+            HorizontalAnchor::Left
+        );
+        assert_eq!(
+            HorizontalAnchor::for_window(LEFT, Action::Right.target(LEFT, LEFT)),
+            HorizontalAnchor::Right
+        );
+        assert_eq!(
+            HorizontalAnchor::for_window(LEFT, Action::Center.target(LEFT, LEFT)),
+            HorizontalAnchor::Center
+        );
+    }
+
+    #[test]
+    fn width_minimum_and_rounding_do_not_drift_the_anchor() {
+        let base = Rect {
+            x: -1441,
+            y: 51,
+            width: 961,
+            height: 703,
+        };
+        let mut current = base;
+        for _ in 0..80 {
+            current = current.adjust_width_from(LEFT, HorizontalAnchor::Center, -25, base);
+            assert!(current.width >= 1);
+            assert!((2 * current.x + current.width - 2 * base.x - base.width).abs() <= 1);
+            assert_eq!((current.y, current.height), (base.y, base.height));
+        }
+        assert_eq!(current.width, 1);
+        for anchor in [HorizontalAnchor::Right, HorizontalAnchor::Center] {
+            let requested = base.adjust_width(LEFT, anchor, -25);
+            let actual = Rect {
+                width: 850,
+                ..requested
+            };
+            let aligned = base.align_width_result(requested, actual);
+            if anchor == HorizontalAnchor::Right {
+                assert_eq!(aligned.x + aligned.width, base.x + base.width);
+            } else {
+                assert!((2 * aligned.x + aligned.width - 2 * base.x - base.width).abs() <= 1);
+            }
+        }
+    }
     #[test]
     fn growth_preserves_each_anchor_on_negative_origin_monitor() {
         let area = Rect {
@@ -342,7 +585,7 @@ mod tests {
             width: 960,
             height: 520,
         };
-        for previous in Action::ALL {
+        for previous in Action::POSITIONS {
             let current = previous.target(LEFT, LEFT);
             assert_eq!(
                 Action::Center.target(LEFT, current),

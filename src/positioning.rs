@@ -1,7 +1,7 @@
 //! Repeated-position cycles shared by tray shortcuts and standalone CLI processes.
 use crate::{
     config::{Config, Growth},
-    geometry::{Action, Rect},
+    geometry::{Action, HorizontalAnchor, Rect},
     platform,
 };
 use anyhow::{Context, Result};
@@ -22,9 +22,43 @@ struct Cycle {
     last: Rect,
     step: u32,
     growth: Growth,
+    #[serde(default)]
+    width_anchor: Option<HorizontalAnchor>,
 }
 
 impl Cycle {
+    fn adjust_width(
+        previous: Option<&Self>,
+        window: &str,
+        action: Action,
+        area: Rect,
+        current: Rect,
+        config: &Config,
+    ) -> Self {
+        let previous = previous.filter(|p| {
+            p.version == 1 && p.window == window && p.area == area && near(p.last, current)
+        });
+        let anchor = previous
+            .and_then(|p| p.width_anchor.or_else(|| p.action.horizontal_anchor()))
+            .unwrap_or_else(|| HorizontalAnchor::for_window(area, current));
+        let base = previous
+            .filter(|p| p.action.adjusts_width())
+            .map_or(current, |p| p.base);
+        let percent =
+            config.width_resize.percent as i32 * if action == Action::ShrinkWidth { -1 } else { 1 };
+        Self {
+            version: 1,
+            window: window.to_owned(),
+            action,
+            area,
+            base,
+            last: current.adjust_width_from(area, anchor, percent, base),
+            step: 0,
+            growth: config.growth,
+            width_anchor: Some(anchor),
+        }
+    }
+
     fn next(
         previous: Option<&Self>,
         window: &str,
@@ -66,6 +100,7 @@ impl Cycle {
             last,
             step,
             growth,
+            width_anchor: None,
         }
     }
 }
@@ -115,7 +150,11 @@ pub fn apply(config: &Config, path: &Path, action: Action, window: Option<u64>) 
     };
     let mut next = None;
     let actual = platform::apply_with(window, &mut |id, area, current| {
-        let cycle = Cycle::next(previous.as_ref(), id, action, area, current, config.growth);
+        let cycle = if action.adjusts_width() {
+            Cycle::adjust_width(previous.as_ref(), id, action, area, current, config)
+        } else {
+            Cycle::next(previous.as_ref(), id, action, area, current, config.growth)
+        };
         let target = cycle.last;
         next = Some(cycle);
         target
@@ -146,6 +185,76 @@ mod tests {
         width: 800,
         height: 600,
     };
+
+    #[test]
+    fn width_actions_keep_anchor_past_saturation_without_resetting() {
+        let config = Config::default();
+        for placement in [Action::BottomLeft, Action::BottomRight, Action::Center] {
+            let mut cycle = Cycle::next(None, "window", placement, AREA, CURRENT, config.growth);
+            let base = cycle.last;
+            let mut previous_width = base.width;
+            for _ in 0..4 {
+                cycle = Cycle::adjust_width(
+                    Some(&cycle),
+                    "window",
+                    Action::ShrinkWidth,
+                    AREA,
+                    cycle.last,
+                    &config,
+                );
+                assert!(cycle.last.width < previous_width);
+                previous_width = cycle.last.width;
+                assert_eq!((cycle.last.y, cycle.last.height), (base.y, base.height));
+            }
+            for _ in 0..30 {
+                cycle = Cycle::adjust_width(
+                    Some(&cycle),
+                    "window",
+                    Action::ExpandWidth,
+                    AREA,
+                    cycle.last,
+                    &config,
+                );
+                assert!(cycle.last.width >= previous_width);
+                previous_width = cycle.last.width;
+            }
+            assert_eq!(cycle.last.width, AREA.width);
+            cycle = Cycle::adjust_width(
+                Some(&cycle),
+                "window",
+                Action::ShrinkWidth,
+                AREA,
+                cycle.last,
+                &config,
+            );
+            assert_eq!(cycle.last.width, 1500);
+            assert_eq!(cycle.width_anchor, placement.horizontal_anchor());
+            assert_eq!(
+                cycle.last.x,
+                match placement {
+                    Action::BottomLeft => -2000,
+                    Action::BottomRight => -1500,
+                    _ => -1750,
+                }
+            );
+            let moved = Rect {
+                x: -1000,
+                y: 100,
+                width: 800,
+                height: 400,
+            };
+            cycle = Cycle::adjust_width(
+                Some(&cycle),
+                "other-window",
+                Action::ShrinkWidth,
+                AREA,
+                moved,
+                &config,
+            );
+            assert_eq!(cycle.base, moved);
+            assert_eq!(cycle.width_anchor, Some(HorizontalAnchor::Right));
+        }
+    }
 
     #[test]
     fn center_replaces_old_full_height_baseline_then_grows_and_resets() {
@@ -198,7 +307,7 @@ mod tests {
 
     #[test]
     fn two_growth_steps_then_original_for_every_anchor() {
-        for action in Action::ALL {
+        for action in Action::POSITIONS {
             let base = Cycle::next(None, "window", action, AREA, CURRENT, Growth::default());
             let first = Cycle::next(Some(&base), "window", action, AREA, base.last, base.growth);
             let second = Cycle::next(

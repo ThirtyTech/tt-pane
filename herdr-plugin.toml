@@ -67,3 +67,15 @@ id = "maximize"
 title = "Fill work area"
 contexts = ["workspace"]
 command = ["./target/plugin/release/stile", "apply", "maximize", "--json"]
+
+[[actions]]
+id = "shrink-width"
+title = "Shrink width"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "shrink-width", "--json"]
+
+[[actions]]
+id = "expand-width"
+title = "Expand width"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "expand-width", "--json"]

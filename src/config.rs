@@ -21,6 +21,8 @@ pub struct Config {
     pub version: u32,
     #[serde(default)]
     pub growth: Growth,
+    #[serde(default)]
+    pub width_resize: WidthResize,
     pub bindings: Vec<Binding>,
 }
 
@@ -29,6 +31,18 @@ pub struct Config {
 pub struct Growth {
     pub percent: u32,
     pub steps: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WidthResize {
+    pub percent: u32,
+}
+
+impl Default for WidthResize {
+    fn default() -> Self {
+        Self { percent: 25 }
+    }
 }
 
 impl Default for Growth {
@@ -42,10 +56,11 @@ impl Default for Growth {
 
 impl Default for Config {
     fn default() -> Self {
-        let keys = ["1", "2", "8", "5", "7", "9", "4", "6", "3", "0"];
+        let keys = ["1", "2", "8", "5", "7", "9", "4", "6", "3", "0", "-", "="];
         Self {
             version: 1,
             growth: Growth::default(),
+            width_resize: WidthResize::default(),
             bindings: Action::ALL
                 .into_iter()
                 .zip(keys)
@@ -79,6 +94,10 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            (1..=99).contains(&self.width_resize.percent),
+            "Width adjustment percentage must be between 1 and 99"
+        );
         ensure!(
             (1..=100).contains(&self.growth.percent),
             "Growth percentage must be between 1 and 100"
@@ -153,6 +172,7 @@ mod tests {
             }
         );
         assert_eq!(config.bindings[0].shortcut, "Ctrl+Alt+Digit1");
+        assert_eq!(config.width_resize.percent, 25);
         let partial: Config =
             toml::from_str("version = 1\nbindings = []\n[growth]\npercent = 25").unwrap();
         assert_eq!(
@@ -161,6 +181,32 @@ mod tests {
                 percent: 25,
                 steps: 2
             }
+        );
+    }
+
+    #[test]
+    fn width_shortcuts_and_settings_are_valid_and_persist() {
+        let mut config = Config::default();
+        for (action, key) in [
+            (Action::ShrinkWidth, "Minus"),
+            (Action::ExpandWidth, "Equal"),
+        ] {
+            let binding = config.bindings.iter().find(|b| b.action == action).unwrap();
+            let actual: HotKey = binding.shortcut.parse().unwrap();
+            let expected: HotKey = format!("Ctrl+Alt+{key}").parse().unwrap();
+            assert_eq!(actual.id(), expected.id());
+        }
+        for percent in [0, 100] {
+            config.width_resize.percent = percent;
+            assert!(config.validate().is_err());
+        }
+        config.width_resize.percent = 40;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        config.save(&path).unwrap();
+        assert_eq!(
+            Config::load(&path).unwrap().width_resize,
+            config.width_resize
         );
     }
 
@@ -203,7 +249,7 @@ mod tests {
         let path = dir.path().join("config.toml");
         config.save(&path).unwrap();
         config.save(&path).unwrap();
-        assert_eq!(Config::load(&path).unwrap().bindings.len(), 10);
+        assert_eq!(Config::load(&path).unwrap().bindings.len(), 12);
         config.bindings[1].shortcut = "Control+Alt+Digit1".into();
         assert!(config.validate().is_err());
     }
@@ -223,6 +269,9 @@ mod tests {
             assert_eq!(binding.shortcut, format!("Ctrl+Alt+{digit}"));
         }
         for binding in config.bindings {
+            if binding.action.adjusts_width() {
+                continue;
+            }
             let number_row: HotKey = binding.shortcut.parse().unwrap();
             let numpad: HotKey = binding
                 .shortcut
