@@ -2,7 +2,7 @@
 
 A keyboard-first window position manager written in Rust, with a GPUI settings screen and native platform backends.
 
-Every action targets the **active window on its current monitor**, using that monitor's work area. Windows spanning displays use the display with the largest overlap; an off-screen window uses the nearest display. Center preserves the window size unless it is larger than the work area. There is no primary-monitor assumption in the positioning engine.
+Every action targets the **active window on its current monitor**, using that monitor's work area. Windows spanning displays use the display with the largest overlap; an off-screen window uses the nearest display. The first Center press resizes the window to 50% of the work area's width and height and centers it on both axes. There is no primary-monitor assumption in the positioning engine.
 
 ## Run
 
@@ -42,7 +42,7 @@ cargo build --release --no-default-features
 | --- | --- |
 | Ctrl+Alt+1 | Left half |
 | Ctrl+Alt+2 | Right half |
-| Ctrl+Alt+3 | Center without resizing (clamp oversized windows) |
+| Ctrl+Alt+3 | Center at 50% width and 50% height |
 | Ctrl+Alt+4 | Bottom left quarter |
 | Ctrl+Alt+5 | Bottom center (bottom half) |
 | Ctrl+Alt+6 | Bottom right quarter |
@@ -52,6 +52,18 @@ cargo build --release --no-default-features
 | Ctrl+Alt+0 | Fill work area |
 
 These are number-row keys (Digit0 through Digit9), matching the recorded working 1 and 2 bindings. The recorder also supports distinct numpad keys when explicitly assigned. macOS uses the same Control+Option defaults; Command shortcuts can be recorded too. System and application shortcuts can reserve combinations; choose alternatives where needed. Some applications impose minimum window sizes, so requested bounds are not always achievable.
+
+### Repeated shortcuts
+
+Press the same shortcut again on the same window to grow it. By default, each repeat multiplies its width and height by **1.15**, with **two growth steps** before returning to the original placement:
+
+**Place → 115% → 132.25% → original placement → repeat.** Percentages describe dimensions, not area; dimensions round to the nearest pixel.
+
+Corners stay anchored: bottom left grows upward and to the right. Left/right halves grow inward horizontally; top/bottom halves grow inward vertically. Center starts at 50% width and 50% height, grows equally in every direction, and resets to that centered size. For example, Center after a left-half snap reduces the full height to half height. Growth is capped at the current monitor's available work area, so an already full dimension stays full. Fill work area remains full throughout the cycle.
+
+In Settings, use **Growth per press** (1–100%) and **Growth steps before reset** (0–20), then **Save changes**. Zero steps disables growth. Changing the action, target window, monitor work area, or growth settings starts a new cycle. Moving or resizing the window externally also starts a new cycle (allowing two pixels for platform rounding). There is no timeout between presses.
+
+Tray shortcuts, `apply`, Herdr actions, and exported Wayland shortcuts share the same cycle for a configuration file. State is stored in `<config-path>.cycle.json`, with a separate `.cycle.lock` file to serialize concurrent invocations. Deleting the state file resets the cycle. Failed native requests do not advance it. Windows and macOS store observed bounds; X11/Wayland store requested bounds because their operations are asynchronous, so compositor-imposed bounds can restart a cycle.
 
 ## Platforms and limits
 
@@ -97,6 +109,10 @@ The settings screen displays the resolved path. Use `--config PATH` for a differ
 ```toml
 version = 1
 
+[growth]
+percent = 15
+steps = 2
+
 [[bindings]]
 action = "left"
 shortcut = "Ctrl+Alt+1"
@@ -113,7 +129,7 @@ stile config
 stile --config ./my-config.toml
 ```
 
-`apply` acts immediately on the current foreground window; it does not depend on the configuration file, GPUI, a tray instance, or global key registration. It is suitable for shortcuts managed by an existing desktop environment.
+`apply` acts immediately on the current foreground window and reads the configuration's growth options (or defaults when the file is absent). It does not require GPUI, a tray instance, or global key registration. Repeated commands advance the same cycle; use `--config PATH` to select a configuration and its independent cycle. Older configuration files without `[growth]` use 15% and two steps without changing their bindings. Exported Wayland shortcuts include the selected configuration path, so custom growth settings are retained.
 
 ## Executable plugin interface
 
@@ -146,7 +162,7 @@ GPUI 0.2.2 normally exits after closing its last Windows/X11/Wayland window. The
 
 ## Native tests without Computer Use
 
-Command-level tests spawn the actual binary and verify JSON and exit codes. On Windows, tests create a hidden disposable window, invoke all ten positioning commands for every attached monitor, and read back bounds with Win32. They do not activate a window, inject input, or move user windows. This was verified against four attached monitors (40 position checks).
+Command-level tests spawn the actual binary and verify JSON and exit codes. On Windows, tests create a hidden disposable window, invoke all ten positioning commands and their growth/reset cycles for every attached monitor, and read back bounds with Win32. Each press is a separate CLI process. They cover default 15%/two-step and custom 25%/one-step settings in isolated temporary configurations. They do not activate a window, inject input, or move user windows. This was verified against four attached monitors (280 position checks).
 
 An opt-in Windows GPU/desktop test verifies windowless tray startup and closing Settings while keeping the process alive:
 
@@ -160,6 +176,7 @@ The lifecycle test briefly creates its own settings window, closes it with a nat
 
 - `crates/stile-platform/src/geometry.rs`: shared placement math and monitor selection.
 - `config.rs`: versioned TOML, validation, atomic save.
+- `positioning.rs`: shared repeated-action cycles, persisted baseline and cross-process locking.
 - `shortcuts.rs`: native shortcut lifetime, conflict handling, Wayland export.
 - `crates/stile-platform/`: native Windows, macOS, X11, Sway, and Hyprland adapters, plus Windows icon/console interop. The application reexports geometry and platform APIs at their existing paths.
 - `ui.rs`: GPUI settings, shortcut recorder, preview, save/error feedback.

@@ -1,4 +1,4 @@
-use crate::geometry::{Action, Rect, monitor_for};
+use crate::geometry::{Rect, monitor_for};
 use anyhow::{Context, Result, ensure};
 use x11rb::{
     connection::Connection,
@@ -38,7 +38,7 @@ impl X11 {
     }
 }
 
-pub fn apply(action: Action) -> Result<()> {
+pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect) -> Result<Rect> {
     let (connection, screen) = x11rb::connect(None).context("Connect to X11")?;
     let root = connection.setup().roots[screen].root;
     let x = X11 { connection, root };
@@ -123,7 +123,11 @@ pub fn apply(action: Action) -> Result<()> {
             };
         }
     }
-    let target = action.target(area, current);
+    let id = format!(
+        "x11:{}:{root}:{window}",
+        std::env::var("DISPLAY").unwrap_or_default()
+    );
+    let target = resolve(&id, area, current);
     x.message(
         window,
         "_NET_WM_STATE",
@@ -152,5 +156,5 @@ pub fn apply(action: Action) -> Result<()> {
         ],
     )?;
     x.connection.flush()?;
-    Ok(())
+    Ok(target)
 }

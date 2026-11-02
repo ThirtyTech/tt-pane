@@ -1,5 +1,10 @@
 use std::process::Command;
-pub fn binary_positions_disposable_window_on_every_monitor(binary: &str) {
+pub fn binary_positions_disposable_window_on_every_monitor(
+    binary: &str,
+    config: &str,
+    percent: u32,
+    steps: u32,
+) {
     use crate::geometry::{Action, Rect};
     use std::time::{Duration, Instant};
     use windows::{
@@ -88,6 +93,12 @@ pub fn binary_positions_disposable_window_on_every_monitor(binary: &str) {
                     width: 320,
                     height: 240,
                 };
+                // Reproduce left-half -> Center: Center must reduce the full height.
+                let current = if action == Action::Center {
+                    Action::Left.target(area, current)
+                } else {
+                    current
+                };
                 SetWindowPos(
                     window.0,
                     None,
@@ -98,62 +109,77 @@ pub fn binary_positions_disposable_window_on_every_monitor(binary: &str) {
                     SWP_NOACTIVATE | SWP_NOZORDER,
                 )
                 .unwrap();
-                let expected = action.target(area, current);
-                let mut child = Command::new(binary)
-                    .args([
-                        "apply",
-                        action.name(),
-                        "--window",
-                        &(window.0.0 as usize).to_string(),
-                        "--json",
-                    ])
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped())
-                    .spawn()
-                    .unwrap();
-                let deadline = Instant::now() + Duration::from_secs(10);
-                loop {
-                    // SetWindowPos can send messages to the owner thread. Pump that
-                    // thread while the external CLI process executes the native call.
-                    let mut message = MSG::default();
-                    while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
-                        let _ = TranslateMessage(&message);
-                        DispatchMessageW(&message);
+                let base = action.target(area, current);
+                for step in 0..=steps + 1 {
+                    let expected = if step == steps + 1 || step == 0 {
+                        base
+                    } else {
+                        action.grown_target(
+                            area,
+                            base,
+                            (1.0 + f64::from(percent) / 100.0).powi(step as i32),
+                        )
+                    };
+                    let mut child = Command::new(binary)
+                        .args([
+                            "--config",
+                            config,
+                            "apply",
+                            action.name(),
+                            "--window",
+                            &(window.0.0 as usize).to_string(),
+                            "--json",
+                        ])
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                        .unwrap();
+                    let deadline = Instant::now() + Duration::from_secs(10);
+                    loop {
+                        // SetWindowPos can send messages to the owner thread. Pump that
+                        // thread while the external CLI process executes the native call.
+                        let mut message = MSG::default();
+                        while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                            let _ = TranslateMessage(&message);
+                            DispatchMessageW(&message);
+                        }
+                        if child.try_wait().unwrap().is_some() {
+                            break;
+                        }
+                        if Instant::now() > deadline {
+                            let _ = child.kill();
+                            panic!("CLI positioning timed out");
+                        }
+                        std::thread::sleep(Duration::from_millis(2));
                     }
-                    if child.try_wait().unwrap().is_some() {
-                        break;
-                    }
-                    if Instant::now() > deadline {
-                        let _ = child.kill();
-                        panic!("CLI positioning timed out");
-                    }
-                    std::thread::sleep(Duration::from_millis(2));
+                    let output = child.wait_with_output().unwrap();
+                    assert!(
+                        output.status.success(),
+                        "{}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                    let response: serde_json::Value =
+                        serde_json::from_slice(&output.stdout).unwrap();
+                    assert_eq!(response["ok"], true);
+                    let mut actual = RECT::default();
+                    GetWindowRect(window.0, &mut actual).unwrap();
+                    assert_eq!(
+                        Rect {
+                            x: actual.left,
+                            y: actual.top,
+                            width: actual.right - actual.left,
+                            height: actual.bottom - actual.top
+                        },
+                        expected,
+                        "{action:?}, growth step {step} on {area:?}"
+                    );
                 }
-                let output = child.wait_with_output().unwrap();
-                assert!(
-                    output.status.success(),
-                    "{}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-                assert_eq!(response["ok"], true);
-                let mut actual = RECT::default();
-                GetWindowRect(window.0, &mut actual).unwrap();
-                assert_eq!(
-                    Rect {
-                        x: actual.left,
-                        y: actual.top,
-                        width: actual.right - actual.left,
-                        height: actual.bottom - actual.top
-                    },
-                    expected,
-                    "{action:?} on {area:?}"
-                );
             }
         }
         eprintln!(
-            "Verified {} actions on {} monitors through the CLI",
+            "Verified {} actions, {} growth steps plus reset, on {} monitors through separate CLI invocations",
             Action::ALL.len(),
+            steps,
             monitors.len()
         );
         if !previous.is_invalid() {

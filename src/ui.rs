@@ -181,7 +181,12 @@ impl Settings {
             } else {
                 anyhow::bail!("Start sTile inside Sway or Hyprland, or use the export command")
             };
-            let text = wayland_bindings(&self.active, compositor, &std::env::current_exe()?)?;
+            let text = wayland_bindings(
+                &self.active,
+                compositor,
+                &std::env::current_exe()?,
+                Some(&std::path::absolute(&self.path)?),
+            )?;
             let path = self.path.with_file_name(format!("stile-{compositor}.conf"));
             std::fs::create_dir_all(path.parent().unwrap())?;
             std::fs::write(&path, text)?;
@@ -273,15 +278,38 @@ impl Render for Settings {
                 .child(div().id("bindings").flex().flex_col().gap_2().flex_1().overflow_y_scroll()
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).mb_2().child("KEYBOARD SHORTCUTS · CLICK TO RECORD"))
                     .children(rows))
-                .child(div().w(px(264.)).flex().flex_col().gap_4().p_4().rounded_lg().bg(rgb(0x131e2c))
+                .child(div().id("placement-options").w(px(264.)).flex_shrink_0().min_h_0().overflow_y_scroll().flex().flex_col().gap_4().p_4().rounded_lg().bg(rgb(0x131e2c))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("On the current monitor"))
-                    .child(div().relative().w(px(232.)).h(px(144.)).rounded_md().bg(rgb(0x090f19)).border_1().border_color(rgb(0x354961))
+                    .child(div().relative().flex_shrink_0().w(px(232.)).h(px(144.)).rounded_md().bg(rgb(0x090f19)).border_1().border_color(rgb(0x354961))
                         .child(div().absolute().left(px(preview.x as f32)).top(px(preview.y as f32))
                             .w(px(preview.width as f32)).h(px(preview.height as f32)).rounded_sm()
                             .bg(rgb(0x258c78)).border_1().border_color(rgb(0x6ee7c0))))
                     .child(div().text_sm().child(selected.label()))
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap."))
-                    .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Center keeps the window’s size, clamped to fit the monitor."))
+                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Repeat shortcut to grow"))
+                    .child(div().text_sm().child("Growth per press"))
+                    .child(div().flex().items_center().justify_between()
+                        .child(button("growth-less", "−").on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.growth.percent = this.draft.growth.percent.saturating_sub(1).max(1);
+                            this.message("Growth updated. Save to activate.", false, cx);
+                        })))
+                        .child(format!("{}%", self.draft.growth.percent))
+                        .child(button("growth-more", "+").on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.growth.percent = (this.draft.growth.percent + 1).min(100);
+                            this.message("Growth updated. Save to activate.", false, cx);
+                        }))))
+                    .child(div().text_sm().child("Growth steps before reset"))
+                    .child(div().flex().items_center().justify_between()
+                        .child(button("steps-less", "−").on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.growth.steps = this.draft.growth.steps.saturating_sub(1);
+                            this.message("Growth updated. Save to activate.", false, cx);
+                        })))
+                        .child(if self.draft.growth.steps == 0 { "Off".to_owned() } else { self.draft.growth.steps.to_string() })
+                        .child(button("steps-more", "+").on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.growth.steps = (this.draft.growth.steps + 1).min(20);
+                            this.message("Growth updated. Save to activate.", false, cx);
+                        }))))
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("First press places the window. Repeats multiply its size, keeping the corner or edge anchored. Center starts at 50% width and height, then grows equally in every direction. Growth stops at the work area; 0 steps turns it off."))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child(if platform::is_wayland() {
                         "Wayland: save, export shortcuts, then include the file in your compositor config. Sway and Hyprland are supported."
                     } else { "Closing settings keeps sTile running in the tray. Use the tray menu to quit." }))
@@ -453,7 +481,12 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                                 if let Some(action) =
                                     this.shortcuts.as_ref().and_then(|s| s.action(event.id))
                                 {
-                                    match platform::apply(action) {
+                                    match crate::positioning::apply(
+                                        &this.active,
+                                        &this.path,
+                                        action,
+                                        None,
+                                    ) {
                                         Ok(()) => this.message(
                                             format!("Positioned: {}", action.label()),
                                             false,

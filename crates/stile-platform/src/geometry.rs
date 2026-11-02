@@ -70,14 +70,14 @@ impl Action {
         }
     }
 
-    pub fn target(self, area: Rect, current: Rect) -> Rect {
+    pub fn target(self, area: Rect, _current: Rect) -> Rect {
         let half_w = area.width / 2;
         let half_h = area.height / 2;
         let mut target = area;
         match self {
             Self::Center => {
-                target.width = current.width.min(area.width);
-                target.height = current.height.min(area.height);
+                target.width = half_w;
+                target.height = half_h;
                 target.x += (area.width - target.width) / 2;
                 target.y += (area.height - target.height) / 2;
             }
@@ -116,6 +116,32 @@ impl Action {
             }
         }
         target
+    }
+
+    /// Scale the original placement while keeping its corner/edge/center anchored.
+    /// Dimensions are independently capped at the current monitor's work area.
+    pub fn grown_target(self, area: Rect, base: Rect, multiplier: f64) -> Rect {
+        // Avoid rounding exact half-pixels down due to accumulated binary float error.
+        let width = ((f64::from(base.width) * multiplier + 1e-9).round() as i32)
+            .clamp(1, area.width.max(1));
+        let height = ((f64::from(base.height) * multiplier + 1e-9).round() as i32)
+            .clamp(1, area.height.max(1));
+        let x = match self {
+            Self::Left | Self::TopLeft | Self::BottomLeft => area.x,
+            Self::Right | Self::TopRight | Self::BottomRight => area.x + area.width - width,
+            _ => area.x + (area.width - width) / 2,
+        };
+        let y = match self {
+            Self::Top | Self::TopLeft | Self::TopRight => area.y,
+            Self::Bottom | Self::BottomLeft | Self::BottomRight => area.y + area.height - height,
+            _ => area.y + (area.height - height) / 2,
+        };
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 }
 
@@ -161,6 +187,90 @@ mod tests {
         width: 1920,
         height: 1040,
     };
+    #[test]
+    fn growth_preserves_each_anchor_on_negative_origin_monitor() {
+        let area = Rect {
+            x: -2000,
+            y: -1000,
+            width: 2000,
+            height: 1000,
+        };
+        for (action, x, y) in [
+            (Action::TopLeft, -2000, -1000),
+            (Action::TopRight, -1150, -1000),
+            (Action::BottomLeft, -2000, -575),
+            (Action::BottomRight, -1150, -575),
+        ] {
+            assert_eq!(
+                action.grown_target(area, action.target(area, area), 1.15),
+                Rect {
+                    x,
+                    y,
+                    width: 1150,
+                    height: 575
+                }
+            );
+        }
+        for (action, expected) in [
+            (
+                Action::Left,
+                Rect {
+                    x: -2000,
+                    y: -1000,
+                    width: 1150,
+                    height: 1000,
+                },
+            ),
+            (
+                Action::Right,
+                Rect {
+                    x: -1150,
+                    y: -1000,
+                    width: 1150,
+                    height: 1000,
+                },
+            ),
+            (
+                Action::Top,
+                Rect {
+                    x: -2000,
+                    y: -1000,
+                    width: 2000,
+                    height: 575,
+                },
+            ),
+            (
+                Action::Bottom,
+                Rect {
+                    x: -2000,
+                    y: -575,
+                    width: 2000,
+                    height: 575,
+                },
+            ),
+        ] {
+            assert_eq!(
+                action.grown_target(area, action.target(area, area), 1.15),
+                expected
+            );
+        }
+        let current = Rect {
+            width: 800,
+            height: 400,
+            ..area
+        };
+        let base = Action::Center.target(area, current);
+        assert_eq!(
+            Action::Center.grown_target(area, base, 1.15),
+            Rect {
+                x: -1575,
+                y: -788,
+                width: 1150,
+                height: 575
+            }
+        );
+        assert_eq!(Action::Center.grown_target(area, base, 100.0), area);
+    }
     #[test]
     fn quarters_are_relative_to_secondary_work_area() {
         assert_eq!(
@@ -225,32 +335,45 @@ mod tests {
         assert_eq!(monitor_for(LEFT, &[]), None);
     }
     #[test]
-    fn center_preserves_size_and_clamps_oversized_windows() {
-        let current = Rect {
-            x: 0,
-            y: 0,
-            width: 800,
-            height: 600,
+    fn center_resizes_both_dimensions_after_every_placement() {
+        let expected = Rect {
+            x: -1440,
+            y: 340,
+            width: 960,
+            height: 520,
         };
-        assert_eq!(
-            Action::Center.target(LEFT, current),
-            Rect {
-                x: -1360,
-                y: 300,
-                width: 800,
-                height: 600
-            }
-        );
-        assert_eq!(
-            Action::Center.target(
-                LEFT,
-                Rect {
-                    width: 9000,
-                    height: 9000,
-                    ..current
-                }
-            ),
-            LEFT
-        );
+        for previous in Action::ALL {
+            let current = previous.target(LEFT, LEFT);
+            assert_eq!(
+                Action::Center.target(LEFT, current),
+                expected,
+                "after {previous:?}"
+            );
+        }
+        for size in [100, 9000] {
+            assert_eq!(
+                Action::Center.target(
+                    LEFT,
+                    Rect {
+                        width: size,
+                        height: size,
+                        ..LEFT
+                    }
+                ),
+                expected
+            );
+        }
+        let odd = Rect {
+            x: -1921,
+            y: -1001,
+            width: 1921,
+            height: 1001,
+        };
+        let target = Action::Center.target(odd, odd);
+        assert_eq!((target.width, target.height), (960, 500));
+        let left = target.x - odd.x;
+        let top = target.y - odd.y;
+        assert!((left - (odd.width - target.width - left)).abs() <= 1);
+        assert!((top - (odd.height - target.height - top)).abs() <= 1);
     }
 }

@@ -19,7 +19,25 @@ pub struct Binding {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub version: u32,
+    #[serde(default)]
+    pub growth: Growth,
     pub bindings: Vec<Binding>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Growth {
+    pub percent: u32,
+    pub steps: u32,
+}
+
+impl Default for Growth {
+    fn default() -> Self {
+        Self {
+            percent: 15,
+            steps: 2,
+        }
+    }
 }
 
 impl Default for Config {
@@ -27,6 +45,7 @@ impl Default for Config {
         let keys = ["1", "2", "8", "5", "7", "9", "4", "6", "3", "0"];
         Self {
             version: 1,
+            growth: Growth::default(),
             bindings: Action::ALL
                 .into_iter()
                 .zip(keys)
@@ -60,6 +79,14 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            (1..=100).contains(&self.growth.percent),
+            "Growth percentage must be between 1 and 100"
+        );
+        ensure!(
+            self.growth.steps <= 20,
+            "Growth steps must be between 0 and 20 (0 disables growth)"
+        );
         ensure!(
             self.version == 1,
             "Unsupported configuration version {}",
@@ -112,6 +139,62 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn existing_configs_keep_bindings_and_gain_default_growth() {
+        let config: Config = toml::from_str(
+            "version = 1\n[[bindings]]\naction = 'left'\nshortcut = 'Ctrl+Alt+Digit1'",
+        )
+        .unwrap();
+        assert_eq!(
+            config.growth,
+            Growth {
+                percent: 15,
+                steps: 2
+            }
+        );
+        assert_eq!(config.bindings[0].shortcut, "Ctrl+Alt+Digit1");
+        let partial: Config =
+            toml::from_str("version = 1\nbindings = []\n[growth]\npercent = 25").unwrap();
+        assert_eq!(
+            partial.growth,
+            Growth {
+                percent: 25,
+                steps: 2
+            }
+        );
+    }
+
+    #[test]
+    fn growth_limits_and_custom_settings_roundtrip() {
+        let mut config = Config::default();
+        for settings in [
+            Growth {
+                percent: 0,
+                steps: 2,
+            },
+            Growth {
+                percent: 101,
+                steps: 2,
+            },
+            Growth {
+                percent: 15,
+                steps: 21,
+            },
+        ] {
+            config.growth = settings;
+            assert!(config.validate().is_err());
+        }
+        config.growth = Growth {
+            percent: 25,
+            steps: 4,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        config.save(&path).unwrap();
+        assert_eq!(Config::load(&path).unwrap().growth, config.growth);
+        config.growth.steps = 0;
+        config.validate().unwrap();
+    }
     #[test]
     fn defaults_roundtrip_and_duplicates_rejected() {
         let mut config = Config::default();

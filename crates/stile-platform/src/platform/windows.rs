@@ -1,4 +1,4 @@
-use crate::geometry::{Action, Rect};
+use crate::geometry::Rect;
 use anyhow::{Result, ensure};
 use windows::Win32::{
     Foundation::{HWND, RECT},
@@ -12,14 +12,17 @@ use windows::Win32::{
     },
 };
 
-pub fn apply(action: Action) -> Result<()> {
-    // SAFETY: GetForegroundWindow takes no pointers and returns an opaque OS handle.
-    apply_to(action, unsafe { GetForegroundWindow() })
-}
-
-pub fn apply_to(action: Action, window: HWND) -> Result<()> {
+pub fn apply(
+    handle: Option<u64>,
+    resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect,
+) -> Result<Rect> {
+    let window = match handle {
+        Some(handle) => HWND(usize::try_from(handle)? as *mut _),
+        // SAFETY: GetForegroundWindow takes no pointers and returns an opaque OS handle.
+        None => unsafe { GetForegroundWindow() },
+    };
     let _dpi = DpiContext::enter();
-    apply_inner(action, window)
+    apply_inner(window, resolve)
 }
 
 // A thread-bound guard restores DPI awareness on errors and unwinding too.
@@ -52,7 +55,7 @@ impl Drop for DpiContext {
     }
 }
 
-fn apply_inner(action: Action, window: HWND) -> Result<()> {
+fn apply_inner(window: HWND, resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect) -> Result<Rect> {
     // SAFETY: HWNDs are opaque OS identifiers, never dereferenced by Rust. Invalid
     // or expired handles are rejected by Win32. All output buffers below are live,
     // initialized structs with the exact sizes required by their APIs; no pointer
@@ -91,7 +94,10 @@ fn apply_inner(action: Action, window: HWND) -> Result<()> {
             visible = outer;
         }
         let area = from_rect(info.rcWork);
-        let target = action.target(area, from_rect(visible));
+        let mut pid = 0;
+        GetWindowThreadProcessId(window, Some(&mut pid));
+        let id = format!("win32:{pid}:{}", window.0 as usize);
+        let target = resolve(&id, area, from_rect(visible));
         // Account for invisible resize borders so visible edges align with the work area.
         let left = visible.left - outer.left;
         let top = visible.top - outer.top;
@@ -106,7 +112,13 @@ fn apply_inner(action: Action, window: HWND) -> Result<()> {
             target.height + top + bottom,
             SWP_NOZORDER | SWP_NOACTIVATE,
         )?;
-        Ok(())
+        GetWindowRect(window, &mut outer)?;
+        Ok(Rect {
+            x: outer.left + left,
+            y: outer.top + top,
+            width: outer.right - outer.left - left - right,
+            height: outer.bottom - outer.top - top - bottom,
+        })
     }
 }
 

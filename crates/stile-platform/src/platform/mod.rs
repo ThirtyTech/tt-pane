@@ -1,4 +1,4 @@
-use crate::geometry::Action;
+use crate::geometry::{Action, Rect};
 use anyhow::Result;
 
 #[cfg(target_os = "linux")]
@@ -11,28 +11,37 @@ mod macos;
 mod windows;
 
 pub fn apply(action: Action) -> Result<()> {
+    apply_with(None, &mut |_, area, current| action.target(area, current)).map(|_| ())
+}
+
+/// Resolve a target after capturing the native window and its work area.
+/// The backend keeps targeting that same window even if foreground focus changes.
+/// Returns observed bounds on synchronous backends, requested bounds on IPC backends.
+pub fn apply_with(
+    handle: Option<u64>,
+    resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect,
+) -> Result<Rect> {
     #[cfg(target_os = "windows")]
-    return windows::apply(action);
+    return windows::apply(handle, resolve);
+    #[cfg(not(target_os = "windows"))]
+    anyhow::ensure!(
+        handle.is_none(),
+        "Explicit --window targeting currently supports Windows HWNDs only"
+    );
     #[cfg(target_os = "macos")]
-    return macos::apply(action);
+    return macos::apply(resolve);
     #[cfg(target_os = "linux")]
-    return linux::apply(action);
+    return linux::apply(resolve);
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     anyhow::bail!("Unsupported operating system")
 }
 
 /// Explicit native window targeting for automation. HWNDs are Windows-specific.
 pub fn apply_to_window(action: Action, handle: u64) -> Result<()> {
-    #[cfg(target_os = "windows")]
-    {
-        let handle = usize::try_from(handle)?;
-        windows::apply_to(action, ::windows::Win32::Foundation::HWND(handle as *mut _))
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = (action, handle);
-        anyhow::bail!("Explicit --window targeting currently supports Windows HWNDs only")
-    }
+    apply_with(Some(handle), &mut |_, area, current| {
+        action.target(area, current)
+    })
+    .map(|_| ())
 }
 
 pub fn is_wayland() -> bool {

@@ -1,4 +1,4 @@
-use crate::geometry::{Action, Rect};
+use crate::geometry::Rect;
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use std::{
@@ -69,11 +69,15 @@ fn focused(node: &Value, area: Option<Rect>) -> Option<(&Value, Rect)> {
     None
 }
 
-pub fn sway(action: Action) -> Result<()> {
+pub fn sway(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect) -> Result<Rect> {
     let tree = sway_request(4, "")?;
     let (window, area) = focused(&tree, None).context("No focused Sway window/workspace")?;
     let id = window["id"].as_u64().context("Missing Sway container id")?;
-    let target = action.target(area, rect(&window["rect"])?);
+    let identity = format!(
+        "sway:{}:{id}",
+        std::env::var("SWAYSOCK").unwrap_or_default()
+    );
+    let target = resolve(&identity, area, rect(&window["rect"])?);
     let commands = format!(
         "[con_id={id}] fullscreen disable; [con_id={id}] floating enable; [con_id={id}] resize set width {} px height {} px; [con_id={id}] move absolute position {} px {} px",
         target.width, target.height, target.x, target.y
@@ -85,7 +89,7 @@ pub fn sway(action: Action) -> Result<()> {
     for reply in replies {
         ensure!(reply["success"] == true, "Sway rejected action: {reply}");
     }
-    Ok(())
+    Ok(target)
 }
 
 fn hypr_request(command: &str) -> Result<String> {
@@ -111,7 +115,7 @@ fn dispatch(command: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn hyprland(action: Action) -> Result<()> {
+pub fn hyprland(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect) -> Result<Rect> {
     let window: Value = serde_json::from_str(&hypr_request("j/activewindow")?)?;
     let address = window["address"]
         .as_str()
@@ -150,7 +154,11 @@ pub fn hyprland(action: Action) -> Result<()> {
             .as_i64()
             .context("Missing window height")? as i32,
     };
-    let target = action.target(area, current);
+    let id = format!(
+        "hyprland:{}:{address}",
+        std::env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap_or_default()
+    );
+    let target = resolve(&id, area, current);
     // Pin every command to the original window to avoid moving a newly focused app.
     if window["fullscreen"].as_i64().unwrap_or(0) != 0 {
         anyhow::bail!("Exit fullscreen before positioning this Hyprland window");
@@ -164,7 +172,7 @@ pub fn hyprland(action: Action) -> Result<()> {
         "movewindowpixel exact {} {},address:{address}",
         target.x, target.y
     ))?;
-    Ok(())
+    Ok(target)
 }
 
 #[cfg(test)]

@@ -53,10 +53,11 @@ fn run(cli: Cli) -> Result<()> {
             window,
             json,
         }) => {
-            let result = match window {
-                Some(handle) => stile::platform::apply_to_window(action, handle),
-                None => stile::platform::apply(action),
-            };
+            let result = (|| -> Result<()> {
+                let path = cli.config.clone().map_or_else(Config::path, Ok)?;
+                let config = Config::load(&path)?;
+                stile::positioning::apply(&config, &path, action, window)
+            })();
             if json {
                 println!(
                     "{}",
@@ -87,7 +88,12 @@ fn run(cli: Cli) -> Result<()> {
         Some(Command::Config) => print!("{}", toml::to_string_pretty(&config)?),
         Some(Command::Export { compositor }) => print!(
             "{}",
-            stile::shortcuts::wayland_bindings(&config, &compositor, &std::env::current_exe()?)?
+            stile::shortcuts::wayland_bindings(
+                &config,
+                &compositor,
+                &std::env::current_exe()?,
+                Some(&std::path::absolute(&path)?)
+            )?
         ),
         Some(Command::Apply { .. } | Command::Actions) => unreachable!(),
         command @ (None | Some(Command::Settings)) => {

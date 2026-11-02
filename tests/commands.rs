@@ -33,7 +33,12 @@ fn discovery_matches_plugin_manifest_without_loading_config() {
 
 #[test]
 fn invalid_target_returns_json_and_failure_exit_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("config.toml.cycle.json");
+    std::fs::write(&state, "existing cycle").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_stile"))
+        .arg("--config")
+        .arg(dir.path().join("config.toml"))
         .args(["apply", "left", "--window", "0", "--json"])
         .output()
         .unwrap();
@@ -41,12 +46,55 @@ fn invalid_target_returns_json_and_failure_exit_status() {
     let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(response["ok"], false);
     assert!(response["error"].is_string());
+    assert_eq!(std::fs::read_to_string(state).unwrap(), "existing cycle");
+}
+
+#[test]
+fn invalid_growth_config_returns_json_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "version = 1\nbindings = []\n[growth]\npercent = 0").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_stile"))
+        .arg("--config")
+        .arg(path)
+        .args(["apply", "left", "--json"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["ok"], false);
+    assert!(
+        response["error"]
+            .as_str()
+            .unwrap()
+            .contains("Growth percentage")
+    );
 }
 
 #[cfg(target_os = "windows")]
 #[test]
 fn binary_positions_disposable_window_on_every_monitor() {
-    stile_platform::test_support::binary_positions_disposable_window_on_every_monitor(env!(
-        "CARGO_BIN_EXE_stile"
-    ));
+    for growth in [
+        stile::config::Growth::default(),
+        stile::config::Growth {
+            percent: 25,
+            steps: 1,
+        },
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let config = stile::config::Config {
+            growth,
+            ..Default::default()
+        };
+        config.save(&path).unwrap();
+        // Corrupt or obsolete cache content must reset instead of preventing placement.
+        std::fs::write(dir.path().join("config.toml.cycle.json"), "invalid json").unwrap();
+        stile_platform::test_support::binary_positions_disposable_window_on_every_monitor(
+            env!("CARGO_BIN_EXE_stile"),
+            path.to_str().unwrap(),
+            growth.percent,
+            growth.steps,
+        );
+    }
 }

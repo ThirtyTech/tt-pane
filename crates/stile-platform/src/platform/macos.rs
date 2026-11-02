@@ -1,4 +1,4 @@
-use crate::geometry::{Action, Rect, monitor_for};
+use crate::geometry::{Rect, monitor_for};
 use anyhow::{Context, Result, ensure};
 use core_foundation::{
     base::{CFType, CFTypeID, CFTypeRef, TCFType},
@@ -141,7 +141,7 @@ fn set_size(window: &CFType, size: &CGSize) -> Result<()> {
     set_attribute(window, "AXSize", &size_value(size)?)
 }
 
-pub fn apply(action: Action) -> Result<()> {
+pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect) -> Result<Rect> {
     // SAFETY: This process-level query takes no arguments or pointers.
     let trusted = unsafe { AXIsProcessTrusted() } != 0;
     ensure!(
@@ -187,14 +187,25 @@ pub fn apply(action: Action) -> Result<()> {
         .collect();
     let index = monitor_for(current, &frames).context("No monitor found")?;
     let area = convert(screens.objectAtIndex(index).visibleFrame());
-    let target = action.target(area, current);
+    // Include the application PID with the native AX element's identity hash.
+    // SAFETY: window owns a live Core Foundation reference for this synchronous query.
+    let identity = unsafe { core_foundation::base::CFHash(window.as_CFTypeRef()) };
+    let id = format!("ax:{}:{identity}", application.processIdentifier());
+    let target = resolve(&id, area, current);
     let size = CGSize::new(target.width as f64, target.height as f64);
     let point = CGPoint::new(target.x as f64, target.y as f64);
     set_size(&window, &size)?;
     set_position(&window, &point)?;
     // Some applications constrain the first resize against the previous monitor.
     set_size(&window, &size)?;
-    Ok(())
+    let actual_position = read_position(&attribute(&window, "AXPosition")?)?;
+    let actual_size = read_size(&attribute(&window, "AXSize")?)?;
+    Ok(Rect {
+        x: actual_position.x.round() as i32,
+        y: actual_position.y.round() as i32,
+        width: actual_size.width.round() as i32,
+        height: actual_size.height.round() as i32,
+    })
 }
 
 #[cfg(test)]
