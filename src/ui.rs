@@ -428,6 +428,14 @@ impl Render for Settings {
                     .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Focus the nearest window in this direction without moving or resizing it. H: left, J: down, K: up, L: right. Windows only; stops at the edge.")))
                     .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+Shift+8 (*).")))
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap."))
+                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Window focus"))
+                    .child(div().text_sm().child("Include obscured windows"))
+                    .child(button("include-obscured", if self.draft.focus.include_obscured { "On" } else { "Off" })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.focus.include_obscured = !this.draft.focus.include_obscured;
+                            this.message("Window focus updated. Save to activate.", false, cx);
+                        })))
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Off: at least 50% of a window must be on-screen and uncovered. On: also include covered windows. Minimized windows and other virtual desktops stay excluded."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Width adjustment"))
                     .child(div().text_sm().child("Width change per press"))
                     .child(div().flex().items_center().justify_between()

@@ -364,12 +364,29 @@ pub fn set_window_icon(window: &impl raw_window_handle::HasWindowHandle) -> anyh
 }
 
 /// Enumerate in Z-order, excluding hidden/minimized/cloaked and utility windows.
-pub fn focus_window(handle: Option<u64>, action: crate::geometry::Action) -> Result<()> {
+pub fn focus_window(
+    handle: Option<u64>,
+    action: crate::geometry::Action,
+    include_obscured: bool,
+) -> Result<()> {
     use windows::Win32::Foundation::LPARAM;
     use windows::core::BOOL;
     unsafe extern "system" fn collect(window: HWND, data: LPARAM) -> BOOL {
         // SAFETY: EnumWindows synchronously supplies our exclusive live Vec.
         unsafe { &mut *(data.0 as *mut Vec<HWND>) }.push(window);
+        BOOL(1)
+    }
+    unsafe extern "system" fn collect_monitor(
+        _: windows::Win32::Graphics::Gdi::HMONITOR,
+        _: windows::Win32::Graphics::Gdi::HDC,
+        rect: *mut RECT,
+        data: LPARAM,
+    ) -> BOOL {
+        // SAFETY: EnumDisplayMonitors supplies a live RECT and synchronously
+        // invokes this callback with our exclusively borrowed Vec.
+        unsafe {
+            (&mut *(data.0 as *mut Vec<Rect>)).push(from_rect(*rect));
+        }
         BOOL(1)
     }
     let _dpi = DpiContext::enter();
@@ -395,17 +412,27 @@ pub fn focus_window(handle: Option<u64>, action: crate::geometry::Action) -> Res
         let current = from_rect(read_bounds(selected)?.1);
         let mut windows = Vec::<HWND>::new();
         EnumWindows(Some(collect), LPARAM(&mut windows as *mut _ as isize))?;
+        let mut screens = Vec::<Rect>::new();
+        if !include_obscured {
+            ensure!(
+                windows::Win32::Graphics::Gdi::EnumDisplayMonitors(
+                    None,
+                    None,
+                    Some(collect_monitor),
+                    LPARAM(&mut screens as *mut _ as isize)
+                )
+                .as_bool(),
+                "Could not enumerate screens for window visibility"
+            );
+        }
+        let mut above = Vec::new();
         let mut candidates = Vec::new();
         let mut bounds = Vec::new();
         for window in windows {
-            if window == selected
-                || window == GetDesktopWindow()
+            if window == GetDesktopWindow()
                 || window == GetShellWindow()
                 || !IsWindowVisible(window).as_bool()
                 || IsIconic(window).as_bool()
-                || (GetWindowLongPtrW(window, GWL_EXSTYLE) as u32
-                    & (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0))
-                    != 0
             {
                 continue;
             }
@@ -424,8 +451,22 @@ pub fn focus_window(handle: Option<u64>, action: crate::geometry::Action) -> Res
             let Ok((_, rect)) = read_bounds(window) else {
                 continue;
             };
-            candidates.push(window);
-            bounds.push(from_rect(rect));
+            let rect = from_rect(rect);
+            let selectable = window != selected
+                && (GetWindowLongPtrW(window, GWL_EXSTYLE) as u32
+                    & (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0))
+                    == 0;
+            if selectable
+                && crate::visibility::focus_visible(rect, &screens, &above, include_obscured)
+            {
+                candidates.push(window);
+                bounds.push(rect);
+            }
+            // Even the selected window, utilities, and rejected candidates cover
+            // windows beneath them. EnumWindows visits topmost windows first.
+            if !include_obscured {
+                above.push(rect);
+            }
         }
         if let Some(index) = crate::geometry::focus_neighbor(current, &bounds, action) {
             ensure!(

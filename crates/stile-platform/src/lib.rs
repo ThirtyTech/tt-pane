@@ -5,6 +5,8 @@
 
 pub mod geometry;
 mod platform;
+#[cfg(any(windows, test))]
+mod visibility;
 pub use platform::*;
 
 #[cfg(all(windows, feature = "test-support"))]

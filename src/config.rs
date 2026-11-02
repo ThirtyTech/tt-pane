@@ -23,6 +23,8 @@ pub struct Config {
     pub growth: Growth,
     #[serde(default)]
     pub width_resize: WidthResize,
+    #[serde(default)]
+    pub focus: Focus,
     pub bindings: Vec<Binding>,
 }
 
@@ -37,6 +39,12 @@ pub struct Growth {
 #[serde(default, deny_unknown_fields)]
 pub struct WidthResize {
     pub percent: u32,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Focus {
+    pub include_obscured: bool,
 }
 
 impl Default for WidthResize {
@@ -81,6 +89,7 @@ impl Default for Config {
             version: 1,
             growth: Growth::default(),
             width_resize: WidthResize::default(),
+            focus: Focus::default(),
             bindings: Action::ALL
                 .into_iter()
                 .zip(keys)
@@ -405,5 +414,24 @@ mod focus_binding_tests {
             Config::load(&path).unwrap().bindings.len(),
             loaded.bindings.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod focus_visibility_tests {
+    use super::*;
+    #[test]
+    fn visibility_defaults_off_and_roundtrips_both_values() {
+        let old: Config = toml::from_str("version = 1\nbindings = []").unwrap();
+        assert!(!old.focus.include_obscured);
+        assert!(!Config::default().focus.include_obscured);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        for value in [true, false] {
+            let mut config = old.clone();
+            config.focus.include_obscured = value;
+            config.save(&path).unwrap();
+            assert_eq!(Config::load(&path).unwrap().focus.include_obscured, value);
+        }
     }
 }

@@ -87,7 +87,16 @@ In Position preview, hover a placement first, then Shrink width or Expand width 
 
 ### Resize neighboring windows vertically (Windows)
 
-**Ctrl+Alt+H/J/K/L** switches focus left/down/up/right on Windows without moving or resizing windows. Each press selects the nearest window by center distance within a 90-degree cone in that direction, including windows on other monitors. For example, moving right from bottom-left visits a nearby center window before the far-right window. Equal-distance ties prefer the topmost window. Hidden, minimized, cloaked (such as windows on other virtual desktops), and utility/no-activate windows are skipped. Focus stays put when there is no candidate; there is no wraparound. Saved growth and gap state is preserved.
+**Ctrl+Alt+H/J/K/L** switches focus left/down/up/right on Windows without moving or resizing windows. Each press selects the nearest window by center distance within a 90-degree cone in that direction, including windows on other monitors. For example, moving right from bottom-left visits a nearby center window before the far-right window. Equal-distance ties prefer the topmost window. Hidden, minimized, cloaked (such as windows on other virtual desktops), and utility/no-activate windows are skipped. By default, at least **50% of the window's full frame area** must be on-screen and uncovered by windows above it. Exactly 50% qualifies. Overlapping covering windows count only once; off-screen portions and gaps between monitors do not count as visible. This uses rectangular window frames (transparency and shaped-window holes are not modeled).
+
+In **Settings → Window focus**, turn **Include obscured windows** on and save to also navigate to covered or off-screen windows. The toggle defaults to Off, including for existing configurations. Minimized, hidden, cloaked, and utility/no-activate windows remain excluded in either mode. The same setting applies to CLI focus actions:
+
+```toml
+[focus]
+include_obscured = false
+```
+
+Focus stays put when there is no candidate; there is no wraparound. Saved growth and gap state is preserved.
 
 The focus actions are editable in Settings and available as `stile apply focus-left`, `focus-down`, `focus-up`, and `focus-right` (also with `--window HWND --json`). Existing configurations gain missing focus bindings on load; custom or explicitly disabled focus bindings remain unchanged. If a default key is already assigned to another action, the new focus action stays unbound so you can choose a key in Settings. Other platforms report that directional focus is currently Windows-only.
 

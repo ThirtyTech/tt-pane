@@ -103,12 +103,21 @@ pub fn resize_pair(handle: Option<u64>, up: bool) -> Result<()> {
 
 /// Focus a spatial neighbor without changing placement or saved resize state.
 pub fn focus_window(handle: Option<u64>, action: Action) -> Result<()> {
+    focus_window_with_visibility(handle, action, false)
+}
+
+/// Optionally include obscured windows; otherwise require at least 50% visible area.
+pub fn focus_window_with_visibility(
+    handle: Option<u64>,
+    action: Action,
+    include_obscured: bool,
+) -> Result<()> {
     anyhow::ensure!(action.focuses(), "Expected a directional focus action");
     #[cfg(target_os = "windows")]
-    return windows::focus_window(handle, action);
+    return windows::focus_window(handle, action, include_obscured);
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (handle, action);
+        let _ = (handle, action, include_obscured);
         anyhow::bail!("Directional window focus currently supports Windows only")
     }
 }
