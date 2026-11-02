@@ -1,0 +1,69 @@
+id = "dev.stile"
+name = "sTile"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Position the active desktop window on its current monitor"
+platforms = ["linux", "macos", "windows"]
+
+[[build]]
+command = ["cargo", "build", "--release", "--locked", "--no-default-features", "--target-dir", "target/plugin"]
+
+[[actions]]
+id = "left"
+title = "Left half"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "left", "--json"]
+
+[[actions]]
+id = "right"
+title = "Right half"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "right", "--json"]
+
+[[actions]]
+id = "top"
+title = "Top half"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "top", "--json"]
+
+[[actions]]
+id = "bottom"
+title = "Bottom half"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "bottom", "--json"]
+
+[[actions]]
+id = "top-left"
+title = "Top left quarter"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "top-left", "--json"]
+
+[[actions]]
+id = "top-right"
+title = "Top right quarter"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "top-right", "--json"]
+
+[[actions]]
+id = "bottom-left"
+title = "Bottom left quarter"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "bottom-left", "--json"]
+
+[[actions]]
+id = "bottom-right"
+title = "Bottom right quarter"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "bottom-right", "--json"]
+
+[[actions]]
+id = "center"
+title = "Center window"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "center", "--json"]
+
+[[actions]]
+id = "maximize"
+title = "Fill work area"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "maximize", "--json"]

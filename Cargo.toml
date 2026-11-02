@@ -1,0 +1,48 @@
+[package]
+name = "stile"
+version = "0.1.0"
+edition = "2024"
+description = "Keyboard-first native window positioning"
+license = "MIT"
+
+[features]
+default = ["gui"]
+gui = ["dep:gpui", "dep:smol", "dep:tray-icon", "dep:raw-window-handle"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+directories = "6"
+global-hotkey = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+tempfile = "3"
+gpui = { version = "=0.2.2", features = ["keep-alive", "preserve-numpad"], optional = true }
+smol = { version = "2", optional = true }
+tray-icon = { version = "0.26.1", default-features = false, features = ["ksni"], optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_System_Console", "Win32_System_LibraryLoader"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", features = ["randr"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-graphics = "0.24"
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = { version = "0.3", features = ["NSScreen", "NSWorkspace", "NSRunningApplication"] }
+
+[profile.dev]
+debug = 0
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
+
+
+[patch.crates-io]
+gpui = { path = "vendor/gpui" }
+proc-macro-error2 = { path = "vendor/proc-macro-error2" }

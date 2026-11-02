@@ -1,0 +1,515 @@
+use crate::{
+    config::{Binding, Config},
+    geometry::Action,
+    platform,
+    shortcuts::{Shortcuts, wayland_bindings},
+};
+use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
+use gpui::{prelude::*, *};
+use std::{path::PathBuf, time::Duration};
+
+struct Settings {
+    draft: Config,
+    active: Config,
+    path: PathBuf,
+    shortcuts: Option<Shortcuts>,
+    recording: Option<usize>,
+    focus: FocusHandle,
+    status: String,
+    error: bool,
+    selected: Action,
+    window: Option<WindowHandle<Settings>>,
+    _tray: tray_icon::TrayIcon,
+}
+
+impl Settings {
+    fn message(&mut self, text: impl Into<String>, error: bool, cx: &mut Context<Self>) {
+        self.status = text.into();
+        self.error = error;
+        let _ = self._tray.set_tooltip(Some(if error {
+            "sTile — action failed; open Settings for details"
+        } else {
+            "sTile — window shortcuts"
+        }));
+        cx.notify();
+    }
+
+    fn resume(&mut self) -> anyhow::Result<()> {
+        if let Some(shortcuts) = &mut self.shortcuts {
+            shortcuts.replace(&self.active)?;
+        }
+        Ok(())
+    }
+
+    fn record(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(shortcuts) = &mut self.shortcuts
+            && let Err(error) = shortcuts.suspend()
+        {
+            self.message(format!("{error:#}"), true, cx);
+            return;
+        }
+        self.recording = Some(index);
+        self.selected = self.draft.bindings[index].action;
+        self.focus.focus(window);
+        self.message(
+            "Press a shortcut · Escape cancels · Backspace disables",
+            false,
+            cx,
+        );
+    }
+
+    fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self.recording else {
+            return;
+        };
+        cx.stop_propagation();
+        let stroke = &event.keystroke;
+        if stroke.key == "escape" {
+            self.recording = None;
+            match self.resume() {
+                Ok(()) => self.message("Recording canceled", false, cx),
+                Err(e) => self.message(format!("{e:#}"), true, cx),
+            }
+            return;
+        }
+        let shortcut = if stroke.key == "backspace" && !stroke.modifiers.modified() {
+            String::new()
+        } else {
+            let mut parts = Vec::new();
+            if stroke.modifiers.control {
+                parts.push("Ctrl".to_owned());
+            }
+            if stroke.modifiers.alt {
+                parts.push("Alt".to_owned());
+            }
+            if stroke.modifiers.shift {
+                parts.push("Shift".to_owned());
+            }
+            if stroke.modifiers.platform {
+                parts.push("Super".to_owned());
+            }
+            if parts.is_empty() {
+                self.message("Include Ctrl, Alt, Shift, or Super/Command", true, cx);
+                return;
+            }
+            let key = match stroke.key.as_str() {
+                "left" => "ArrowLeft",
+                "right" => "ArrowRight",
+                "up" => "ArrowUp",
+                "down" => "ArrowDown",
+                "space" => "Space",
+                "enter" => "Enter",
+                "tab" => "Tab",
+                "delete" => "Delete",
+                "pageup" => "PageUp",
+                "pagedown" => "PageDown",
+                "home" => "Home",
+                "end" => "End",
+                key => key,
+            };
+            parts.push(key.to_string());
+            parts.join("+")
+        };
+        let mut candidate = self.draft.clone();
+        candidate.bindings[index].shortcut = shortcut;
+        if let Err(error) = candidate.validate() {
+            self.message(format!("{error:#}"), true, cx);
+            return;
+        }
+        self.draft = candidate;
+        self.recording = None;
+        match self.resume() {
+            Ok(()) => self.message(
+                "Shortcut updated. Save to activate your changes.",
+                false,
+                cx,
+            ),
+            Err(error) => self.message(format!("{error:#}"), true, cx),
+        }
+    }
+
+    fn save(&mut self, cx: &mut Context<Self>) {
+        self.recording = None;
+        if self.shortcuts.is_none() {
+            match Shortcuts::new() {
+                Ok(shortcuts) => self.shortcuts = Some(shortcuts),
+                Err(error) => {
+                    self.message(format!("{error:#}"), true, cx);
+                    return;
+                }
+            }
+        }
+        let shortcuts = self.shortcuts.as_mut().unwrap();
+        if let Err(error) = shortcuts.replace(&self.draft) {
+            let _ = self.resume();
+            self.message(format!("{error:#}"), true, cx);
+            return;
+        }
+        if let Err(error) = self.draft.save(&self.path) {
+            let rollback = shortcuts.replace(&self.active);
+            self.message(
+                format!(
+                    "Save failed: {error:#}{}",
+                    rollback
+                        .err()
+                        .map(|e| format!("; restore shortcuts failed: {e:#}"))
+                        .unwrap_or_default()
+                ),
+                true,
+                cx,
+            );
+            return;
+        }
+        self.active = self.draft.clone();
+        self.message(
+            if platform::is_wayland() {
+                "Saved. Export shortcuts and reload your compositor to activate them."
+            } else {
+                "Saved. Your shortcuts are active across all applications."
+            },
+            false,
+            cx,
+        );
+    }
+
+    fn export(&mut self, cx: &mut Context<Self>) {
+        let result = (|| -> anyhow::Result<PathBuf> {
+            let compositor = if std::env::var_os("SWAYSOCK").is_some() {
+                "sway"
+            } else if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
+                "hyprland"
+            } else {
+                anyhow::bail!("Start sTile inside Sway or Hyprland, or use the export command")
+            };
+            let text = wayland_bindings(&self.active, compositor, &std::env::current_exe()?)?;
+            let path = self.path.with_file_name(format!("stile-{compositor}.conf"));
+            std::fs::create_dir_all(path.parent().unwrap())?;
+            std::fs::write(&path, text)?;
+            Ok(path)
+        })();
+        match result {
+            Ok(path) => self.message(
+                format!(
+                    "Exported {}. Include it in your compositor config and reload.",
+                    path.display()
+                ),
+                false,
+                cx,
+            ),
+            Err(error) => self.message(format!("{error:#}"), true, cx),
+        }
+    }
+}
+
+fn button(id: impl Into<ElementId>, text: &str) -> Stateful<Div> {
+    div()
+        .id(id)
+        .px_4()
+        .py_2()
+        .rounded_md()
+        .bg(rgb(0x263549))
+        .text_color(rgb(0xe8eef7))
+        .cursor_pointer()
+        .hover(|style| style.bg(rgb(0x354961)))
+        .child(text.to_owned())
+}
+
+impl Render for Settings {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected = self.selected;
+        let preview_area = crate::geometry::Rect {
+            x: 0,
+            y: 0,
+            width: 232,
+            height: 144,
+        };
+        let preview_window = crate::geometry::Rect {
+            width: 124,
+            height: 90,
+            ..preview_area
+        };
+        let preview = selected.target(preview_area, preview_window);
+        let rows = self
+            .draft
+            .bindings
+            .iter()
+            .enumerate()
+            .map(|(index, binding)| {
+                let active = self.recording == Some(index);
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_4()
+                    .p_3()
+                    .rounded_md()
+                    .bg(rgb(if active { 0x203e48 } else { 0x172231 }))
+                    .child(div().text_sm().child(binding.action.label()))
+                    .child(
+                        button(
+                            ("binding", index),
+                            if active {
+                                "Recording…"
+                            } else if binding.shortcut.is_empty() {
+                                "Disabled"
+                            } else {
+                                &binding.shortcut
+                            },
+                        )
+                        .on_click(
+                            cx.listener(move |this, _, window, cx| this.record(index, window, cx)),
+                        ),
+                    )
+            })
+            .collect::<Vec<_>>();
+        div().track_focus(&self.focus).on_key_down(cx.listener(Self::key_down))
+            .size_full().bg(rgb(0x0e1724)).text_color(rgb(0xe8eef7)).font_family("Segoe UI")
+            .flex().flex_col().p_6().gap_4()
+            .child(div().flex().items_center().justify_between()
+                .child(div().flex().flex_col().gap_1().child(div().text_3xl().font_weight(FontWeight::BOLD).child("sTile"))
+                    .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Your windows. A keystroke away.")))
+                .child(div().text_xs().text_color(rgb(0x6ee7c0)).child(platform::description())))
+            .child(div().flex().flex_1().min_h_0().gap_6()
+                .child(div().id("bindings").flex().flex_col().gap_2().flex_1().overflow_y_scroll()
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).mb_2().child("KEYBOARD SHORTCUTS · CLICK TO RECORD"))
+                    .children(rows))
+                .child(div().w(px(264.)).flex().flex_col().gap_4().p_4().rounded_lg().bg(rgb(0x131e2c))
+                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("On the current monitor"))
+                    .child(div().relative().w(px(232.)).h(px(144.)).rounded_md().bg(rgb(0x090f19)).border_1().border_color(rgb(0x354961))
+                        .child(div().absolute().left(px(preview.x as f32)).top(px(preview.y as f32))
+                            .w(px(preview.width as f32)).h(px(preview.height as f32)).rounded_sm()
+                            .bg(rgb(0x258c78)).border_1().border_color(rgb(0x6ee7c0))))
+                    .child(div().text_sm().child(selected.label()))
+                    .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap."))
+                    .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Center keeps the window’s size, clamped to fit the monitor."))
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child(if platform::is_wayland() {
+                        "Wayland: save, export shortcuts, then include the file in your compositor config. Sway and Hyprland are supported."
+                    } else { "Closing settings keeps sTile running in the tray. Use the tray menu to quit." }))
+                    .child(button("close", "Close settings").on_click(|_, window, _| window.remove_window()))))
+            .child(div().text_sm().text_color(rgb(if self.error { 0xffa59b } else { 0x91a4bb })).child(self.status.clone()))
+            .child(div().flex().items_center().justify_between().gap_3()
+                .child(button("reset", "Reset defaults").on_click(cx.listener(|this, _, _, cx| {
+                    this.recording = None;
+                    let result = this.resume();
+                    this.draft = Config::default();
+                    this.message(result.err().map(|e| format!("{e:#}")).unwrap_or_else(|| "Defaults restored. Save to activate.".into()), false, cx);
+                })))
+                .child(div().flex().gap_3()
+                    .when(platform::is_wayland(), |el| el.child(button("export", "Export shortcuts").on_click(cx.listener(|this, _, _, cx| this.export(cx)))))
+                    .child(button("save", "Save changes").bg(rgb(0x217b68)).on_click(cx.listener(|this, _, _, cx| this.save(cx))))))
+    }
+}
+
+fn show_settings(settings: &Entity<Settings>, cx: &mut App) -> anyhow::Result<()> {
+    if let Some(handle) = settings.read(cx).window
+        && handle
+            .update(cx, |_, window, _| window.activate_window())
+            .is_ok()
+    {
+        cx.activate(true);
+        return Ok(());
+    }
+    let bounds = Bounds::centered(None, size(px(900.), px(820.)), cx);
+    let view = settings.clone();
+    let window = cx.open_window(
+        WindowOptions {
+            titlebar: Some(TitlebarOptions {
+                title: Some("sTile — Keyboard shortcuts".into()),
+                ..Default::default()
+            }),
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_min_size: Some(size(px(760.), px(600.))),
+            app_id: Some("dev.stile.Stile".into()),
+            ..Default::default()
+        },
+        move |window, cx| {
+            view.update(cx, |this, cx| {
+                #[cfg(target_os = "windows")]
+                if let Err(error) = set_windows_icon(window) {
+                    this.message(format!("Could not set window icon: {error:#}"), true, cx);
+                }
+                this.focus.focus(window);
+                cx.observe_window_activation(window, |this, window, cx| {
+                    if !window.is_window_active() && this.recording.take().is_some() {
+                        match this.resume() {
+                            Ok(()) => this.message(
+                                "Recording canceled when settings lost focus",
+                                false,
+                                cx,
+                            ),
+                            Err(e) => this.message(format!("{e:#}"), true, cx),
+                        }
+                    }
+                })
+                .detach();
+            });
+            view
+        },
+    )?;
+    settings.update(cx, |this, _| this.window = Some(window));
+    cx.activate(true);
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn set_windows_icon(window: &Window) -> anyhow::Result<()> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows::{
+        Win32::{
+            Foundation::{HINSTANCE, HWND, LPARAM, WPARAM},
+            System::LibraryLoader::GetModuleHandleW,
+            UI::WindowsAndMessaging::{ICON_BIG, ICON_SMALL, LoadIconW, SendMessageW, WM_SETICON},
+        },
+        core::PCWSTR,
+    };
+    let RawWindowHandle::Win32(handle) = HasWindowHandle::window_handle(window)
+        .map_err(|error| anyhow::anyhow!("{error}"))?
+        .as_raw()
+    else {
+        anyhow::bail!("Expected a native Windows handle");
+    };
+    unsafe {
+        // Resource 101 is the same multi-resolution sTile ICO embedded by build.rs.
+        // LoadIconW returns a shared resource owned by the module, not this window.
+        let module = GetModuleHandleW(None)?;
+        let icon = LoadIconW(Some(HINSTANCE(module.0)), PCWSTR(101usize as *const u16))?;
+        let hwnd = HWND(handle.hwnd.get() as *mut _);
+        for size in [ICON_SMALL, ICON_BIG] {
+            SendMessageW(
+                hwnd,
+                WM_SETICON,
+                Some(WPARAM(size as usize)),
+                Some(LPARAM(icon.0 as isize)),
+            );
+        }
+    }
+    Ok(())
+}
+
+pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Result<()> {
+    // A persistent entity owns the shortcuts and tray independently of any window.
+    let failure = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let result = failure.clone();
+    Application::new().run(move |cx: &mut App| {
+        #[cfg(target_os = "macos")]
+        {
+            use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+            let mtm = objc2::MainThreadMarker::new().expect("GPUI main thread");
+            NSApplication::sharedApplication(mtm)
+                .setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+        }
+        let tray = match crate::tray::create() {
+            Ok(tray) => tray,
+            Err(e) => {
+                *failure.borrow_mut() = Some(e);
+                cx.quit();
+                return;
+            }
+        };
+        for action in Action::ALL {
+            if !config.bindings.iter().any(|b| b.action == action) {
+                config.bindings.push(Binding {
+                    action,
+                    shortcut: String::new(),
+                });
+            }
+        }
+        let mut status = format!("Configuration: {}", path.display());
+        let mut error = false;
+        let shortcuts = match Shortcuts::new() {
+            Ok(mut shortcuts) => {
+                if let Err(e) = shortcuts.replace(&config) {
+                    status = format!("{e:#}");
+                    error = true;
+                }
+                Some(shortcuts)
+            }
+            Err(e) => {
+                status = format!("{e:#}");
+                error = true;
+                None
+            }
+        };
+        if error {
+            let _ = tray.set_tooltip(Some(format!("sTile — {status}")));
+        }
+        let settings = cx.new(|cx| Settings {
+            draft: config.clone(),
+            active: config,
+            path,
+            shortcuts,
+            recording: None,
+            focus: cx.focus_handle(),
+            status,
+            error,
+            selected: Action::Left,
+            window: None,
+            _tray: tray,
+        });
+        let on_close = settings.clone();
+        cx.on_window_closed(move |cx| {
+            if cx.windows().is_empty() {
+                on_close.update(cx, |this, cx| {
+                    this.window = None;
+                    this.recording = None;
+                    if let Err(e) = this.resume() {
+                        this.message(format!("{e:#}"), true, cx);
+                    }
+                });
+            }
+        })
+        .detach();
+        if open_settings && let Err(e) = show_settings(&settings, cx) {
+            settings.update(cx, |this, cx| this.message(format!("{e:#}"), true, cx));
+        }
+        cx.spawn(async move |cx| {
+            loop {
+                smol::Timer::after(Duration::from_millis(16)).await;
+                if cx
+                    .update(|cx| {
+                        while let Ok(event) = tray_icon::menu::MenuEvent::receiver().try_recv() {
+                            if event.id.0 == crate::tray::QUIT {
+                                cx.quit();
+                                return;
+                            }
+                            if event.id.0 == crate::tray::SETTINGS
+                                && let Err(e) = show_settings(&settings, cx)
+                            {
+                                settings.update(cx, |this, cx| {
+                                    this.message(format!("{e:#}"), true, cx)
+                                });
+                            }
+                        }
+                        settings.update(cx, |this, cx| {
+                            while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
+                                if event.state != HotKeyState::Pressed || this.recording.is_some() {
+                                    continue;
+                                }
+                                if let Some(action) =
+                                    this.shortcuts.as_ref().and_then(|s| s.action(event.id))
+                                {
+                                    match platform::apply(action) {
+                                        Ok(()) => this.message(
+                                            format!("Positioned: {}", action.label()),
+                                            false,
+                                            cx,
+                                        ),
+                                        Err(e) => this.message(format!("{e:#}"), true, cx),
+                                    }
+                                }
+                            }
+                        });
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+    });
+    match result.borrow_mut().take() {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
