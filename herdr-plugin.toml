@@ -97,3 +97,27 @@ id = "resize-down"
 title = "Move shared boundary down"
 contexts = ["workspace"]
 command = ["./target/plugin/release/stile", "apply", "resize-down", "--json"]
+
+[[actions]]
+id = "focus-left"
+title = "Focus left"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "focus-left", "--json"]
+
+[[actions]]
+id = "focus-down"
+title = "Focus down"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "focus-down", "--json"]
+
+[[actions]]
+id = "focus-up"
+title = "Focus up"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "focus-up", "--json"]
+
+[[actions]]
+id = "focus-right"
+title = "Focus right"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "focus-right", "--json"]

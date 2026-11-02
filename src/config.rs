@@ -72,6 +72,10 @@ impl Default for Config {
             "Shift+8",
             "ArrowUp",
             "ArrowDown",
+            "H",
+            "J",
+            "K",
+            "L",
         ];
         Self {
             version: 1,
@@ -100,12 +104,38 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         match std::fs::read_to_string(path) {
             Ok(text) => {
-                let config: Self = toml::from_str(&text).context("Invalid configuration TOML")?;
+                let mut config: Self =
+                    toml::from_str(&text).context("Invalid configuration TOML")?;
+                config.validate()?;
+                config.add_missing_focus_bindings();
                 config.validate()?;
                 Ok(config)
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(error) => Err(error).with_context(|| format!("Read {}", path.display())),
+        }
+    }
+
+    // Introduce new focus defaults without overriding custom or disabled actions.
+    // A default already assigned to another action stays unbound in Settings.
+    fn add_missing_focus_bindings(&mut self) {
+        for mut binding in Self::default()
+            .bindings
+            .into_iter()
+            .filter(|b| b.action.focuses())
+        {
+            if self.bindings.iter().any(|b| b.action == binding.action) {
+                continue;
+            }
+            let key = binding.shortcut.parse::<HotKey>().unwrap();
+            if self.bindings.iter().any(|b| {
+                b.shortcut
+                    .parse::<HotKey>()
+                    .is_ok_and(|k| k.id() == key.id())
+            }) {
+                binding.shortcut.clear();
+            }
+            self.bindings.push(binding);
         }
     }
 
@@ -314,5 +344,66 @@ mod tests {
                 .unwrap();
             assert_ne!(numpad.id(), number_row.id());
         }
+    }
+}
+
+#[cfg(test)]
+mod focus_binding_tests {
+    use super::*;
+    #[test]
+    fn old_configs_gain_vim_defaults_without_overriding_user_bindings() {
+        let mut config = Config::default();
+        for (action, key) in [
+            (Action::FocusLeft, "H"),
+            (Action::FocusDown, "J"),
+            (Action::FocusUp, "K"),
+            (Action::FocusRight, "L"),
+        ] {
+            assert_eq!(
+                config
+                    .bindings
+                    .iter()
+                    .find(|b| b.action == action)
+                    .unwrap()
+                    .shortcut,
+                format!("Ctrl+Alt+{key}")
+            );
+        }
+        config.bindings.retain(|b| !b.action.focuses());
+        config.bindings[0].shortcut = "Ctrl+Alt+H".into();
+        config.bindings.push(Binding {
+            action: Action::FocusDown,
+            shortcut: String::new(),
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        config.save(&path).unwrap();
+        let loaded = Config::load(&path).unwrap();
+        assert_eq!(loaded.bindings[0].shortcut, "Ctrl+Alt+H");
+        for action in [Action::FocusLeft, Action::FocusDown] {
+            assert!(
+                loaded
+                    .bindings
+                    .iter()
+                    .find(|b| b.action == action)
+                    .unwrap()
+                    .shortcut
+                    .is_empty()
+            );
+        }
+        assert_eq!(
+            loaded
+                .bindings
+                .iter()
+                .find(|b| b.action == Action::FocusRight)
+                .unwrap()
+                .shortcut,
+            "Ctrl+Alt+L"
+        );
+        loaded.save(&path).unwrap();
+        assert_eq!(
+            Config::load(&path).unwrap().bindings.len(),
+            loaded.bindings.len()
+        );
     }
 }

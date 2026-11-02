@@ -11,6 +11,9 @@ mod macos;
 mod windows;
 
 pub fn apply(action: Action) -> Result<()> {
+    if action.focuses() {
+        return focus_window(None, action);
+    }
     anyhow::ensure!(
         action != Action::FillGap && !action.adjusts_pair(),
         "This action requires the positioning coordinator"
@@ -45,6 +48,9 @@ pub fn apply_with(
 
 /// Explicit native window targeting for automation. HWNDs are Windows-specific.
 pub fn apply_to_window(action: Action, handle: u64) -> Result<()> {
+    if action.focuses() {
+        return focus_window(Some(handle), action);
+    }
     anyhow::ensure!(
         action != Action::FillGap && !action.adjusts_pair(),
         "This action requires the positioning coordinator"
@@ -92,5 +98,17 @@ pub fn resize_pair(handle: Option<u64>, up: bool) -> Result<()> {
     {
         let _ = (handle, up);
         anyhow::bail!("Paired vertical resizing currently supports Windows only")
+    }
+}
+
+/// Focus a spatial neighbor without changing placement or saved resize state.
+pub fn focus_window(handle: Option<u64>, action: Action) -> Result<()> {
+    anyhow::ensure!(action.focuses(), "Expected a directional focus action");
+    #[cfg(target_os = "windows")]
+    return windows::focus_window(handle, action);
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (handle, action);
+        anyhow::bail!("Directional window focus currently supports Windows only")
     }
 }

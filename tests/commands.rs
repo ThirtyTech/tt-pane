@@ -117,3 +117,34 @@ fn binary_positions_disposable_window_on_every_monitor() {
         );
     }
 }
+
+#[cfg(target_os = "windows")]
+#[test]
+fn focus_errors_leave_saved_placement_state_untouched() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let state = dir.path().join("config.toml.cycle.json");
+    std::fs::write(&state, "existing gap and growth state").unwrap();
+    for direction in ["focus-left", "focus-down", "focus-up", "focus-right"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_stile"))
+            .arg("--config")
+            .arg(&path)
+            .args(["apply", direction, "--window", "0", "--json"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(response["ok"], false);
+        assert!(
+            response["error"]
+                .as_str()
+                .unwrap()
+                .contains("Invalid or missing window")
+        );
+        assert_eq!(
+            std::fs::read_to_string(&state).unwrap(),
+            "existing gap and growth state"
+        );
+    }
+    assert!(!dir.path().join("config.toml.cycle.lock").exists());
+}

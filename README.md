@@ -70,6 +70,10 @@ cargo build --release --no-default-features
 | Ctrl+Alt+Shift+8 (*) | Fill the last saved gap |
 | Ctrl+Alt+Up | Move shared horizontal boundary up |
 | Ctrl+Alt+Down | Move shared horizontal boundary down |
+| Ctrl+Alt+H | Focus left |
+| Ctrl+Alt+J | Focus down |
+| Ctrl+Alt+K | Focus up |
+| Ctrl+Alt+L | Focus right |
 
 The digit shortcuts use number-row keys (Digit0 through Digit9). The minus shortcut uses the `-` key; expansion uses the single key normally labeled `=` and `+`. **Shift is not required**. Ctrl+Alt+Shift+= also expands, unless that combination is explicitly assigned to another action. The recorder also supports distinct numpad keys when explicitly assigned. macOS uses the same Control+Option defaults; Command shortcuts can be recorded too. System and application shortcuts can reserve combinations; choose alternatives where needed. Some applications impose minimum window sizes, so requested bounds are not always achievable.
 
@@ -82,6 +86,10 @@ Repeated presses keep resizing, with no reset cycle. Expansion stops at the avai
 In Position preview, hover a placement first, then Shrink width or Expand width to see how the width changes for that placement. The preview uses the configured width percentage.
 
 ### Resize neighboring windows vertically (Windows)
+
+**Ctrl+Alt+H/J/K/L** switches focus left/down/up/right on Windows without moving or resizing windows. Each press selects the nearest window by center distance within a 90-degree cone in that direction, including windows on other monitors. For example, moving right from bottom-left visits a nearby center window before the far-right window. Equal-distance ties prefer the topmost window. Hidden, minimized, cloaked (such as windows on other virtual desktops), and utility/no-activate windows are skipped. Focus stays put when there is no candidate; there is no wraparound. Saved growth and gap state is preserved.
+
+The focus actions are editable in Settings and available as `stile apply focus-left`, `focus-down`, `focus-up`, and `focus-right` (also with `--window HWND --json`). Existing configurations gain missing focus bindings on load; custom or explicitly disabled focus bindings remain unchanged. If a default key is already assigned to another action, the new focus action stays unbound so you can choose a key in Settings. Other platforms report that directional focus is currently Windows-only.
 
 **Ctrl+Alt+Up/Down** moves the shared horizontal boundary by **25% of the selected window's current height**. With the bottom-left window selected, Up grows it upward and shrinks the window above: a 50/50 split becomes 62.5/37.5. Down shrinks the bottom window and grows the top window by the same pixel amount. There is a **50/50 stop** in the middle: 400 pixels grows to 500, then Down returns it to 400; shrinking to 300 then pressing Up also returns to 400. When moving toward equal heights, sTile snaps there if the boundary is within one normal step from equal (25% of half the combined height), or if the current step would cross it. Another press continues past equal. Elsewhere, each press uses the selected window's current height. Odd combined heights give the bottom window the extra pixel. With the top window selected, Up shrinks it and grows the window below. Widths and the pair's outside edges stay fixed; any existing gap is preserved.
 

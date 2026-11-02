@@ -363,6 +363,80 @@ pub fn set_window_icon(window: &impl raw_window_handle::HasWindowHandle) -> anyh
     Ok(())
 }
 
+/// Enumerate in Z-order, excluding hidden/minimized/cloaked and utility windows.
+pub fn focus_window(handle: Option<u64>, action: crate::geometry::Action) -> Result<()> {
+    use windows::Win32::Foundation::LPARAM;
+    use windows::core::BOOL;
+    unsafe extern "system" fn collect(window: HWND, data: LPARAM) -> BOOL {
+        // SAFETY: EnumWindows synchronously supplies our exclusive live Vec.
+        unsafe { &mut *(data.0 as *mut Vec<HWND>) }.push(window);
+        BOOL(1)
+    }
+    let _dpi = DpiContext::enter();
+    // SAFETY: HWNDs are opaque OS identifiers. Enumeration and DWM calls are
+    // synchronous, with correctly sized live output buffers. No pointers escape.
+    unsafe {
+        let selected = match handle {
+            Some(handle) => HWND(usize::try_from(handle)? as *mut _),
+            None => GetForegroundWindow(),
+        };
+        ensure!(
+            IsWindow(Some(selected)).as_bool(),
+            "Invalid or missing window"
+        );
+        ensure!(
+            selected != GetDesktopWindow() && selected != GetShellWindow(),
+            "Select an application window to change focus"
+        );
+        ensure!(
+            !IsIconic(selected).as_bool(),
+            "Select a non-minimized window to change focus"
+        );
+        let current = from_rect(read_bounds(selected)?.1);
+        let mut windows = Vec::<HWND>::new();
+        EnumWindows(Some(collect), LPARAM(&mut windows as *mut _ as isize))?;
+        let mut candidates = Vec::new();
+        let mut bounds = Vec::new();
+        for window in windows {
+            if window == selected
+                || window == GetDesktopWindow()
+                || window == GetShellWindow()
+                || !IsWindowVisible(window).as_bool()
+                || IsIconic(window).as_bool()
+                || (GetWindowLongPtrW(window, GWL_EXSTYLE) as u32
+                    & (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0))
+                    != 0
+            {
+                continue;
+            }
+            let mut cloaked = 0u32;
+            if DwmGetWindowAttribute(
+                window,
+                windows::Win32::Graphics::Dwm::DWMWA_CLOAKED,
+                &mut cloaked as *mut _ as *mut _,
+                std::mem::size_of::<u32>() as u32,
+            )
+            .is_ok()
+                && cloaked != 0
+            {
+                continue;
+            }
+            let Ok((_, rect)) = read_bounds(window) else {
+                continue;
+            };
+            candidates.push(window);
+            bounds.push(from_rect(rect));
+        }
+        if let Some(index) = crate::geometry::focus_neighbor(current, &bounds, action) {
+            ensure!(
+                SetForegroundWindow(candidates[index]).as_bool(),
+                "Windows refused to focus the neighboring window"
+            );
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -53,6 +53,10 @@ pub enum Action {
     FillGap,
     ResizeUp,
     ResizeDown,
+    FocusLeft,
+    FocusDown,
+    FocusUp,
+    FocusRight,
 }
 
 impl Action {
@@ -69,7 +73,7 @@ impl Action {
         Self::Maximize,
     ];
 
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 19] = [
         Self::Left,
         Self::Right,
         Self::Top,
@@ -85,7 +89,18 @@ impl Action {
         Self::FillGap,
         Self::ResizeUp,
         Self::ResizeDown,
+        Self::FocusLeft,
+        Self::FocusDown,
+        Self::FocusUp,
+        Self::FocusRight,
     ];
+
+    pub fn focuses(self) -> bool {
+        matches!(
+            self,
+            Self::FocusLeft | Self::FocusDown | Self::FocusUp | Self::FocusRight
+        )
+    }
 
     pub fn adjusts_pair(self) -> bool {
         matches!(self, Self::ResizeUp | Self::ResizeDown)
@@ -106,7 +121,11 @@ impl Action {
             | Self::ExpandWidth
             | Self::FillGap
             | Self::ResizeUp
-            | Self::ResizeDown => None,
+            | Self::ResizeDown
+            | Self::FocusLeft
+            | Self::FocusDown
+            | Self::FocusUp
+            | Self::FocusRight => None,
         }
     }
 
@@ -126,6 +145,10 @@ impl Action {
             Self::ExpandWidth => "expand-width",
             Self::FillGap => "fill-gap",
             Self::ResizeUp => "resize-up",
+            Self::FocusLeft => "focus-left",
+            Self::FocusDown => "focus-down",
+            Self::FocusUp => "focus-up",
+            Self::FocusRight => "focus-right",
             Self::ResizeDown => "resize-down",
         }
     }
@@ -146,6 +169,10 @@ impl Action {
             Self::ExpandWidth => "Expand width",
             Self::FillGap => "Fill last gap",
             Self::ResizeUp => "Move shared boundary up",
+            Self::FocusLeft => "Focus left",
+            Self::FocusDown => "Focus down",
+            Self::FocusUp => "Focus up",
+            Self::FocusRight => "Focus right",
             Self::ResizeDown => "Move shared boundary down",
         }
     }
@@ -156,7 +183,13 @@ impl Action {
         let mut target = area;
         match self {
             // Contextual action: the coordinator resolves its saved rectangle.
-            Self::FillGap | Self::ResizeUp | Self::ResizeDown => return current,
+            Self::FillGap
+            | Self::ResizeUp
+            | Self::ResizeDown
+            | Self::FocusLeft
+            | Self::FocusDown
+            | Self::FocusUp
+            | Self::FocusRight => return current,
             Self::ShrinkWidth | Self::ExpandWidth => {
                 return current.adjust_width(
                     area,
@@ -428,6 +461,46 @@ pub fn monitor_for(window: Rect, monitors: &[Rect]) -> Option<usize> {
             let my = i64::from(monitor.y) * 2 + i64::from(monitor.height);
             (overlap, -((cx - mx).pow(2) + (cy - my).pow(2)))
         })
+        .map(|(index, _)| index)
+}
+
+/// Rank windows by center distance in a 90-degree directional cone. This permits
+/// diagonal steps through a center window without jumping past it to a far edge.
+/// Equal scores retain native Z-order (the topmost candidate wins).
+pub fn focus_neighbor(current: Rect, candidates: &[Rect], action: Action) -> Option<usize> {
+    if !action.focuses() || current.width <= 0 || current.height <= 0 {
+        return None;
+    }
+    let center = |r: Rect| {
+        (
+            2 * i64::from(r.x) + i64::from(r.width),
+            2 * i64::from(r.y) + i64::from(r.height),
+        )
+    };
+    let (cx, cy) = center(current);
+    candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &rect)| {
+            if rect.width <= 0 || rect.height <= 0 {
+                return None;
+            }
+            let (x, y) = center(rect);
+            let (dx, dy) = (x - cx, y - cy);
+            let (forward, sideways) = match action {
+                Action::FocusLeft => (-dx, dy),
+                Action::FocusRight => (dx, dy),
+                Action::FocusUp => (-dy, dx),
+                Action::FocusDown => (dy, dx),
+                _ => return None,
+            };
+            if forward <= 0 || sideways.abs() > forward {
+                return None;
+            }
+            let distance = i128::from(dx).pow(2) + i128::from(dy).pow(2);
+            Some((index, distance))
+        })
+        .min_by_key(|&(index, distance)| (distance, index))
         .map(|(index, _)| index)
 }
 
@@ -900,5 +973,76 @@ mod tests {
         let top = target.y - odd.y;
         assert!((left - (odd.width - target.width - left)).abs() <= 1);
         assert!((top - (odd.height - target.height - top)).abs() <= 1);
+    }
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::*;
+    fn rect(x: i32, y: i32) -> Rect {
+        Rect {
+            x,
+            y,
+            width: 400,
+            height: 400,
+        }
+    }
+    #[test]
+    fn visits_center_before_far_right_then_stops() {
+        let left = rect(0, 400);
+        let center = rect(400, 200);
+        let right = rect(800, 400);
+        assert_eq!(
+            focus_neighbor(left, &[right, center], Action::FocusRight),
+            Some(1)
+        );
+        assert_eq!(
+            focus_neighbor(center, &[left, right], Action::FocusRight),
+            Some(1)
+        );
+        assert_eq!(
+            focus_neighbor(right, &[left, center], Action::FocusRight),
+            None
+        );
+        assert_eq!(
+            focus_neighbor(right, &[left, center], Action::FocusLeft),
+            Some(1)
+        );
+    }
+    #[test]
+    fn directions_ignore_wrong_axis_and_identical_bounds() {
+        let current = rect(-800, -400);
+        let windows = [
+            current,
+            rect(-1200, -400),
+            rect(-400, -400),
+            rect(-800, -800),
+            rect(-800, 0),
+        ];
+        for (action, expected) in [
+            (Action::FocusLeft, 1),
+            (Action::FocusRight, 2),
+            (Action::FocusUp, 3),
+            (Action::FocusDown, 4),
+        ] {
+            assert_eq!(focus_neighbor(current, &windows, action), Some(expected));
+        }
+        assert_eq!(
+            focus_neighbor(current, &[current], Action::FocusRight),
+            None
+        );
+        assert_eq!(focus_neighbor(current, &[], Action::FocusDown), None);
+    }
+    #[test]
+    fn ties_keep_z_order_and_overlapping_windows_are_reachable() {
+        let current = rect(0, 0);
+        assert_eq!(
+            focus_neighbor(current, &[rect(100, 0), rect(100, 0)], Action::FocusRight),
+            Some(0)
+        );
+        assert_eq!(
+            focus_neighbor(current, &[rect(10, 500)], Action::FocusRight),
+            None
+        );
     }
 }

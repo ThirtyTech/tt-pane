@@ -220,6 +220,9 @@ fn sidecar(config: &Path, suffix: &str) -> PathBuf {
 /// Only successful native requests advance the persisted cycle. Cache loss resets it.
 pub fn apply(config: &Config, path: &Path, action: Action, window: Option<u64>) -> Result<()> {
     config.validate()?;
+    if action.focuses() {
+        return platform::focus_window(window, action);
+    }
     // Resolve symlinks when the config exists so aliases share one cycle.
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let parent = path
