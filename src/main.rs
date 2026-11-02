@@ -110,12 +110,10 @@ fn run(cli: Cli) -> Result<()> {
 }
 
 fn main() -> ExitCode {
-    // GUI-subsystem builds never allocate a console. CLI invocations can attach to
-    // an existing terminal; inherited redirection pipes must be preserved.
+    // Attach terminal launches (including no-argument cargo run) so Ctrl+C reaches
+    // the GUI process. Explorer launches still do not allocate a console.
     #[cfg(all(target_os = "windows", feature = "gui"))]
-    if std::env::args_os().len() > 1 {
-        stile::platform::attach_parent_console();
-    }
+    stile::platform::attach_parent_console();
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {

@@ -129,3 +129,79 @@ pub fn tray_starts_without_window_and_survives_settings_close(
         "Closing settings quit the tray process"
     );
 }
+
+/// Called only from the isolated hidden-console integration-test subprocess.
+pub fn terminal_ctrl_c_terminates_tray_app(binary: &str) {
+    use windows::Win32::System::Console::*;
+    fn console_pids() -> Vec<u32> {
+        let mut ids = [0u32; 16];
+        // SAFETY: The API receives a live writable slice of process IDs.
+        let count = unsafe { GetConsoleProcessList(&mut ids) } as usize;
+        assert!(
+            count > 0 && count <= ids.len(),
+            "Expected a small private console"
+        );
+        ids[..count].to_vec()
+    }
+    assert_eq!(
+        console_pids(),
+        [std::process::id()],
+        "Refusing to signal a shared console"
+    );
+    // A real parent console must not steal redirected CLI JSON output.
+    let output = Command::new(binary).arg("actions").output().unwrap();
+    assert!(output.status.success());
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["schema_version"], 1);
+    assert!(
+        response["actions"]
+            .as_array()
+            .is_some_and(|actions| !actions.is_empty())
+    );
+    // No arguments reproduces cargo run; null output reproduces inherited handles
+    // that previously prevented attachment. No user configuration is modified.
+    let mut child = Process(
+        Command::new(binary)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !console_pids().contains(&child.0.id()) {
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "App exited before attaching"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "App never attached to the parent console"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // Allow GPUI/tray startup, verifying it is still alive before interruption.
+    std::thread::sleep(Duration::from_secs(3));
+    assert!(child.0.try_wait().unwrap().is_none());
+    let ids = console_pids();
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains(&std::process::id()) && ids.contains(&child.0.id()));
+    // SAFETY: The console is verified to contain only this helper and its owned
+    // child. Ignore Ctrl+C in the helper only, after the child has been spawned.
+    unsafe {
+        SetConsoleCtrlHandler(None, true).unwrap();
+        GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0).unwrap();
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.0.try_wait().unwrap() {
+            assert_eq!(status.code().map(|code| code as u32), Some(0xc000013a));
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Ctrl+C did not terminate the tray app"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}

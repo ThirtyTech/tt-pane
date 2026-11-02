@@ -297,13 +297,29 @@ fn from_rect(rect: RECT) -> Rect {
     }
 }
 
-/// Attach CLI output to the parent console only when no output handle exists.
+/// Join an existing parent console for Ctrl+C, preserving inherited redirection.
+/// Never allocates a console when started from Explorer or a shortcut.
 pub fn attach_parent_console() {
     use windows::Win32::System::Console::*;
-    // SAFETY: Both functions use only OS handles/constants and retain no Rust pointers.
+    // SAFETY: These APIs inspect/set process-owned OS handles and retain no Rust
+    // pointers. Saved handles remain owned by the process across AttachConsole.
     unsafe {
-        if GetStdHandle(STD_OUTPUT_HANDLE).map_or(true, |handle| handle.is_invalid()) {
-            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        let streams = [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE].map(|kind| {
+            (
+                kind,
+                GetStdHandle(kind)
+                    .ok()
+                    .filter(|handle| !handle.is_invalid()),
+            )
+        });
+        if AttachConsole(ATTACH_PARENT_PROCESS).is_ok() {
+            for (kind, handle) in streams {
+                if let Some(handle) = handle {
+                    let _ = SetStdHandle(kind, handle);
+                }
+            }
+            // Do not inherit a launcher's ignored-Ctrl+C setting.
+            let _ = SetConsoleCtrlHandler(None, false);
         }
     }
 }
