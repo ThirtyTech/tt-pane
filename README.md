@@ -158,18 +158,31 @@ The lifecycle test briefly creates its own settings window, closes it with a nat
 
 ## Structure and validation
 
-- `geometry.rs`: shared placement math and monitor selection.
+- `crates/stile-platform/src/geometry.rs`: shared placement math and monitor selection.
 - `config.rs`: versioned TOML, validation, atomic save.
 - `shortcuts.rs`: native shortcut lifetime, conflict handling, Wayland export.
-- `platform/`: native Windows, macOS, X11, Sway, and Hyprland adapters.
+- `crates/stile-platform/`: native Windows, macOS, X11, Sway, and Hyprland adapters, plus Windows icon/console interop. The application reexports geometry and platform APIs at their existing paths.
 - `ui.rs`: GPUI settings, shortcut recorder, preview, save/error feedback.
 
 ```sh
-cargo fmt --check
-cargo test
-cargo clippy --all-targets -- -D warnings
+cargo fmt --all --check
+cargo test --workspace --locked
+cargo test --workspace --locked --no-default-features
+cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
 ```
 
 Tests cover secondary/negative-origin monitors, spanning/off-screen selection, centering, odd pixel dimensions, configuration persistence, duplicate validation, compositor export, and native Windows shortcut conflicts. Platform-specific runtime behavior still needs validation on physical macOS and Linux desktops; compiling a backend is not a substitute for that testing.
 
 References: [GPUI](https://gpui.rs/), [EWMH](https://specifications.freedesktop.org/wm/latest-single/), [Sway IPC](https://man.archlinux.org/man/sway-ipc.7.en), [Hyprland IPC](https://wiki.hypr.land/IPC/), [KWin scripting API](https://develop.kde.org/docs/plasma/kwin/api/).
+
+## Rust safety boundary
+
+The application package forbids unsafe Rust through Cargo's `unsafe_code = "forbid"` lint and explicit `#![forbid(unsafe_code)]` attributes on its library, executable, build script, and integration tests. These restrictions apply to our application code; dependencies such as GPUI still contain unsafe implementations.
+
+`stile-platform` exposes safe functions and denies unsafe code by default. Only its private Windows/macOS modules and feature-gated native test helpers allow it. Unsafe operations must be explicit and have `SAFETY:` explanations, enforced by Clippy. Portable geometry forbids unsafe entirely; the Linux adapters inherit the platform crate's default denial.
+
+Windows icon setup borrows a native window handle for the duration of synchronous calls. Window positioning accepts opaque OS identifiers and handles invalid windows as errors; DPI awareness is restored by a thread-bound guard, including on early returns and unwinding. Handles can still expire or be reused by the OS, so explicit targeting does not establish a persistent window identity.
+
+macOS position/size helpers bind each native AX type tag to `CGPoint` or `CGSize`, check Core Foundation object types before interpreting Accessibility results, and adopt Create/Copy references exactly once. The native signatures and type checks follow Apple's [AX value](https://developer.apple.com/documentation/applicationservices/1462933-axvaluegetvalue) and [AX element type](https://developer.apple.com/documentation/applicationservices/1460085-axuielementgettypeid) APIs. macOS unit tests cover typed round trips and rejection of mismatched/non-AX values without requiring Accessibility permission.
+
+The `test-support` feature is enabled by the application's dev-dependency only. It keeps native test mechanics inside the same safety boundary while integration tests exercise the real executable through safe entry points. It is not enabled by normal application builds. Use workspace-wide validation to include the extracted geometry tests and platform-specific tests.

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use serde::{Deserialize, Serialize};
 
 /// Desktop coordinates, in the native backend's units. Origins may be negative.

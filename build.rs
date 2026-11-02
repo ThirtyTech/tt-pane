@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 fn main() {
     println!("cargo:rerun-if-changed=assets/stile.ico");
     println!("cargo:rerun-if-changed=assets/stile.rc");

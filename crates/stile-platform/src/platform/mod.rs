@@ -4,8 +4,10 @@ use anyhow::Result;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
 mod macos;
 #[cfg(target_os = "windows")]
+#[allow(unsafe_code)]
 mod windows;
 
 pub fn apply(action: Action) -> Result<()> {
@@ -56,3 +58,8 @@ pub fn description() -> &'static str {
         "Linux · X11 / EWMH"
     }
 }
+
+#[cfg(windows)]
+pub use windows::attach_parent_console;
+#[cfg(all(windows, feature = "window-icon"))]
+pub use windows::set_window_icon;

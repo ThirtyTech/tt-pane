@@ -325,7 +325,7 @@ fn show_settings(settings: &Entity<Settings>, cx: &mut App) -> anyhow::Result<()
         move |window, cx| {
             view.update(cx, |this, cx| {
                 #[cfg(target_os = "windows")]
-                if let Err(error) = set_windows_icon(window) {
+                if let Err(error) = crate::platform::set_window_icon(window) {
                     this.message(format!("Could not set window icon: {error:#}"), true, cx);
                 }
                 this.focus.focus(window);
@@ -348,41 +348,6 @@ fn show_settings(settings: &Entity<Settings>, cx: &mut App) -> anyhow::Result<()
     )?;
     settings.update(cx, |this, _| this.window = Some(window));
     cx.activate(true);
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn set_windows_icon(window: &Window) -> anyhow::Result<()> {
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use windows::{
-        Win32::{
-            Foundation::{HINSTANCE, HWND, LPARAM, WPARAM},
-            System::LibraryLoader::GetModuleHandleW,
-            UI::WindowsAndMessaging::{ICON_BIG, ICON_SMALL, LoadIconW, SendMessageW, WM_SETICON},
-        },
-        core::PCWSTR,
-    };
-    let RawWindowHandle::Win32(handle) = HasWindowHandle::window_handle(window)
-        .map_err(|error| anyhow::anyhow!("{error}"))?
-        .as_raw()
-    else {
-        anyhow::bail!("Expected a native Windows handle");
-    };
-    unsafe {
-        // Resource 101 is the same multi-resolution sTile ICO embedded by build.rs.
-        // LoadIconW returns a shared resource owned by the module, not this window.
-        let module = GetModuleHandleW(None)?;
-        let icon = LoadIconW(Some(HINSTANCE(module.0)), PCWSTR(101usize as *const u16))?;
-        let hwnd = HWND(handle.hwnd.get() as *mut _);
-        for size in [ICON_SMALL, ICON_BIG] {
-            SendMessageW(
-                hwnd,
-                WM_SETICON,
-                Some(WPARAM(size as usize)),
-                Some(LPARAM(icon.0 as isize)),
-            );
-        }
-    }
     Ok(())
 }
 

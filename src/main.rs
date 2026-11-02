@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![cfg_attr(
     all(target_os = "windows", feature = "gui"),
     windows_subsystem = "windows"
@@ -107,12 +108,7 @@ fn main() -> ExitCode {
     // an existing terminal; inherited redirection pipes must be preserved.
     #[cfg(all(target_os = "windows", feature = "gui"))]
     if std::env::args_os().len() > 1 {
-        use windows::Win32::System::Console::*;
-        unsafe {
-            if GetStdHandle(STD_OUTPUT_HANDLE).map_or(true, |handle| handle.is_invalid()) {
-                let _ = AttachConsole(ATTACH_PARENT_PROCESS);
-            }
-        }
+        stile::platform::attach_parent_console();
     }
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,

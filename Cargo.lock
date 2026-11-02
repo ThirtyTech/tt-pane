@@ -5337,22 +5337,35 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "core-foundation 0.10.0",
- "core-graphics 0.24.0",
  "directories",
  "embed-resource",
  "global-hotkey",
  "gpui",
  "objc2",
  "objc2-app-kit",
+ "serde",
+ "serde_json",
+ "smol",
+ "stile-platform",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "tray-icon",
+]
+
+[[package]]
+name = "stile-platform"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "core-foundation 0.10.0",
+ "core-graphics 0.24.0",
+ "objc2",
+ "objc2-app-kit",
  "objc2-foundation",
  "raw-window-handle",
  "serde",
  "serde_json",
- "smol",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
- "tray-icon",
  "windows 0.61.3",
  "x11rb",
 ]

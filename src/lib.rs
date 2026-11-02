@@ -1,6 +1,8 @@
+#![forbid(unsafe_code)]
+
 pub mod config;
-pub mod geometry;
-pub mod platform;
+pub use stile_platform as platform;
+pub use stile_platform::geometry;
 pub mod shortcuts;
 #[cfg(feature = "gui")]
 mod tray;

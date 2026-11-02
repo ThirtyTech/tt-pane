@@ -1,3 +1,11 @@
+[workspace]
+members = ["crates/stile-platform"]
+exclude = ["vendor/gpui", "vendor/proc-macro-error2"]
+resolver = "3"
+
+[lints.rust]
+unsafe_code = "forbid"
+
 [package]
 name = "stile"
 version = "0.1.0"
@@ -7,9 +15,10 @@ license = "MIT"
 
 [features]
 default = ["gui"]
-gui = ["dep:gpui", "dep:smol", "dep:tray-icon", "dep:raw-window-handle"]
+gui = ["dep:gpui", "dep:smol", "dep:tray-icon", "stile-platform/window-icon"]
 
 [dependencies]
+stile-platform = { path = "crates/stile-platform" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 directories = "6"
@@ -21,20 +30,13 @@ tempfile = "3"
 gpui = { version = "=0.2.2", features = ["keep-alive", "preserve-numpad"], optional = true }
 smol = { version = "2", optional = true }
 tray-icon = { version = "0.26.1", default-features = false, features = ["ksni"], optional = true }
-raw-window-handle = { version = "0.6", optional = true }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_System_Console", "Win32_System_LibraryLoader"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-x11rb = { version = "0.13", features = ["randr"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-core-foundation = "0.10"
-core-graphics = "0.24"
 objc2 = "0.6"
-objc2-foundation = "0.3"
-objc2-app-kit = { version = "0.3", features = ["NSScreen", "NSWorkspace", "NSRunningApplication"] }
+objc2-app-kit = "0.3"
+
+[dev-dependencies]
+stile-platform = { path = "crates/stile-platform", features = ["test-support"] }
 
 [profile.dev]
 debug = 0
