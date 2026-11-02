@@ -417,7 +417,12 @@ mod tests {
             let a = from_rect(read_bounds(top.0).unwrap().1);
             let b = from_rect(read_bounds(bottom.0).unwrap().1);
             // The top accepts 200, then the bottom refuses 600 (max 500).
-            let (ta, tb) = crate::geometry::resize_vertical_pair(a, b, true).unwrap();
+            let ta = Rect { height: 200, ..a };
+            let tb = Rect {
+                y: a.y + 200,
+                height: 600,
+                ..b
+            };
             assert!(apply_pair(top.0, a, ta, bottom.0, b, tb).is_err());
             assert_eq!(from_rect(read_bounds(top.0).unwrap().1), a);
             assert_eq!(from_rect(read_bounds(bottom.0).unwrap().1), b);

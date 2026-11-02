@@ -295,15 +295,16 @@ pub fn binary_positions_disposable_window_on_every_monitor(
         let foreground = GetForegroundWindow();
         let _ = ShowWindow(destination.0, SW_SHOWNOACTIVATE);
         let mut pair = (bottom, top);
-        for action in [
-            Action::ResizeUp,
-            Action::ResizeDown,
-            Action::ResizeDown,
-            Action::ResizeUp,
+        for (action, expected_height) in [
+            (Action::ResizeUp, 300),
+            (Action::ResizeDown, 240),
+            (Action::ResizeDown, 180),
+            (Action::ResizeUp, 240),
         ] {
             pair =
                 crate::geometry::resize_vertical_pair(pair.0, pair.1, action == Action::ResizeUp)
                     .unwrap();
+            assert_eq!(pair.0.height, expected_height);
             assert_eq!(apply_command(action, window.0, true), pair.0);
             let mut actual = RECT::default();
             GetWindowRect(destination.0, &mut actual).unwrap();
@@ -321,7 +322,7 @@ pub fn binary_positions_disposable_window_on_every_monitor(
         assert_eq!(pair, (bottom, top));
         assert_eq!(GetForegroundWindow(), foreground);
         let _ = ShowWindow(destination.0, SW_HIDE);
-        assert_eq!(apply_command(Action::ResizeDown, window.0, false), bottom);
+        assert_eq!(apply_command(Action::ResizeDown, window.0, false), pair.0);
         eprintln!(
             "Verified {} actions, {} growth steps plus reset, on {} monitors and shrink/expand/two-window gap sequences through separate CLI invocations",
             Action::POSITIONS.len(),

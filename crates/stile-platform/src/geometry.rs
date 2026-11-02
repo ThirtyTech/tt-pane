@@ -235,7 +235,9 @@ impl Action {
 }
 
 /// Resize a vertically adjacent pair with matching horizontal edges. Preserve the
-/// outside edges and the existing gap. The step is 25% of their combined height.
+/// outside edges and the existing gap. The step is 25% of the selected window's current height.
+/// Approaching the midpoint snaps to equal heights within one standard half-height
+/// step, or whenever the ordinary step would cross it. Odd totals give bottom the extra pixel.
 /// Returns bounds in the same order as the inputs.
 pub fn resize_vertical_pair(selected: Rect, neighbor: Rect, up: bool) -> Option<(Rect, Rect)> {
     if selected.width <= 0
@@ -261,9 +263,17 @@ pub fn resize_vertical_pair(selected: Rect, neighbor: Rect, up: bool) -> Option<
     if !(-2..=16).contains(&gap) {
         return None;
     }
-    let step = ((i64::from(top.height) + i64::from(bottom.height) + 2) / 4).max(1);
-    let delta = (if up { -step } else { step })
-        .clamp(1 - i64::from(top.height), i64::from(bottom.height) - 1);
+    let step = ((i64::from(selected.height) + 2) / 4).max(1);
+    let midpoint = (i64::from(top.height) + i64::from(bottom.height)) / 2;
+    let to_midpoint = midpoint - i64::from(top.height);
+    let midpoint_step = ((midpoint + 2) / 4).max(1);
+    let mut delta = if up { -step } else { step };
+    // Include the return from a smaller selected window: its current 25% step
+    // can fall short of the midpoint after the initial 25% shrink.
+    if to_midpoint.signum() == delta.signum() && to_midpoint.abs() <= step.max(midpoint_step) {
+        delta = to_midpoint;
+    }
+    let delta = delta.clamp(1 - i64::from(top.height), i64::from(bottom.height) - 1);
     let top = Rect {
         height: i32::try_from(i64::from(top.height) + delta).ok()?,
         ..top
@@ -477,7 +487,7 @@ mod tests {
         );
     }
     #[test]
-    fn paired_resize_uses_combined_height_and_reverses_without_drift() {
+    fn paired_resize_uses_selected_height_and_preserves_outer_edges() {
         for (y, height, gap) in [(-1000, 500, 0), (40, 501, 8)] {
             let top = Rect {
                 x: -1920,
@@ -489,7 +499,7 @@ mod tests {
                 y: y + height + gap,
                 ..top
             };
-            let step = (height * 2 + 2) / 4;
+            let step = (height + 2) / 4;
             for selected_top in [false, true] {
                 let (selected, neighbor) = if selected_top {
                     (top, bottom)
@@ -507,6 +517,61 @@ mod tests {
                     resize_vertical_pair(a, b, false),
                     Some((selected, neighbor))
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn paired_resize_step_follows_the_selected_window_after_each_press() {
+        let top = Rect {
+            x: 0,
+            y: 0,
+            width: 500,
+            height: 400,
+        };
+        let bottom = Rect { y: 400, ..top };
+        let (bottom, top) = resize_vertical_pair(bottom, top, true).unwrap();
+        assert_eq!((bottom.height, top.height), (500, 300)); // 62.5 / 37.5
+        let (bottom, top) = resize_vertical_pair(bottom, top, true).unwrap();
+        assert_eq!((bottom.height, top.height), (625, 175)); // Another 25% of selected height
+        let (bottom, top) = resize_vertical_pair(bottom, top, false).unwrap();
+        assert_eq!((bottom.height, top.height), (469, 331)); // Still outside midpoint hop
+        let (bottom, top) = resize_vertical_pair(bottom, top, false).unwrap();
+        assert_eq!((bottom.height, top.height), (400, 400)); // Stop at equal before crossing
+        let (bottom, top) = resize_vertical_pair(bottom, top, false).unwrap();
+        assert_eq!((bottom.height, top.height), (300, 500)); // Can continue past equal
+        let (bottom, top) = resize_vertical_pair(bottom, top, true).unwrap();
+        assert_eq!((bottom.height, top.height), (400, 400)); // Return from smaller side too
+    }
+
+    #[test]
+    fn equal_split_is_reachable_from_both_directions_and_either_selected_window() {
+        for total in [800, 801] {
+            let top = Rect {
+                x: -1000,
+                y: -600,
+                width: 400,
+                height: total / 2,
+            };
+            let bottom = Rect {
+                y: top.y + top.height + 8,
+                height: total - top.height,
+                ..top
+            };
+            for select_top in [false, true] {
+                let original = if select_top {
+                    (top, bottom)
+                } else {
+                    (bottom, top)
+                };
+                for up in [false, true] {
+                    let changed = resize_vertical_pair(original.0, original.1, up).unwrap();
+                    assert_ne!(changed, original);
+                    assert_eq!(
+                        resize_vertical_pair(changed.0, changed.1, !up),
+                        Some(original)
+                    );
+                }
             }
         }
     }
@@ -536,7 +601,7 @@ mod tests {
             assert!(resize_vertical_pair(top, invalid, true).is_none());
         }
         let mut pair = (top, bottom);
-        for _ in 0..10 {
+        for _ in 0..40 {
             pair = resize_vertical_pair(pair.0, pair.1, true).unwrap();
         }
         assert_eq!(pair.0.height, 1);
