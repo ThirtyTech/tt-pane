@@ -32,7 +32,7 @@ impl Default for Config {
                 .zip(keys)
                 .map(|(action, key)| Binding {
                     action,
-                    shortcut: format!("Ctrl+Alt+Numpad{key}"),
+                    shortcut: format!("Ctrl+Alt+{key}"),
                 })
                 .collect(),
         }
@@ -121,7 +121,7 @@ mod tests {
         config.save(&path).unwrap();
         config.save(&path).unwrap();
         assert_eq!(Config::load(&path).unwrap().bindings.len(), 10);
-        config.bindings[1].shortcut = "Control+Alt+Num1".into();
+        config.bindings[1].shortcut = "Control+Alt+Digit1".into();
         assert!(config.validate().is_err());
     }
     #[test]
@@ -133,15 +133,19 @@ mod tests {
     }
 
     #[test]
-    fn defaults_use_distinct_numpad_keys() {
+    fn defaults_use_number_row_keys() {
         let config = Config::default();
         for (action, digit) in [(Action::Center, 3), (Action::Top, 8), (Action::Bottom, 5)] {
             let binding = config.bindings.iter().find(|b| b.action == action).unwrap();
-            assert_eq!(binding.shortcut, format!("Ctrl+Alt+Numpad{digit}"));
+            assert_eq!(binding.shortcut, format!("Ctrl+Alt+{digit}"));
         }
         for binding in config.bindings {
-            let numpad: HotKey = binding.shortcut.parse().unwrap();
-            let number_row: HotKey = binding.shortcut.replace("Numpad", "Digit").parse().unwrap();
+            let number_row: HotKey = binding.shortcut.parse().unwrap();
+            let numpad: HotKey = binding
+                .shortcut
+                .replace("Alt+", "Alt+Numpad")
+                .parse()
+                .unwrap();
             assert_ne!(numpad.id(), number_row.id());
         }
     }

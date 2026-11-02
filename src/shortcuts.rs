@@ -190,12 +190,12 @@ mod tests {
         assert!(
             wayland_bindings(&config, "sway", path)
                 .unwrap()
-                .contains("bindsym Ctrl+Mod1+KP_7 exec \"/usr/local/bin/stile\" apply top-left")
+                .contains("bindsym Ctrl+Mod1+7 exec \"/usr/local/bin/stile\" apply top-left")
         );
         assert!(
             wayland_bindings(&config, "hyprland", path)
                 .unwrap()
-                .contains("bind = Ctrl Alt, KP_5, exec, \"/usr/local/bin/stile\" apply bottom")
+                .contains("bind = Ctrl Alt, 5, exec, \"/usr/local/bin/stile\" apply bottom")
         );
     }
 

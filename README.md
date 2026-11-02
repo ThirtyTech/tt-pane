@@ -40,18 +40,18 @@ cargo build --release --no-default-features
 
 | Shortcut | Action |
 | --- | --- |
-| Ctrl+Alt+Numpad1 | Left half |
-| Ctrl+Alt+Numpad2 | Right half |
-| Ctrl+Alt+Numpad3 | Center without resizing (clamp oversized windows) |
-| Ctrl+Alt+Numpad4 | Bottom left quarter |
-| Ctrl+Alt+Numpad5 | Bottom center (bottom half) |
-| Ctrl+Alt+Numpad6 | Bottom right quarter |
-| Ctrl+Alt+Numpad7 | Top left quarter |
-| Ctrl+Alt+Numpad8 | Top center (top half) |
-| Ctrl+Alt+Numpad9 | Top right quarter |
-| Ctrl+Alt+Numpad0 | Fill work area |
+| Ctrl+Alt+1 | Left half |
+| Ctrl+Alt+2 | Right half |
+| Ctrl+Alt+3 | Center without resizing (clamp oversized windows) |
+| Ctrl+Alt+4 | Bottom left quarter |
+| Ctrl+Alt+5 | Bottom center (bottom half) |
+| Ctrl+Alt+6 | Bottom right quarter |
+| Ctrl+Alt+7 | Top left quarter |
+| Ctrl+Alt+8 | Top center (top half) |
+| Ctrl+Alt+9 | Top right quarter |
+| Ctrl+Alt+0 | Fill work area |
 
-These are numeric keypad keys, distinct from the number row. Enable Num Lock on Windows/Linux. The shortcut recorder preserves the numpad distinction; number-row keys can still be assigned explicitly. macOS uses the same Control+Option defaults; Command shortcuts can be recorded too. System and application shortcuts can reserve combinations; choose alternatives where needed. Some applications impose minimum window sizes, so requested bounds are not always achievable.
+These are number-row keys (Digit0 through Digit9), matching the recorded working 1 and 2 bindings. The recorder also supports distinct numpad keys when explicitly assigned. macOS uses the same Control+Option defaults; Command shortcuts can be recorded too. System and application shortcuts can reserve combinations; choose alternatives where needed. Some applications impose minimum window sizes, so requested bounds are not always achievable.
 
 ## Platforms and limits
 
@@ -99,11 +99,11 @@ version = 1
 
 [[bindings]]
 action = "left"
-shortcut = "Ctrl+Alt+Numpad1"
+shortcut = "Ctrl+Alt+1"
 
 [[bindings]]
 action = "top-left"
-shortcut = "Ctrl+Alt+Numpad7"
+shortcut = "Ctrl+Alt+7"
 ```
 
 ```sh
