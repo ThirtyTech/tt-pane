@@ -12,8 +12,8 @@ mod windows;
 
 pub fn apply(action: Action) -> Result<()> {
     anyhow::ensure!(
-        action != Action::FillGap,
-        "Fill gap requires the positioning coordinator and saved state"
+        action != Action::FillGap && !action.adjusts_pair(),
+        "This action requires the positioning coordinator"
     );
     apply_with(None, &mut |_, area, current| {
         Ok(action.target(area, current))
@@ -46,8 +46,8 @@ pub fn apply_with(
 /// Explicit native window targeting for automation. HWNDs are Windows-specific.
 pub fn apply_to_window(action: Action, handle: u64) -> Result<()> {
     anyhow::ensure!(
-        action != Action::FillGap,
-        "Fill gap requires the positioning coordinator and saved state"
+        action != Action::FillGap && !action.adjusts_pair(),
+        "This action requires the positioning coordinator"
     );
     apply_with(Some(handle), &mut |_, area, current| {
         Ok(action.target(area, current))
@@ -83,3 +83,14 @@ pub fn description() -> &'static str {
 pub use windows::attach_parent_console;
 #[cfg(all(windows, feature = "window-icon"))]
 pub use windows::set_window_icon;
+
+/// Move the shared boundary of a window and its vertical neighbor.
+pub fn resize_pair(handle: Option<u64>, up: bool) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    return windows::resize_pair(handle, up);
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (handle, up);
+        anyhow::bail!("Paired vertical resizing currently supports Windows only")
+    }
+}

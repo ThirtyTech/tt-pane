@@ -236,6 +236,16 @@ pub fn apply(config: &Config, path: &Path, action: Action, window: Option<u64>) 
         .context("Open positioning cycle lock")?;
     lock.lock().context("Lock positioning cycle")?;
     let state_path = sidecar(&path, ".cycle.json");
+    if action.adjusts_pair() {
+        platform::resize_pair(window, action == Action::ResizeUp)?;
+        // Both windows changed. Discard stale growth baselines and saved gaps.
+        match std::fs::remove_file(&state_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("Reset positioning state after paired resize"),
+        }
+        return Ok(());
+    }
     let previous: Option<Cycle> = match File::open(&state_path) {
         Ok(file) => serde_json::from_reader(file.take(64 * 1024)).ok(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,

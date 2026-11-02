@@ -265,6 +265,63 @@ pub fn binary_positions_disposable_window_on_every_monitor(
                 }
             }
         }
+        // A narrow, offset pair avoids matching any normal tiled user windows.
+        // Only the disposable neighbor is briefly shown, without activation.
+        let monitor = monitors[0];
+        let top = Rect {
+            x: monitor.left + 37,
+            y: monitor.top + 43,
+            width: 317,
+            height: 240,
+        };
+        let bottom = Rect {
+            y: top.y + top.height,
+            ..top
+        };
+        for (handle, rect) in [(window.0, bottom), (destination.0, top)] {
+            SetWindowPos(
+                handle,
+                None,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                SWP_NOACTIVATE | SWP_NOZORDER,
+            )
+            .unwrap();
+        }
+        assert_eq!(apply_command(Action::ResizeUp, window.0, false), bottom);
+        SetWindowLongPtrW(destination.0, GWL_EXSTYLE, WS_EX_NOACTIVATE.0 as isize);
+        let foreground = GetForegroundWindow();
+        let _ = ShowWindow(destination.0, SW_SHOWNOACTIVATE);
+        let mut pair = (bottom, top);
+        for action in [
+            Action::ResizeUp,
+            Action::ResizeDown,
+            Action::ResizeDown,
+            Action::ResizeUp,
+        ] {
+            pair =
+                crate::geometry::resize_vertical_pair(pair.0, pair.1, action == Action::ResizeUp)
+                    .unwrap();
+            assert_eq!(apply_command(action, window.0, true), pair.0);
+            let mut actual = RECT::default();
+            GetWindowRect(destination.0, &mut actual).unwrap();
+            assert_eq!(
+                (
+                    actual.left,
+                    actual.top,
+                    actual.right - actual.left,
+                    actual.bottom - actual.top
+                ),
+                (pair.1.x, pair.1.y, pair.1.width, pair.1.height)
+            );
+            assert!(!std::path::Path::new(&format!("{config}.cycle.json")).exists());
+        }
+        assert_eq!(pair, (bottom, top));
+        assert_eq!(GetForegroundWindow(), foreground);
+        let _ = ShowWindow(destination.0, SW_HIDE);
+        assert_eq!(apply_command(Action::ResizeDown, window.0, false), bottom);
         eprintln!(
             "Verified {} actions, {} growth steps plus reset, on {} monitors and shrink/expand/two-window gap sequences through separate CLI invocations",
             Action::POSITIONS.len(),

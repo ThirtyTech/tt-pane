@@ -25,6 +25,138 @@ pub fn apply(
     apply_inner(window, resolve)
 }
 
+/// Discover live, visible neighbors rather than relying on saved placements.
+pub fn resize_pair(handle: Option<u64>, up: bool) -> Result<()> {
+    use windows::Win32::Foundation::LPARAM;
+    use windows::core::BOOL;
+    unsafe extern "system" fn collect(window: HWND, data: LPARAM) -> BOOL {
+        // SAFETY: EnumWindows invokes this synchronously with our exclusive live Vec.
+        unsafe { &mut *(data.0 as *mut Vec<HWND>) }.push(window);
+        BOOL(1)
+    }
+    let _dpi = DpiContext::enter();
+    // SAFETY: All HWNDs are opaque identifiers validated by Win32; output buffers
+    // have their declared size and remain live throughout each synchronous call.
+    unsafe {
+        let selected = match handle {
+            Some(handle) => HWND(usize::try_from(handle)? as *mut _),
+            None => GetForegroundWindow(),
+        };
+        ensure!(
+            IsWindow(Some(selected)).as_bool(),
+            "Invalid or missing window"
+        );
+        ensure!(
+            !IsIconic(selected).as_bool() && !IsZoomed(selected).as_bool(),
+            "Select a restored window to resize a shared boundary"
+        );
+        ensure!(
+            selected != GetDesktopWindow() && selected != GetShellWindow(),
+            "Desktop cannot be resized"
+        );
+        let current = from_rect(read_bounds(selected)?.1);
+        let monitor = MonitorFromWindow(selected, MONITOR_DEFAULTTONEAREST);
+        let mut windows = Vec::<HWND>::new();
+        EnumWindows(Some(collect), LPARAM(&mut windows as *mut _ as isize))?;
+        let mut candidates = Vec::new();
+        for window in windows {
+            if window == selected
+                || window == GetDesktopWindow()
+                || window == GetShellWindow()
+                || !IsWindowVisible(window).as_bool()
+                || IsIconic(window).as_bool()
+                || IsZoomed(window).as_bool()
+                || (GetWindowLongPtrW(window, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0) != 0
+                || MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) != monitor
+            {
+                continue;
+            }
+            let mut cloaked = 0u32;
+            if windows::Win32::Graphics::Dwm::DwmGetWindowAttribute(
+                window,
+                windows::Win32::Graphics::Dwm::DWMWA_CLOAKED,
+                &mut cloaked as *mut _ as *mut _,
+                std::mem::size_of::<u32>() as u32,
+            )
+            .is_ok()
+                && cloaked != 0
+            {
+                continue;
+            }
+            let Ok((_, bounds)) = read_bounds(window) else {
+                continue;
+            };
+            let neighbor = from_rect(bounds);
+            if let Some(targets) = crate::geometry::resize_vertical_pair(current, neighbor, up) {
+                candidates.push((window, neighbor, targets));
+            }
+        }
+        // In a stack, prefer the neighbor in the arrow's direction. At an outer
+        // edge use the other neighbor, so either arrow adjusts the same pair.
+        let preferred = candidates
+            .iter()
+            .any(|(_, rect, _)| (rect.y < current.y) == up);
+        candidates.retain(|(_, rect, _)| !preferred || (rect.y < current.y) == up);
+        ensure!(
+            !candidates.is_empty(),
+            "No vertically adjacent window with matching left and right edges on this monitor"
+        );
+        ensure!(
+            candidates.len() == 1,
+            "Multiple overlapping neighbors; shared boundary is ambiguous"
+        );
+        let (neighbor, before, (target, neighbor_target)) = candidates[0];
+        apply_pair(selected, current, target, neighbor, before, neighbor_target)
+    }
+}
+
+fn apply_pair(
+    selected: HWND,
+    before: Rect,
+    target: Rect,
+    neighbor: HWND,
+    neighbor_before: Rect,
+    neighbor_target: Rect,
+) -> Result<()> {
+    // Resize the shrinking window first. If an app enforces a minimum or rejects
+    // either target, restore both original bounds and report the failure.
+    let mut pair = [
+        (selected, before, target),
+        (neighbor, neighbor_before, neighbor_target),
+    ];
+    if target.height > before.height {
+        pair.swap(0, 1);
+    }
+    let result = (|| -> Result<()> {
+        for &(window, _, requested) in &pair {
+            let actual = apply_inner(window, &mut |_, _, _| Ok(requested))?;
+            ensure!(
+                actual == requested,
+                "Window minimum size or application constraints prevent this resize"
+            );
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let mut rollback_errors = Vec::new();
+        for &(window, original, _) in pair.iter().rev() {
+            match apply_inner(window, &mut |_, _, _| Ok(original)) {
+                Ok(actual) if actual == original => {}
+                Ok(_) => rollback_errors
+                    .push("application did not restore its original bounds".to_owned()),
+                Err(error) => rollback_errors.push(error.to_string()),
+            }
+        }
+        ensure!(
+            rollback_errors.is_empty(),
+            "{error}; rollback incomplete: {}",
+            rollback_errors.join("; ")
+        );
+        return Err(error);
+    }
+    Ok(())
+}
+
 // A thread-bound guard restores DPI awareness on errors and unwinding too.
 struct DpiContext {
     previous: windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT,
@@ -213,4 +345,95 @@ pub fn set_window_icon(window: &impl raw_window_handle::HasWindowHandle) -> anyh
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::{
+        Win32::Foundation::{LPARAM, LRESULT, WPARAM},
+        core::w,
+    };
+
+    unsafe extern "system" fn constrained_window(
+        window: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if message == WM_WINDOWPOSCHANGING {
+            // SAFETY: Windows supplies a live WINDOWPOS for this synchronous message.
+            let position = unsafe { &mut *(lparam.0 as *mut WINDOWPOS) };
+            if !position.flags.contains(SWP_NOSIZE) {
+                position.cy = position.cy.clamp(100, 500);
+            }
+        }
+        // SAFETY: Forward the original native message and its unchanged parameters.
+        unsafe { DefWindowProcW(window, message, wparam, lparam) }
+    }
+
+    #[test]
+    fn paired_resize_rolls_back_when_either_application_rejects_its_bounds() {
+        struct OwnedWindow(HWND);
+        impl Drop for OwnedWindow {
+            fn drop(&mut self) {
+                // SAFETY: This test exclusively owns the window on its creating thread.
+                unsafe {
+                    let _ = DestroyWindow(self.0);
+                }
+            }
+        }
+        let _dpi = DpiContext::enter();
+        // SAFETY: The class callback is valid for the process lifetime. These hidden
+        // disposable windows are owned by this thread; all buffers are initialized.
+        unsafe {
+            let class = WNDCLASSW {
+                lpfnWndProc: Some(constrained_window),
+                lpszClassName: w!("sTile paired constraint test"),
+                ..Default::default()
+            };
+            assert_ne!(RegisterClassW(&class), 0);
+            let create = |y| {
+                OwnedWindow(
+                    CreateWindowExW(
+                        Default::default(),
+                        class.lpszClassName,
+                        w!("sTile test"),
+                        WS_POPUP,
+                        100,
+                        y,
+                        317,
+                        400,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .unwrap(),
+                )
+            };
+            let top = create(100);
+            let bottom = create(500);
+            let a = from_rect(read_bounds(top.0).unwrap().1);
+            let b = from_rect(read_bounds(bottom.0).unwrap().1);
+            // The top accepts 200, then the bottom refuses 600 (max 500).
+            let (ta, tb) = crate::geometry::resize_vertical_pair(a, b, true).unwrap();
+            assert!(apply_pair(top.0, a, ta, bottom.0, b, tb).is_err());
+            assert_eq!(from_rect(read_bounds(top.0).unwrap().1), a);
+            assert_eq!(from_rect(read_bounds(bottom.0).unwrap().1), b);
+            // The first (shrinking) window refuses a height below its minimum.
+            let ta = Rect { height: 50, ..a };
+            let tb = Rect {
+                y: a.y + 50,
+                height: 750,
+                ..b
+            };
+            assert!(apply_pair(top.0, a, ta, bottom.0, b, tb).is_err());
+            assert_eq!(from_rect(read_bounds(top.0).unwrap().1), a);
+            assert_eq!(from_rect(read_bounds(bottom.0).unwrap().1), b);
+            drop(bottom);
+            drop(top);
+            UnregisterClassW(class.lpszClassName, None).unwrap();
+        }
+    }
 }

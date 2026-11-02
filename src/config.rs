@@ -57,7 +57,21 @@ impl Default for Growth {
 impl Default for Config {
     fn default() -> Self {
         let keys = [
-            "1", "2", "8", "5", "7", "9", "4", "6", "3", "0", "-", "=", "Shift+8",
+            "1",
+            "2",
+            "8",
+            "5",
+            "7",
+            "9",
+            "4",
+            "6",
+            "3",
+            "0",
+            "-",
+            "=",
+            "Shift+8",
+            "ArrowUp",
+            "ArrowDown",
         ];
         Self {
             version: 1,
@@ -266,7 +280,10 @@ mod tests {
         let path = dir.path().join("config.toml");
         config.save(&path).unwrap();
         config.save(&path).unwrap();
-        assert_eq!(Config::load(&path).unwrap().bindings.len(), 13);
+        assert_eq!(
+            Config::load(&path).unwrap().bindings.len(),
+            Action::ALL.len()
+        );
         config.bindings[1].shortcut = "Control+Alt+Digit1".into();
         assert!(config.validate().is_err());
     }

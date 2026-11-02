@@ -66,10 +66,22 @@ impl PositionPreview {
     }
 
     fn select(&mut self, action: Action, percent: u32, now: Instant) {
-        if !action.adjusts_width() && action != Action::FillGap {
+        if !action.adjusts_width() && !action.adjusts_pair() && action != Action::FillGap {
             self.placement = action;
         }
-        let target = if action == Action::FillGap {
+        let target = if action.adjusts_pair() {
+            let base = Action::BottomLeft.target(PREVIEW_AREA, PREVIEW_AREA);
+            let neighbor = Action::TopLeft.target(PREVIEW_AREA, PREVIEW_AREA);
+            let (rect, _) =
+                crate::geometry::resize_vertical_pair(base, neighbor, action == Action::ResizeUp)
+                    .unwrap();
+            [
+                rect.x as f32,
+                rect.y as f32,
+                rect.width as f32,
+                rect.height as f32,
+            ]
+        } else if action == Action::FillGap {
             let base = self.placement.target(PREVIEW_AREA, PREVIEW_AREA);
             let reduced = base.adjust_width(
                 PREVIEW_AREA,
@@ -400,11 +412,13 @@ impl Render for Settings {
                 .child(div().id("placement-options").w(px(264.)).flex_shrink_0().min_h_0().overflow_y_scroll().flex().flex_col().gap_4().p_4().rounded_lg().bg(rgb(0x131e2c))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Position preview"))
                     .child(div().relative().flex_shrink_0().w(px(PREVIEW_AREA.width as f32)).h(px(PREVIEW_AREA.height as f32)).rounded_md().overflow_hidden().bg(rgb(0x090f19)).border_1().border_color(rgb(0x354961))
+                        .when(selected.adjusts_pair(), |el| el.child(div().absolute().left(px(preview_x)).top(px(0.)).w(px(preview_width)).h(px(preview_y.max(0.))).bg(rgb(0x355b91)).border_1().border_color(rgb(0x8bb5ef))))
                         .child(div().absolute().left(px(preview_x)).top(px(preview_y))
                             .w(px(preview_width)).h(px(preview_height)).rounded_sm()
                             .bg(rgb(0x258c78)).border_1().border_color(rgb(0x6ee7c0))))
                     .child(div().text_sm().child(selected.label()))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Hover a keybinding to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."))
+                    .when(selected.adjusts_pair(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Move the shared boundary by 25% of the pair's combined height. Blue shows the neighbor. Windows only; matching left and right edges required.")))
                     .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+Shift+8 (*).")))
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Width adjustment"))

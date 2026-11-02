@@ -85,3 +85,15 @@ id = "fill-gap"
 title = "Fill last gap"
 contexts = ["workspace"]
 command = ["./target/plugin/release/stile", "apply", "fill-gap", "--json"]
+
+[[actions]]
+id = "resize-up"
+title = "Move shared boundary up"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "resize-up", "--json"]
+
+[[actions]]
+id = "resize-down"
+title = "Move shared boundary down"
+contexts = ["workspace"]
+command = ["./target/plugin/release/stile", "apply", "resize-down", "--json"]

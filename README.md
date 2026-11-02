@@ -68,6 +68,8 @@ cargo build --release --no-default-features
 | Ctrl+Alt+- | Shrink width by 25% |
 | Ctrl+Alt+= | Expand width by 25% |
 | Ctrl+Alt+Shift+8 (*) | Fill the last saved gap |
+| Ctrl+Alt+Up | Move shared horizontal boundary up |
+| Ctrl+Alt+Down | Move shared horizontal boundary down |
 
 The digit shortcuts use number-row keys (Digit0 through Digit9). The minus shortcut uses the `-` key; expansion uses the single key normally labeled `=` and `+`. **Shift is not required**. Ctrl+Alt+Shift+= also expands, unless that combination is explicitly assigned to another action. The recorder also supports distinct numpad keys when explicitly assigned. macOS uses the same Control+Option defaults; Command shortcuts can be recorded too. System and application shortcuts can reserve combinations; choose alternatives where needed. Some applications impose minimum window sizes, so requested bounds are not always achievable.
 
@@ -78,6 +80,16 @@ The digit shortcuts use number-row keys (Digit0 through Digit9). The minus short
 Repeated presses keep resizing, with no reset cycle. Expansion stops at the available monitor boundary for that anchor, and shrinking stops at the application's minimum width (at least one pixel). Percentages apply to the current width, so shrinking and expanding once are not inverse operations: 1000 → 750 → 938 pixels. Adjust the shared percentage under **Width adjustment → Width change per press** in Settings (1–99%, default 25%). The two-dimensional growth controls below it apply only to repeated positioning shortcuts.
 
 In Position preview, hover a placement first, then Shrink width or Expand width to see how the width changes for that placement. The preview uses the configured width percentage.
+
+### Resize neighboring windows vertically (Windows)
+
+**Ctrl+Alt+Up/Down** moves the shared horizontal boundary by **25% of the two windows' combined height**. With the bottom-left window selected, Up grows it upward and shrinks the window above: a 50/50 split becomes 75/25. Down reverses that change. With the top window selected, Up shrinks it and grows the window below. Widths and the pair's outside edges stay fixed; any existing gap is preserved.
+
+The neighbor must be visible, restored, on the same monitor, and have matching left/right edges (within two pixels). sTile accepts up to 16 pixels of vertical spacing and two pixels of border-rounding overlap. It excludes minimized, maximized, cloaked, desktop, and tool windows. If there are neighbors both above and below, the arrow chooses that side; with only one neighbor, both arrows adjust that pair. Missing or ambiguous neighbors produce an error without moving windows.
+
+The boundary stops before either window reaches zero height. If an application rejects the requested size (for example, its minimum height), sTile attempts to restore both original bounds and reports the error. Successful paired adjustments clear saved growth/gap state to avoid reusing stale rectangles. These actions currently require Windows; other backends return an explicit unsupported error.
+
+The actions are editable in Settings and available as `stile apply resize-up` / `stile apply resize-down`, including `--window HWND --json` and Herdr actions. Older saved configurations preserve their bindings: record Ctrl+Alt+Up/Down for the two **Move shared boundary** actions in Settings, or reset defaults and save. These use a fixed 25% step independent of the width and repeated-growth settings. The preview shows the selected bottom-left window in green and its neighbor in blue.
 
 ### Fill a freed gap
 
@@ -185,7 +197,7 @@ stile --config ./my-config.toml
 
 ## Executable plugin interface
 
-The root `herdr-plugin.toml` follows [Herdr’s executable plugin contract](https://herdr.dev/tui/docs/plugins/): an argv command per action, without a shell wrapper or plugin SDK. It declares all ten positions, two width adjustments, gap filling, and a build step for the standalone CLI. For a local checkout:
+The root `herdr-plugin.toml` follows [Herdr’s executable plugin contract](https://herdr.dev/tui/docs/plugins/): an argv command per action, without a shell wrapper or plugin SDK. It declares all ten positions, two width adjustments, gap filling, two shared-boundary adjustments, and a build step for the standalone CLI. For a local checkout:
 
 ```sh
 cargo build --release --locked --no-default-features --target-dir target/plugin
@@ -214,7 +226,7 @@ GPUI 0.2.2 normally exits after closing its last Windows/X11/Wayland window. The
 
 ## Native tests without Computer Use
 
-Command-level tests spawn the actual binary and verify JSON and exit codes. On Windows, tests create hidden disposable windows, invoke all ten positioning commands and their growth/reset cycles for every attached monitor, and read back bounds with Win32. They also repeatedly shrink/expand bottom-left, bottom-right, and centered windows, verifying width-only changes and maximum-width clamping. Two-window tests fill gaps from 25%/50% reductions, leave the source untouched, reject source-window fills, and reject consumed gaps without changing bounds or state. Each press is a separate CLI process. They do not activate a window, inject input, or move user windows. This was verified against four attached monitors (784 command-level bounds checks).
+Command-level tests spawn the actual binary and verify JSON and exit codes. On Windows, tests create hidden disposable windows, invoke all ten positioning commands and their growth/reset cycles for every attached monitor, and read back bounds with Win32. They also repeatedly shrink/expand bottom-left, bottom-right, and centered windows, verifying width-only changes and maximum-width clamping. Two-window tests fill gaps from 25%/50% reductions, leave the source untouched, reject source-window fills, and reject consumed gaps without changing bounds or state. Each press is a separate CLI process. Paired-resize tests briefly show a disposable neighbor without activation, verify both windows and Up/Down reversal, and reject missing/hidden neighbors. Native constraint tests verify rollback when either window rejects its size. Tests do not activate windows, inject input, or move user windows. This was verified against four attached monitors (784 command-level bounds checks).
 
 An opt-in Windows GPU/desktop test verifies windowless tray startup and closing Settings while keeping the process alive:
 

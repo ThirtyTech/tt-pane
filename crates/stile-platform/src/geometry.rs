@@ -51,6 +51,8 @@ pub enum Action {
     ShrinkWidth,
     ExpandWidth,
     FillGap,
+    ResizeUp,
+    ResizeDown,
 }
 
 impl Action {
@@ -67,7 +69,7 @@ impl Action {
         Self::Maximize,
     ];
 
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 15] = [
         Self::Left,
         Self::Right,
         Self::Top,
@@ -81,7 +83,13 @@ impl Action {
         Self::ShrinkWidth,
         Self::ExpandWidth,
         Self::FillGap,
+        Self::ResizeUp,
+        Self::ResizeDown,
     ];
+
+    pub fn adjusts_pair(self) -> bool {
+        matches!(self, Self::ResizeUp | Self::ResizeDown)
+    }
 
     pub fn adjusts_width(self) -> bool {
         matches!(self, Self::ShrinkWidth | Self::ExpandWidth)
@@ -94,7 +102,11 @@ impl Action {
             Self::Top | Self::Bottom | Self::Center | Self::Maximize => {
                 Some(HorizontalAnchor::Center)
             }
-            Self::ShrinkWidth | Self::ExpandWidth | Self::FillGap => None,
+            Self::ShrinkWidth
+            | Self::ExpandWidth
+            | Self::FillGap
+            | Self::ResizeUp
+            | Self::ResizeDown => None,
         }
     }
 
@@ -113,6 +125,8 @@ impl Action {
             Self::ShrinkWidth => "shrink-width",
             Self::ExpandWidth => "expand-width",
             Self::FillGap => "fill-gap",
+            Self::ResizeUp => "resize-up",
+            Self::ResizeDown => "resize-down",
         }
     }
 
@@ -131,6 +145,8 @@ impl Action {
             Self::ShrinkWidth => "Shrink width",
             Self::ExpandWidth => "Expand width",
             Self::FillGap => "Fill last gap",
+            Self::ResizeUp => "Move shared boundary up",
+            Self::ResizeDown => "Move shared boundary down",
         }
     }
 
@@ -140,7 +156,7 @@ impl Action {
         let mut target = area;
         match self {
             // Contextual action: the coordinator resolves its saved rectangle.
-            Self::FillGap => return current,
+            Self::FillGap | Self::ResizeUp | Self::ResizeDown => return current,
             Self::ShrinkWidth | Self::ExpandWidth => {
                 return current.adjust_width(
                     area,
@@ -216,6 +232,52 @@ impl Action {
             height,
         }
     }
+}
+
+/// Resize a vertically adjacent pair with matching horizontal edges. Preserve the
+/// outside edges and the existing gap. The step is 25% of their combined height.
+/// Returns bounds in the same order as the inputs.
+pub fn resize_vertical_pair(selected: Rect, neighbor: Rect, up: bool) -> Option<(Rect, Rect)> {
+    if selected.width <= 0
+        || neighbor.width <= 0
+        || selected.height <= 0
+        || neighbor.height <= 0
+        || selected.x.abs_diff(neighbor.x) > 2
+        || (i64::from(selected.x) + i64::from(selected.width)
+            - i64::from(neighbor.x)
+            - i64::from(neighbor.width))
+        .abs()
+            > 2
+    {
+        return None;
+    }
+    let selected_above = selected.y < neighbor.y;
+    let (top, bottom) = if selected_above {
+        (selected, neighbor)
+    } else {
+        (neighbor, selected)
+    };
+    let gap = i64::from(bottom.y) - i64::from(top.y) - i64::from(top.height);
+    if !(-2..=16).contains(&gap) {
+        return None;
+    }
+    let step = ((i64::from(top.height) + i64::from(bottom.height) + 2) / 4).max(1);
+    let delta = (if up { -step } else { step })
+        .clamp(1 - i64::from(top.height), i64::from(bottom.height) - 1);
+    let top = Rect {
+        height: i32::try_from(i64::from(top.height) + delta).ok()?,
+        ..top
+    };
+    let bottom = Rect {
+        y: i32::try_from(i64::from(bottom.y) + delta).ok()?,
+        height: i32::try_from(i64::from(bottom.height) - delta).ok()?,
+        ..bottom
+    };
+    Some(if selected_above {
+        (top, bottom)
+    } else {
+        (bottom, top)
+    })
 }
 
 impl Rect {
@@ -414,6 +476,74 @@ mod tests {
             None
         );
     }
+    #[test]
+    fn paired_resize_uses_combined_height_and_reverses_without_drift() {
+        for (y, height, gap) in [(-1000, 500, 0), (40, 501, 8)] {
+            let top = Rect {
+                x: -1920,
+                y,
+                width: 960,
+                height,
+            };
+            let bottom = Rect {
+                y: y + height + gap,
+                ..top
+            };
+            let step = (height * 2 + 2) / 4;
+            for selected_top in [false, true] {
+                let (selected, neighbor) = if selected_top {
+                    (top, bottom)
+                } else {
+                    (bottom, top)
+                };
+                let (a, b) = resize_vertical_pair(selected, neighbor, true).unwrap();
+                let (new_top, new_bottom) = if selected_top { (a, b) } else { (b, a) };
+                assert_eq!(new_top.height, height - step);
+                assert_eq!(new_bottom.height, height + step);
+                assert_eq!(new_top.y, top.y);
+                assert_eq!(new_bottom.y + new_bottom.height, bottom.y + bottom.height);
+                assert_eq!(new_bottom.y - new_top.y - new_top.height, gap);
+                assert_eq!(
+                    resize_vertical_pair(a, b, false),
+                    Some((selected, neighbor))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn paired_resize_rejects_non_neighbors_and_never_collapses() {
+        let top = Rect {
+            x: 0,
+            y: 0,
+            width: 500,
+            height: 500,
+        };
+        let bottom = Rect { y: 500, ..top };
+        for invalid in [
+            Rect { x: 500, ..bottom },
+            Rect {
+                width: 250,
+                ..bottom
+            },
+            Rect { y: 600, ..bottom },
+            Rect { y: 400, ..bottom },
+            Rect {
+                height: 0,
+                ..bottom
+            },
+        ] {
+            assert!(resize_vertical_pair(top, invalid, true).is_none());
+        }
+        let mut pair = (top, bottom);
+        for _ in 0..10 {
+            pair = resize_vertical_pair(pair.0, pair.1, true).unwrap();
+        }
+        assert_eq!(pair.0.height, 1);
+        assert_eq!(pair.1.height, 999);
+        assert_eq!(pair.1.y, 1);
+    }
+
     const LEFT: Rect = Rect {
         x: -1920,
         y: 80,
