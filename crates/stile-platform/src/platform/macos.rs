@@ -141,7 +141,7 @@ fn set_size(window: &CFType, size: &CGSize) -> Result<()> {
     set_attribute(window, "AXSize", &size_value(size)?)
 }
 
-pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect) -> Result<Rect> {
+pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>) -> Result<Rect> {
     // SAFETY: This process-level query takes no arguments or pointers.
     let trusted = unsafe { AXIsProcessTrusted() } != 0;
     ensure!(
@@ -191,7 +191,7 @@ pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect) -> Result<Rect> 
     // SAFETY: window owns a live Core Foundation reference for this synchronous query.
     let identity = unsafe { core_foundation::base::CFHash(window.as_CFTypeRef()) };
     let id = format!("ax:{}:{identity}", application.processIdentifier());
-    let target = resolve(&id, area, current);
+    let target = resolve(&id, area, current)?;
     let size = CGSize::new(target.width as f64, target.height as f64);
     let point = CGPoint::new(target.x as f64, target.y as f64);
     set_size(&window, &size)?;

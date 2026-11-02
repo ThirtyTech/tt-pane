@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 mod wayland;
 mod x11;
 
-pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect) -> Result<Rect> {
+pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>) -> Result<Rect> {
     if super::is_wayland() {
         if std::env::var_os("SWAYSOCK").is_some() {
             return wayland::sway(resolve);

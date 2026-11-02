@@ -71,6 +71,21 @@ fn invalid_growth_config_returns_json_error() {
     );
 }
 
+#[test]
+fn fill_gap_without_saved_state_reports_json_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_stile"))
+        .arg("--config")
+        .arg(dir.path().join("config.toml"))
+        .args(["apply", "fill-gap", "--json"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["ok"], false);
+    assert!(result["error"].as_str().unwrap().contains("No saved gap"));
+}
+
 #[cfg(target_os = "windows")]
 #[test]
 fn binary_positions_disposable_window_on_every_monitor() {
@@ -86,7 +101,7 @@ fn binary_positions_disposable_window_on_every_monitor() {
         let config = stile::config::Config {
             growth,
             width_resize: stile::config::WidthResize {
-                percent: if growth.steps == 1 { 40 } else { 25 },
+                percent: if growth.steps == 1 { 50 } else { 25 },
             },
             ..Default::default()
         };

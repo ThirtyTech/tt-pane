@@ -11,7 +11,14 @@ mod macos;
 mod windows;
 
 pub fn apply(action: Action) -> Result<()> {
-    apply_with(None, &mut |_, area, current| action.target(area, current)).map(|_| ())
+    anyhow::ensure!(
+        action != Action::FillGap,
+        "Fill gap requires the positioning coordinator and saved state"
+    );
+    apply_with(None, &mut |_, area, current| {
+        Ok(action.target(area, current))
+    })
+    .map(|_| ())
 }
 
 /// Resolve a target after capturing the native window and its work area.
@@ -19,7 +26,7 @@ pub fn apply(action: Action) -> Result<()> {
 /// Returns observed bounds on synchronous backends, requested bounds on IPC backends.
 pub fn apply_with(
     handle: Option<u64>,
-    resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect,
+    resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>,
 ) -> Result<Rect> {
     #[cfg(target_os = "windows")]
     return windows::apply(handle, resolve);
@@ -38,8 +45,12 @@ pub fn apply_with(
 
 /// Explicit native window targeting for automation. HWNDs are Windows-specific.
 pub fn apply_to_window(action: Action, handle: u64) -> Result<()> {
+    anyhow::ensure!(
+        action != Action::FillGap,
+        "Fill gap requires the positioning coordinator and saved state"
+    );
     apply_with(Some(handle), &mut |_, area, current| {
-        action.target(area, current)
+        Ok(action.target(area, current))
     })
     .map(|_| ())
 }

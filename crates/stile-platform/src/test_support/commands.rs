@@ -80,7 +80,26 @@ pub fn binary_positions_disposable_window_on_every_monitor(
             )
             .unwrap(),
         );
-        let apply_command = |action: Action| {
+        let destination = TestWindow(
+            CreateWindowExW(
+                WS_EX_TOOLWINDOW,
+                w!("STATIC"),
+                w!("sTile gap destination test"),
+                WS_POPUP,
+                0,
+                0,
+                320,
+                240,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap(),
+        );
+        let apply_command = |action: Action, target: HWND, succeed: bool| {
+            let state_path = format!("{config}.cycle.json");
+            let state_before = std::fs::read(&state_path).ok();
             let mut child = Command::new(binary)
                 .args([
                     "--config",
@@ -88,7 +107,7 @@ pub fn binary_positions_disposable_window_on_every_monitor(
                     "apply",
                     action.name(),
                     "--window",
-                    &(window.0.0 as usize).to_string(),
+                    &(target.0 as usize).to_string(),
                     "--json",
                 ])
                 .stdout(std::process::Stdio::piped())
@@ -114,15 +133,23 @@ pub fn binary_positions_disposable_window_on_every_monitor(
                 std::thread::sleep(Duration::from_millis(2));
             }
             let output = child.wait_with_output().unwrap();
-            assert!(
+            assert_eq!(
                 output.status.success(),
+                succeed,
                 "{}",
                 String::from_utf8_lossy(&output.stderr)
             );
             let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-            assert_eq!(response["ok"], true);
+            assert_eq!(response["ok"], succeed);
+            if !succeed {
+                assert_eq!(
+                    std::fs::read(&state_path).ok(),
+                    state_before,
+                    "Failed actions must preserve the saved gap"
+                );
+            }
             let mut actual = RECT::default();
-            GetWindowRect(window.0, &mut actual).unwrap();
+            GetWindowRect(target, &mut actual).unwrap();
             Rect {
                 x: actual.left,
                 y: actual.top,
@@ -171,7 +198,7 @@ pub fn binary_positions_disposable_window_on_every_monitor(
                             (1.0 + f64::from(percent) / 100.0).powi(step as i32),
                         )
                     };
-                    let actual = apply_command(action);
+                    let actual = apply_command(action, window.0, true);
                     assert_eq!(
                         actual, expected,
                         "{action:?}, growth step {step} on {area:?}"
@@ -194,7 +221,7 @@ pub fn binary_positions_disposable_window_on_every_monitor(
                                 1
                             };
                         expected = expected.adjust_width_from(area, anchor, change, base);
-                        let actual = apply_command(adjustment);
+                        let actual = apply_command(adjustment, window.0, true);
                         assert_eq!(
                             actual, expected,
                             "{adjustment:?} from {action:?} on {area:?}"
@@ -204,11 +231,42 @@ pub fn binary_positions_disposable_window_on_every_monitor(
                         expected.width, area.width,
                         "Expansion should stop at the work-area edge"
                     );
+                    let base = apply_command(action, window.0, true);
+                    let reduced = apply_command(Action::ShrinkWidth, window.0, true);
+                    let gap = base.freed_width_gap(reduced).unwrap();
+                    assert_eq!(apply_command(Action::FillGap, window.0, false), reduced);
+                    SetWindowPos(
+                        destination.0,
+                        None,
+                        area.x + 40,
+                        area.y + 40,
+                        320,
+                        240,
+                        SWP_NOACTIVATE | SWP_NOZORDER,
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        apply_command(Action::FillGap, destination.0, true),
+                        gap,
+                        "Fill gap after {width_percent}% reduction from {action:?} on {area:?}"
+                    );
+                    let mut source = RECT::default();
+                    GetWindowRect(window.0, &mut source).unwrap();
+                    assert_eq!(
+                        Rect {
+                            x: source.left,
+                            y: source.top,
+                            width: source.right - source.left,
+                            height: source.bottom - source.top
+                        },
+                        reduced
+                    );
+                    assert_eq!(apply_command(Action::FillGap, destination.0, false), gap);
                 }
             }
         }
         eprintln!(
-            "Verified {} actions, {} growth steps plus reset, on {} monitors and shrink/expand sequences through separate CLI invocations",
+            "Verified {} actions, {} growth steps plus reset, on {} monitors and shrink/expand/two-window gap sequences through separate CLI invocations",
             Action::POSITIONS.len(),
             steps,
             monitors.len()

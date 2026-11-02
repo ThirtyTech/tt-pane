@@ -38,7 +38,7 @@ impl X11 {
     }
 }
 
-pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect) -> Result<Rect> {
+pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>) -> Result<Rect> {
     let (connection, screen) = x11rb::connect(None).context("Connect to X11")?;
     let root = connection.setup().roots[screen].root;
     let x = X11 { connection, root };
@@ -127,7 +127,7 @@ pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect) -> Result<Rect> 
         "x11:{}:{root}:{window}",
         std::env::var("DISPLAY").unwrap_or_default()
     );
-    let target = resolve(&id, area, current);
+    let target = resolve(&id, area, current)?;
     x.message(
         window,
         "_NET_WM_STATE",

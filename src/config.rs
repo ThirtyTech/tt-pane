@@ -56,7 +56,9 @@ impl Default for Growth {
 
 impl Default for Config {
     fn default() -> Self {
-        let keys = ["1", "2", "8", "5", "7", "9", "4", "6", "3", "0", "-", "="];
+        let keys = [
+            "1", "2", "8", "5", "7", "9", "4", "6", "3", "0", "-", "=", "Shift+8",
+        ];
         Self {
             version: 1,
             growth: Growth::default(),
@@ -211,6 +213,21 @@ mod tests {
     }
 
     #[test]
+    fn fill_gap_uses_shifted_number_row_8() {
+        let config = Config::default();
+        let binding = config
+            .bindings
+            .iter()
+            .find(|b| b.action == Action::FillGap)
+            .unwrap();
+        let actual: HotKey = binding.shortcut.parse().unwrap();
+        let expected: HotKey = "Ctrl+Alt+Shift+Digit8".parse().unwrap();
+        assert_eq!(actual.id(), expected.id());
+        assert_ne!(actual.id(), "Ctrl+Alt+8".parse::<HotKey>().unwrap().id());
+        config.validate().unwrap();
+    }
+
+    #[test]
     fn growth_limits_and_custom_settings_roundtrip() {
         let mut config = Config::default();
         for settings in [
@@ -249,7 +266,7 @@ mod tests {
         let path = dir.path().join("config.toml");
         config.save(&path).unwrap();
         config.save(&path).unwrap();
-        assert_eq!(Config::load(&path).unwrap().bindings.len(), 12);
+        assert_eq!(Config::load(&path).unwrap().bindings.len(), 13);
         config.bindings[1].shortcut = "Control+Alt+Digit1".into();
         assert!(config.validate().is_err());
     }
@@ -269,7 +286,7 @@ mod tests {
             assert_eq!(binding.shortcut, format!("Ctrl+Alt+{digit}"));
         }
         for binding in config.bindings {
-            if binding.action.adjusts_width() {
+            if !Action::POSITIONS.contains(&binding.action) {
                 continue;
             }
             let number_row: HotKey = binding.shortcut.parse().unwrap();

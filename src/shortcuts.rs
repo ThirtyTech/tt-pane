@@ -173,6 +173,7 @@ pub fn wayland_bindings(
                 "Equal" => "equal",
                 "NumpadSubtract" => "KP_Subtract",
                 "NumpadAdd" => "KP_Add",
+                "NumpadMultiply" => "KP_Multiply",
                 k if k.starts_with('F') && k[1..].parse::<u8>().is_ok() => k,
                 _ => anyhow::bail!("Wayland export does not yet support key {raw}"),
             }

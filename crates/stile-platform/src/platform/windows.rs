@@ -14,7 +14,7 @@ use windows::Win32::{
 
 pub fn apply(
     handle: Option<u64>,
-    resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect,
+    resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>,
 ) -> Result<Rect> {
     let window = match handle {
         Some(handle) => HWND(usize::try_from(handle)? as *mut _),
@@ -55,7 +55,10 @@ impl Drop for DpiContext {
     }
 }
 
-fn apply_inner(window: HWND, resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect) -> Result<Rect> {
+fn apply_inner(
+    window: HWND,
+    resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>,
+) -> Result<Rect> {
     // SAFETY: HWNDs are opaque OS identifiers, never dereferenced by Rust. Invalid
     // or expired handles are rejected by Win32. All output buffers below are live,
     // initialized structs with the exact sizes required by their APIs; no pointer
@@ -78,26 +81,18 @@ fn apply_inner(window: HWND, resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect) 
             GetMonitorInfoW(monitor, &mut info).as_bool(),
             "Could not read monitor work area"
         );
-        if IsZoomed(window).as_bool() || IsIconic(window).as_bool() {
-            let _ = ShowWindow(window, SW_RESTORE);
-        }
-        let mut outer = RECT::default();
-        GetWindowRect(window, &mut outer)?;
-        let mut visible = outer;
-        let result = DwmGetWindowAttribute(
-            window,
-            DWMWA_EXTENDED_FRAME_BOUNDS,
-            &mut visible as *mut _ as *mut _,
-            std::mem::size_of::<RECT>() as u32,
-        );
-        if result.is_err() || visible.right <= visible.left || visible.bottom <= visible.top {
-            visible = outer;
-        }
+        let (mut outer, mut visible) = read_bounds(window)?;
+        let current = from_rect(visible);
         let area = from_rect(info.rcWork);
         let mut pid = 0;
         GetWindowThreadProcessId(window, Some(&mut pid));
         let id = format!("win32:{pid}:{}", window.0 as usize);
-        let target = resolve(&id, area, from_rect(visible));
+        let target = resolve(&id, area, current)?;
+        // Resolve fallible actions before restoring a minimized/maximized window.
+        if IsZoomed(window).as_bool() || IsIconic(window).as_bool() {
+            let _ = ShowWindow(window, SW_RESTORE);
+            (outer, visible) = read_bounds(window)?;
+        }
         // Account for invisible resize borders so visible edges align with the work area.
         let left = visible.left - outer.left;
         let top = visible.top - outer.top;
@@ -119,7 +114,7 @@ fn apply_inner(window: HWND, resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect) 
             width: outer.right - outer.left - left - right,
             height: outer.bottom - outer.top - top - bottom,
         };
-        let aligned = from_rect(visible).align_width_result(target, actual);
+        let aligned = current.align_width_result(target, actual);
         if aligned.x != actual.x {
             SetWindowPos(
                 window,
@@ -138,6 +133,26 @@ fn apply_inner(window: HWND, resolve: &mut dyn FnMut(&str, Rect, Rect) -> Rect) 
             });
         }
         Ok(actual)
+    }
+}
+
+fn read_bounds(window: HWND) -> Result<(RECT, RECT)> {
+    let mut outer = RECT::default();
+    // SAFETY: Win32 validates the opaque handle. Both output buffers remain live
+    // and DWM receives the exact size of its RECT output for the synchronous call.
+    unsafe {
+        GetWindowRect(window, &mut outer)?;
+        let mut visible = outer;
+        let result = DwmGetWindowAttribute(
+            window,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut visible as *mut _ as *mut _,
+            std::mem::size_of::<RECT>() as u32,
+        );
+        if result.is_err() || visible.right <= visible.left || visible.bottom <= visible.top {
+            visible = outer;
+        }
+        Ok((outer, visible))
     }
 }
 

@@ -50,6 +50,7 @@ pub enum Action {
     Maximize,
     ShrinkWidth,
     ExpandWidth,
+    FillGap,
 }
 
 impl Action {
@@ -66,7 +67,7 @@ impl Action {
         Self::Maximize,
     ];
 
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Left,
         Self::Right,
         Self::Top,
@@ -79,6 +80,7 @@ impl Action {
         Self::Maximize,
         Self::ShrinkWidth,
         Self::ExpandWidth,
+        Self::FillGap,
     ];
 
     pub fn adjusts_width(self) -> bool {
@@ -92,7 +94,7 @@ impl Action {
             Self::Top | Self::Bottom | Self::Center | Self::Maximize => {
                 Some(HorizontalAnchor::Center)
             }
-            Self::ShrinkWidth | Self::ExpandWidth => None,
+            Self::ShrinkWidth | Self::ExpandWidth | Self::FillGap => None,
         }
     }
 
@@ -110,6 +112,7 @@ impl Action {
             Self::Maximize => "maximize",
             Self::ShrinkWidth => "shrink-width",
             Self::ExpandWidth => "expand-width",
+            Self::FillGap => "fill-gap",
         }
     }
 
@@ -127,6 +130,7 @@ impl Action {
             Self::Maximize => "Fill work area",
             Self::ShrinkWidth => "Shrink width",
             Self::ExpandWidth => "Expand width",
+            Self::FillGap => "Fill last gap",
         }
     }
 
@@ -135,6 +139,8 @@ impl Action {
         let half_h = area.height / 2;
         let mut target = area;
         match self {
+            // Contextual action: the coordinator resolves its saved rectangle.
+            Self::FillGap => return current,
             Self::ShrinkWidth | Self::ExpandWidth => {
                 return current.adjust_width(
                     area,
@@ -213,6 +219,35 @@ impl Action {
 }
 
 impl Rect {
+    /// The largest full-height strip freed by a width reduction; ties prefer right.
+    pub fn freed_width_gap(self, reduced: Self) -> Option<Self> {
+        if reduced.width <= 0
+            || reduced.width >= self.width
+            || reduced.y != self.y
+            || reduced.height != self.height
+            || reduced.x < self.x
+            || i64::from(reduced.x) + i64::from(reduced.width)
+                > i64::from(self.x) + i64::from(self.width)
+        {
+            return None;
+        }
+        let left = reduced.x - self.x;
+        let right = self.width - left - reduced.width;
+        if right >= left && right > 0 {
+            Some(Self {
+                x: reduced.x + reduced.width,
+                width: right,
+                ..self
+            })
+        } else if left > 0 {
+            Some(Self {
+                width: left,
+                ..self
+            })
+        } else {
+            None
+        }
+    }
     /// Preserve a width-only request's anchor when an application enforces size limits.
     pub fn align_width_result(self, requested: Self, actual: Self) -> Self {
         if requested.y != self.y
@@ -327,6 +362,58 @@ pub fn monitor_for(window: Rect, monitors: &[Rect]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn freed_gap_covers_only_the_reduced_part_of_the_original_position() {
+        let area = Rect {
+            x: -2000,
+            y: 40,
+            width: 2000,
+            height: 1200,
+        };
+        for percent in [25, 50] {
+            let left = Action::BottomLeft.target(area, area);
+            let reduced = left.adjust_width(area, HorizontalAnchor::Left, -percent);
+            let gap = left.freed_width_gap(reduced).unwrap();
+            assert_eq!(
+                gap,
+                Rect {
+                    x: reduced.x + reduced.width,
+                    width: 1000 - reduced.width,
+                    ..left
+                }
+            );
+            assert_eq!(gap.x + gap.width, left.x + left.width);
+            assert_eq!(gap.intersection(reduced), None);
+            let right = Action::BottomRight.target(area, area);
+            let reduced = right.adjust_width(area, HorizontalAnchor::Right, -percent);
+            assert_eq!(
+                right.freed_width_gap(reduced).unwrap(),
+                Rect {
+                    width: 1000 - reduced.width,
+                    ..right
+                }
+            );
+        }
+        let base = Action::Center.target(area, area);
+        let reduced = base.adjust_width(area, HorizontalAnchor::Center, -50);
+        assert_eq!(
+            base.freed_width_gap(reduced),
+            Some(Rect {
+                x: -750,
+                y: 340,
+                width: 250,
+                height: 600
+            })
+        );
+        assert_eq!(base.freed_width_gap(base), None);
+        assert_eq!(
+            base.freed_width_gap(Rect {
+                height: 400,
+                ..reduced
+            }),
+            None
+        );
+    }
     const LEFT: Rect = Rect {
         x: -1920,
         y: 80,

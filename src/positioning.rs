@@ -4,7 +4,7 @@ use crate::{
     geometry::{Action, HorizontalAnchor, Rect},
     platform,
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{File, OpenOptions},
@@ -12,7 +12,31 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Gap {
+    source: String,
+    area: Rect,
+    base: Rect,
+    source_bounds: Rect,
+    anchor: HorizontalAnchor,
+    target: Rect,
+}
+
+impl Gap {
+    fn usable_on(&self, area: Rect) -> bool {
+        self.area == area
+            && self.target.width > 0
+            && self.target.height > 0
+            && self.target.x >= area.x
+            && self.target.y >= area.y
+            && i64::from(self.target.x) + i64::from(self.target.width)
+                <= i64::from(area.x) + i64::from(area.width)
+            && i64::from(self.target.y) + i64::from(self.target.height)
+                <= i64::from(area.y) + i64::from(area.height)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Cycle {
     version: u32,
     window: String,
@@ -24,9 +48,67 @@ struct Cycle {
     growth: Growth,
     #[serde(default)]
     width_anchor: Option<HorizontalAnchor>,
+    #[serde(default)]
+    gaps: Vec<Gap>,
 }
 
 impl Cycle {
+    fn fill_gap(previous: Option<&Self>, window: &str, area: Rect, growth: Growth) -> Result<Self> {
+        let gap = previous
+            .filter(|p| p.version == 1)
+            .and_then(|p| p.gaps.iter().rev().find(|g| g.usable_on(area)))
+            .context("No saved gap on this monitor. Shrink a positioned window first.")?;
+        ensure!(
+            gap.source != window,
+            "Select a different window to fill this gap"
+        );
+        Ok(Self {
+            version: 1,
+            window: window.to_owned(),
+            action: Action::FillGap,
+            area,
+            base: gap.target,
+            last: gap.target,
+            step: 0,
+            growth,
+            width_anchor: None,
+            gaps: Vec::new(),
+        })
+    }
+
+    fn record_result(&mut self, previous: Option<&Self>, actual: Rect) {
+        self.last = actual;
+        self.gaps = previous
+            .filter(|p| p.version == 1)
+            .map_or_else(Vec::new, |p| p.gaps.clone());
+        // A source moved by sTile, an occupied target, or a consumed gap is no longer free.
+        self.gaps.retain(|g| {
+            g.usable_on(g.area)
+                && g.source != self.window
+                && g.target.intersection(actual).is_none()
+                && !(self.action == Action::FillGap && g.area == self.area)
+        });
+        if self.action.adjusts_width()
+            && let Some(target) = self
+                .base
+                .freed_width_gap(actual)
+                .and_then(|r| r.intersection(self.area))
+        {
+            self.gaps.retain(|g| g.area != self.area);
+            self.gaps.push(Gap {
+                source: self.window.clone(),
+                area: self.area,
+                base: self.base,
+                source_bounds: actual,
+                anchor: self.width_anchor.unwrap(),
+                target,
+            });
+        }
+        if self.gaps.len() > 16 {
+            self.gaps.drain(..self.gaps.len() - 16);
+        }
+    }
+
     fn adjust_width(
         previous: Option<&Self>,
         window: &str,
@@ -35,15 +117,24 @@ impl Cycle {
         current: Rect,
         config: &Config,
     ) -> Self {
+        let saved_gap = previous.filter(|p| p.version == 1).and_then(|p| {
+            p.gaps
+                .iter()
+                .rev()
+                .find(|g| g.source == window && g.usable_on(area) && near(g.source_bounds, current))
+        });
         let previous = previous.filter(|p| {
             p.version == 1 && p.window == window && p.area == area && near(p.last, current)
         });
         let anchor = previous
             .and_then(|p| p.width_anchor.or_else(|| p.action.horizontal_anchor()))
+            .or_else(|| saved_gap.map(|g| g.anchor))
             .unwrap_or_else(|| HorizontalAnchor::for_window(area, current));
         let base = previous
             .filter(|p| p.action.adjusts_width())
-            .map_or(current, |p| p.base);
+            .map(|p| p.base)
+            .or_else(|| saved_gap.map(|g| g.base))
+            .unwrap_or(current);
         let percent =
             config.width_resize.percent as i32 * if action == Action::ShrinkWidth { -1 } else { 1 };
         Self {
@@ -56,6 +147,7 @@ impl Cycle {
             step: 0,
             growth: config.growth,
             width_anchor: Some(anchor),
+            gaps: Vec::new(),
         }
     }
 
@@ -101,6 +193,7 @@ impl Cycle {
             step,
             growth,
             width_anchor: None,
+            gaps: Vec::new(),
         }
     }
 }
@@ -148,19 +241,29 @@ pub fn apply(config: &Config, path: &Path, action: Action, window: Option<u64>) 
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(error).context("Read positioning cycle"),
     };
+    if action == Action::FillGap {
+        ensure!(
+            previous
+                .as_ref()
+                .is_some_and(|p| p.version == 1 && !p.gaps.is_empty()),
+            "No saved gap. Shrink a positioned window first."
+        );
+    }
     let mut next = None;
     let actual = platform::apply_with(window, &mut |id, area, current| {
-        let cycle = if action.adjusts_width() {
+        let cycle = if action == Action::FillGap {
+            Cycle::fill_gap(previous.as_ref(), id, area, config.growth)?
+        } else if action.adjusts_width() {
             Cycle::adjust_width(previous.as_ref(), id, action, area, current, config)
         } else {
             Cycle::next(previous.as_ref(), id, action, area, current, config.growth)
         };
         let target = cycle.last;
         next = Some(cycle);
-        target
+        Ok(target)
     })?;
     if let Some(mut cycle) = next {
-        cycle.last = actual;
+        cycle.record_result(previous.as_ref(), actual);
         let mut file = tempfile::NamedTempFile::new_in(parent)?;
         file.write_all(&serde_json::to_vec(&cycle)?)?;
         file.persist(&state_path)
@@ -185,6 +288,99 @@ mod tests {
         width: 800,
         height: 600,
     };
+
+    fn shrink(previous: Option<&Cycle>, source: &str, area: Rect, current: Rect) -> Cycle {
+        let mut cycle = Cycle::adjust_width(
+            previous,
+            source,
+            Action::ShrinkWidth,
+            area,
+            current,
+            &Config::default(),
+        );
+        cycle.record_result(previous, cycle.last);
+        cycle
+    }
+
+    #[test]
+    fn gaps_survive_window_switches_and_are_consumed_once() {
+        let base = Action::BottomLeft.target(AREA, CURRENT);
+        let first = shrink(None, "source", AREA, base);
+        let second = shrink(Some(&first), "source", AREA, first.last);
+        assert_eq!(
+            second.gaps[0].target.x + second.gaps[0].target.width,
+            base.x + base.width
+        );
+        let persisted: Cycle =
+            serde_json::from_str(&serde_json::to_string(&second).unwrap()).unwrap();
+        assert!(Cycle::fill_gap(Some(&persisted), "source", AREA, Growth::default()).is_err());
+        let mut filled =
+            Cycle::fill_gap(Some(&persisted), "destination", AREA, Growth::default()).unwrap();
+        assert_eq!(filled.last, base.freed_width_gap(second.last).unwrap());
+        filled.record_result(Some(&persisted), filled.last);
+        assert!(Cycle::fill_gap(Some(&filled), "third", AREA, Growth::default()).is_err());
+        // A later shrink starts a fresh gap beside the now smaller source, excluding the filled slot.
+        let next = shrink(Some(&filled), "source", AREA, second.last);
+        assert_eq!(next.gaps[0].target.intersection(filled.last), None);
+    }
+
+    #[test]
+    fn saved_gap_keeps_original_baseline_after_unrelated_action() {
+        let base = Action::BottomLeft.target(AREA, CURRENT);
+        let source = shrink(None, "source", AREA, base);
+        let mut other = Cycle::next(
+            Some(&source),
+            "other",
+            Action::TopRight,
+            AREA,
+            CURRENT,
+            Growth::default(),
+        );
+        other.record_result(Some(&source), other.last);
+        let next = shrink(Some(&other), "source", AREA, source.last);
+        assert_eq!(next.base, base);
+        assert!(next.gaps[0].target.width > source.gaps[0].target.width);
+        let mut moved = Cycle::next(
+            Some(&next),
+            "source",
+            Action::Top,
+            AREA,
+            next.last,
+            Growth::default(),
+        );
+        moved.record_result(Some(&next), moved.last);
+        assert!(moved.gaps.is_empty());
+    }
+
+    #[test]
+    fn gaps_are_scoped_to_monitors_and_removed_when_expanded_away() {
+        let source = shrink(None, "one", AREA, Action::BottomLeft.target(AREA, AREA));
+        let other_area = Rect { x: 0, ..AREA };
+        let other = shrink(
+            Some(&source),
+            "two",
+            other_area,
+            Action::BottomRight.target(other_area, other_area),
+        );
+        assert_eq!(other.gaps.len(), 2);
+        let mut fill = Cycle::fill_gap(Some(&other), "three", AREA, Growth::default()).unwrap();
+        assert!(fill.last.x < 0);
+        fill.record_result(Some(&other), fill.last);
+        assert_eq!(fill.gaps.len(), 1);
+        assert_eq!(fill.gaps[0].area, other_area);
+        assert!(Cycle::fill_gap(Some(&fill), "four", AREA, Growth::default()).is_err());
+        let mut expanded = Cycle::adjust_width(
+            Some(&fill),
+            "two",
+            Action::ExpandWidth,
+            other_area,
+            other.last,
+            &Config::default(),
+        );
+        // Application result reaches the original baseline, eliminating the gap.
+        expanded.record_result(Some(&fill), other.base);
+        assert!(expanded.gaps.is_empty());
+    }
 
     #[test]
     fn width_actions_keep_anchor_past_saturation_without_resetting() {

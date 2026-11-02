@@ -54,6 +54,7 @@ cargo build --release --no-default-features
 | Ctrl+Alt+0 | Fill work area |
 | Ctrl+Alt+- | Shrink width by 25% |
 | Ctrl+Alt+= | Expand width by 25% |
+| Ctrl+Alt+Shift+8 (*) | Fill the last saved gap |
 
 The digit shortcuts use number-row keys (Digit0 through Digit9). The minus shortcut uses the `-` key; expansion uses the single key normally labeled `=` and `+`. **Shift is not required**. Ctrl+Alt+Shift+= also expands, unless that combination is explicitly assigned to another action. The recorder also supports distinct numpad keys when explicitly assigned. macOS uses the same Control+Option defaults; Command shortcuts can be recorded too. System and application shortcuts can reserve combinations; choose alternatives where needed. Some applications impose minimum window sizes, so requested bounds are not always achievable.
 
@@ -64,6 +65,14 @@ The digit shortcuts use number-row keys (Digit0 through Digit9). The minus short
 Repeated presses keep resizing, with no reset cycle. Expansion stops at the available monitor boundary for that anchor, and shrinking stops at the application's minimum width (at least one pixel). Percentages apply to the current width, so shrinking and expanding once are not inverse operations: 1000 → 750 → 938 pixels. Adjust the shared percentage under **Width adjustment → Width change per press** in Settings (1–99%, default 25%). The two-dimensional growth controls below it apply only to repeated positioning shortcuts.
 
 In Position preview, hover a placement first, then Shrink width or Expand width to see how the width changes for that placement. The preview uses the configured width percentage.
+
+### Fill a freed gap
+
+After positioning and shrinking a window, select a **different window on the same monitor** and press **Ctrl+Alt+Shift+8** (`*` on the number row). sTile resizes and places that window into the space freed from the original position. For example, shrinking a 1000-pixel-wide bottom-left slot to 750 pixels leaves a 250-pixel-wide gap immediately to its right, at the same height. Repeated shrinking accumulates the freed space within that original slot.
+
+One gap is remembered per monitor. Switching windows does not lose it; successfully filling it consumes it. If a centered window leaves two gaps, the larger side is selected, with the right side winning ties. A missing gap or selecting the source window reports an error without repositioning it. Use `stile apply fill-gap --json` for the same operation from scripts or Herdr. The binding is editable in Settings; a numpad Multiply key can also be recorded.
+
+Gaps record sTile's own resizing operations, rather than scanning the desktop for empty space. sTile updates or clears them when it resizes/repositions their source, or places a window over the saved slot. Manual dragging, resizing, and closing windows outside sTile are not monitored; make a fresh width adjustment to update the gap. A monitor work-area change requires a new gap. Application minimum sizes can constrain how closely a destination fits.
 
 ### Repeated shortcuts
 
@@ -143,6 +152,10 @@ shortcut = "Ctrl+Alt+-"
 [[bindings]]
 action = "expand-width"
 shortcut = "Ctrl+Alt+="
+
+[[bindings]]
+action = "fill-gap"
+shortcut = "Ctrl+Alt+Shift+8"
 ```
 
 ```sh
@@ -150,6 +163,7 @@ stile apply top-left
 stile apply center
 stile apply shrink-width
 stile apply expand-width
+stile apply fill-gap
 stile config
 stile --config ./my-config.toml
 ```
@@ -158,7 +172,7 @@ stile --config ./my-config.toml
 
 ## Executable plugin interface
 
-The root `herdr-plugin.toml` follows [Herdr’s executable plugin contract](https://herdr.dev/tui/docs/plugins/): an argv command per action, without a shell wrapper or plugin SDK. It declares all ten positions, two width adjustments, and a build step for the standalone CLI. For a local checkout:
+The root `herdr-plugin.toml` follows [Herdr’s executable plugin contract](https://herdr.dev/tui/docs/plugins/): an argv command per action, without a shell wrapper or plugin SDK. It declares all ten positions, two width adjustments, gap filling, and a build step for the standalone CLI. For a local checkout:
 
 ```sh
 cargo build --release --locked --no-default-features --target-dir target/plugin
@@ -187,7 +201,7 @@ GPUI 0.2.2 normally exits after closing its last Windows/X11/Wayland window. The
 
 ## Native tests without Computer Use
 
-Command-level tests spawn the actual binary and verify JSON and exit codes. On Windows, tests create a hidden disposable window, invoke all ten positioning commands and their growth/reset cycles for every attached monitor, and read back bounds with Win32. They also repeatedly shrink/expand bottom-left, bottom-right, and centered windows, verifying width-only changes and maximum-width clamping. Each press is a separate CLI process. Coverage includes default and custom growth/width settings in isolated temporary configurations. They do not activate a window, inject input, or move user windows. This was verified against four attached monitors (664 bounds checks).
+Command-level tests spawn the actual binary and verify JSON and exit codes. On Windows, tests create hidden disposable windows, invoke all ten positioning commands and their growth/reset cycles for every attached monitor, and read back bounds with Win32. They also repeatedly shrink/expand bottom-left, bottom-right, and centered windows, verifying width-only changes and maximum-width clamping. Two-window tests fill gaps from 25%/50% reductions, leave the source untouched, reject source-window fills, and reject consumed gaps without changing bounds or state. Each press is a separate CLI process. They do not activate a window, inject input, or move user windows. This was verified against four attached monitors (784 command-level bounds checks).
 
 An opt-in Windows GPU/desktop test verifies windowless tray startup and closing Settings while keeping the process alive:
 
