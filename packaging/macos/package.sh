@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# Packages tt-pane for macOS, after tt-git's crates/tt-git-gui/packaging/macos:
+#
+#   package.sh <bin-dir> <tag> [<platform>] [<out-dir>]
+#
+# <bin-dir> holds a release build of tt-pane, <tag> is the release tag
+# (v0.2.0), <platform> the release's name for the target (default
+# macos-arm64) and <out-dir> where to write (default dist/). Writes
+# tt-pane-<tag>-<platform>.dmg holding tt-pane.app and a link to
+# /Applications over a designed background (dmg.py, which needs python3 and
+# network access for pip to fetch dmg-requirements.txt).
+#
+# tt-pane.app is a menu-bar app (LSUIElement): opened from Finder,
+# Launchpad or Spotlight it starts in the menu bar with no terminal, asks
+# for Accessibility access, and opens Settings again when launched while
+# running. The CLI is the same executable, at
+# /Applications/tt-pane.app/Contents/MacOS/tt-pane.
+#
+# Signing, from the environment (the release workflow passes its secrets):
+#
+#   MACOS_CERT_P12          base64 of a "Developer ID Application"
+#                           certificate and key, exported as .p12
+#   MACOS_CERT_PASSWORD     the .p12's password
+#   MACOS_SIGNING_IDENTITY  optional; the identity to sign with. Default:
+#                           the first Developer ID Application identity in
+#                           the certificate
+#   MACOS_NOTARY_APPLE_ID   the Apple ID to notarize with
+#   MACOS_NOTARY_TEAM_ID    its team ID
+#   MACOS_NOTARY_PASSWORD   an app-specific password for that Apple ID
+#
+# Without MACOS_CERT_P12 the app is signed ad hoc (codesign -s -), which
+# Apple Silicon needs to run it at all; Gatekeeper then blocks the first
+# launch until the user allows it, and macOS may ask for Accessibility
+# access again after each update. Without the three MACOS_NOTARY_* values a
+# Developer ID build is signed but not notarized.
+set -euo pipefail
+
+[ $# -ge 2 ] && [ $# -le 4 ] || { echo "usage: $0 <bin-dir> <tag> [<platform>] [<out-dir>]" >&2; exit 2; }
+bin_dir=$1 tag=$2 platform=${3:-macos-arm64} out_dir=${4:-dist}
+here=$(cd "$(dirname "$0")" && pwd)
+root=$(cd "$here/../.." && pwd)
+name="tt-pane-$tag-$platform"
+version="${tag#v}"
+
+[ -x "$bin_dir/tt-pane" ] || { echo "package.sh: no tt-pane in $bin_dir" >&2; exit 1; }
+reported=$("$bin_dir/tt-pane" --version | awk '{print $2}')
+# A prerelease tag (v0.2.0-rc.1) packages the Cargo version it was cut from.
+[ "$reported" = "${version%%-*}" ] || {
+    echo "package.sh: $bin_dir/tt-pane reports $reported, not ${version%%-*}" >&2
+    exit 1
+}
+mkdir -p "$out_dir"
+out_dir=$(cd "$out_dir" && pwd)
+
+stage=$(mktemp -d)
+keychain=""
+cleanup() {
+    [ -n "$keychain" ] && security delete-keychain "$keychain" 2>/dev/null
+    rm -rf "$stage"
+}
+trap cleanup EXIT
+
+# The bundle. CFBundleVersion must be numeric, so drop any prerelease part.
+app="$stage/dmg/tt-pane.app"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+sed "s/@VERSION@/${version%%-*}/g" "$here/Info.plist" > "$app/Contents/Info.plist"
+plutil -lint "$app/Contents/Info.plist"
+printf 'APPL????' > "$app/Contents/PkgInfo"
+cp "$bin_dir/tt-pane" "$app/Contents/MacOS/"
+cp "$root/README.md" "$app/Contents/Resources/"
+
+# The icon, from the committed PNGs (render-artwork.sh).
+iconset="$stage/tt-pane.iconset"
+mkdir "$iconset"
+for size in 16 32 128 256 512; do
+    cp "$here/icons/$size.png" "$iconset/icon_${size}x${size}.png"
+    cp "$here/icons/$((size * 2)).png" "$iconset/icon_${size}x${size}@2x.png"
+done
+iconutil -c icns "$iconset" -o "$app/Contents/Resources/tt-pane.icns"
+
+# Signing. The hardened runtime and a secure timestamp are what
+# notarization asks for. The bundle identifier is the signing identifier,
+# which is what Accessibility (TCC) remembers.
+identity="-"
+if [ -n "${MACOS_CERT_P12:-}" ]; then
+    keychain="$stage/signing.keychain-db"
+    keychain_password=$(uuidgen)
+    echo "$MACOS_CERT_P12" | base64 --decode > "$stage/cert.p12"
+    security create-keychain -p "$keychain_password" "$keychain"
+    security set-keychain-settings -lut 21600 "$keychain"
+    security unlock-keychain -p "$keychain_password" "$keychain"
+    security import "$stage/cert.p12" -k "$keychain" -P "${MACOS_CERT_PASSWORD:-}" \
+        -T /usr/bin/codesign -T /usr/bin/security
+    rm "$stage/cert.p12"
+    security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+    # Search the new keychain as well as the usual ones.
+    security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+    identity="${MACOS_SIGNING_IDENTITY:-}"
+    if [ -z "$identity" ]; then
+        identity=$(security find-identity -v -p codesigning "$keychain" |
+            sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)
+    fi
+    [ -n "$identity" ] || { echo "package.sh: no Developer ID Application identity in MACOS_CERT_P12" >&2; exit 1; }
+    echo "Signing with $identity"
+    sign=(codesign --force --options runtime --timestamp --sign "$identity")
+else
+    echo "No MACOS_CERT_P12: signing ad hoc"
+    sign=(codesign --force --sign -)
+fi
+"${sign[@]}" --identifier net.thirtytech.tt-pane "$app"
+codesign --verify --strict --verbose=2 "$app"
+
+# The disk image: the app and a link to drag it onto, laid out over
+# dmg-background.png by dmg.py with the pinned dmgbuild.
+python3 -m venv "$stage/venv"
+"$stage/venv/bin/pip" install --quiet --disable-pip-version-check --require-hashes \
+    -r "$here/dmg-requirements.txt"
+dmg="$out_dir/$name.dmg"
+rm -f "$dmg"
+"$stage/venv/bin/python" "$here/dmg.py" "$app" "$dmg"
+
+if [ "$identity" != "-" ]; then
+    codesign --force --timestamp --sign "$identity" "$dmg"
+    if [ -n "${MACOS_NOTARY_APPLE_ID:-}" ] && [ -n "${MACOS_NOTARY_TEAM_ID:-}" ] && [ -n "${MACOS_NOTARY_PASSWORD:-}" ]; then
+        echo "Notarizing $name.dmg"
+        notary=(--apple-id "$MACOS_NOTARY_APPLE_ID" --team-id "$MACOS_NOTARY_TEAM_ID"
+            --password "$MACOS_NOTARY_PASSWORD")
+        xcrun notarytool submit "$dmg" "${notary[@]}" --wait --timeout 30m \
+            --output-format json > "$stage/notary.json" || true
+        cat "$stage/notary.json"
+        status=$(plutil -extract status raw "$stage/notary.json" 2>/dev/null || echo unknown)
+        if [ "$status" != Accepted ]; then
+            # Apple's log says which file failed and why.
+            id=$(plutil -extract id raw "$stage/notary.json" 2>/dev/null || true)
+            [ -n "$id" ] && xcrun notarytool log "$id" "${notary[@]}" || true
+            echo "package.sh: notarization ended with status $status" >&2
+            exit 1
+        fi
+        xcrun stapler staple "$dmg"
+        xcrun stapler validate "$dmg"
+    else
+        echo "No MACOS_NOTARY_* credentials: signed but not notarized"
+    fi
+fi
+echo "Wrote $dmg"

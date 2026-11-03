@@ -73,6 +73,19 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./packaging/windows/test-installer.ps1 -BinDir 'target/${{ matrix.target }}/release' -Tag $env:RELEASE_TAG
+      # tt-pane.app in a designed .dmg (packaging/macos/package.sh). Signed
+      # and notarized when the MACOS_* secrets are set, ad hoc otherwise.
+      - name: Package macOS app and disk image
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: packaging/macos/package.sh "target/${{ matrix.target }}/release" "$RELEASE_TAG" "${{ matrix.platform }}" dist
       - name: Package Linux / macOS archive
         if: runner.os != 'Windows'
         shell: bash
@@ -89,6 +102,7 @@ jobs:
             dist/*.zip
             dist/*-setup.exe
             dist/*.tar.gz
+            dist/*.dmg
           if-no-files-found: error
           compression-level: 0
 
@@ -119,9 +133,11 @@ jobs:
             echo '## Install tt-pane'
             echo
             echo 'Windows x64: download the setup.exe for a per-user install, or unpack the portable ZIP.'
-            echo 'Linux x64 / macOS Apple Silicon: unpack the tar.gz and run tt-pane. See README.md in the archive for runtime dependencies and macOS Accessibility access.'
-            echo 'tt-pane starts in the system tray. Quit an existing instance before upgrading.'
-            echo 'These packages are unsigned. SHA256SUMS.txt contains the SHA-256 checksum of each download.'
+            echo 'macOS Apple Silicon: open the .dmg, drag tt-pane to Applications, then open it from Applications and allow Accessibility access when asked. It runs in the menu bar; no terminal is needed.'
+            echo 'Linux x64: unpack the tar.gz and run tt-pane. See README.md in the archive for runtime dependencies. The macOS tar.gz holds the bare CLI executable.'
+            echo 'tt-pane starts in the system tray / menu bar. Quit an existing instance before upgrading.'
+            echo 'Unless the release says the macOS build is notarized, macOS blocks its first launch: choose Done, then System Settings → Privacy & Security → Open Anyway. Windows and Linux packages are unsigned.'
+            echo 'SHA256SUMS.txt contains the SHA-256 checksum of each download.'
           } > notes.md
           gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
             --title "tt-pane $GITHUB_REF_NAME" --notes-file notes.md --generate-notes "${prerelease[@]}"

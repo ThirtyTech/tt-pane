@@ -116,10 +116,18 @@ fn main() -> ExitCode {
     // the GUI process. Explorer launches still do not allocate a console.
     #[cfg(all(target_os = "windows", feature = "gui"))]
     tt_pane::platform::attach_parent_console();
-    match run(Cli::parse()) {
+    let cli = Cli::parse();
+    #[cfg(all(target_os = "macos", feature = "gui"))]
+    let gui = matches!(cli.command, None | Some(Command::Settings));
+    match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error:#}");
+            // Opened from Finder there is no terminal to read stderr in.
+            #[cfg(all(target_os = "macos", feature = "gui"))]
+            if gui && !std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+                tt_pane::platform::show_alert("tt-pane could not start", &format!("{error:#}"));
+            }
             ExitCode::FAILURE
         }
     }

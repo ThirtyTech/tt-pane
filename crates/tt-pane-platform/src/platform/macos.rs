@@ -2,11 +2,14 @@ use crate::geometry::{Rect, monitor_for};
 use anyhow::{Context, Result, ensure};
 use core_foundation::{
     base::{CFType, CFTypeID, CFTypeRef, TCFType},
+    boolean::CFBoolean,
+    dictionary::{CFDictionary, CFDictionaryRef},
     string::{CFString, CFStringRef},
 };
 use core_graphics::geometry::{CGPoint, CGSize};
 use objc2::MainThreadMarker;
-use objc2_app_kit::{NSScreen, NSWorkspace};
+use objc2_app_kit::{NSAlert, NSApplication, NSScreen, NSWorkspace};
+use objc2_foundation::NSString;
 use std::ffi::c_void;
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -14,6 +17,7 @@ use std::ffi::c_void;
 // Core Foundation Boolean is an unsigned byte; AXValueType is a 32-bit enum.
 unsafe extern "C" {
     fn AXIsProcessTrusted() -> u8;
+    fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> u8;
     fn AXUIElementGetTypeID() -> CFTypeID;
     fn AXValueGetTypeID() -> CFTypeID;
     fn AXUIElementCreateApplication(pid: i32) -> CFTypeRef;
@@ -141,12 +145,43 @@ fn set_size(window: &CFType, size: &CGSize) -> Result<()> {
     set_attribute(window, "AXSize", &size_value(size)?)
 }
 
+/// Whether tt-pane may control other applications' windows. With `prompt`,
+/// an untrusted process also asks macOS to show its Accessibility dialog,
+/// which adds tt-pane to the list in System Settings and offers to open it.
+/// macOS shows that dialog at most once per launch.
+pub fn accessibility_trusted(prompt: bool) -> bool {
+    if !prompt {
+        // SAFETY: This process-level query takes no arguments or pointers.
+        return unsafe { AXIsProcessTrusted() } != 0;
+    }
+    // The value of kAXTrustedCheckOptionPrompt, a constant CFString.
+    let options = CFDictionary::from_CFType_pairs(&[(
+        CFString::from_static_string("AXTrustedCheckOptionPrompt"),
+        CFBoolean::true_value(),
+    )]);
+    // SAFETY: The dictionary is a live CFDictionary for the duration of the
+    // call; the function only reads it and retains nothing.
+    unsafe { AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef()) != 0 }
+}
+
+/// Show a modal alert. tt-pane.app has no terminal, so this is how a launch
+/// from Finder reports an error that would otherwise only reach stderr.
+pub fn show_alert(title: &str, message: &str) {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    app.activate();
+    let alert = NSAlert::new(mtm);
+    alert.setMessageText(&NSString::from_str(title));
+    alert.setInformativeText(&NSString::from_str(message));
+    alert.runModal();
+}
+
 pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>) -> Result<Rect> {
-    // SAFETY: This process-level query takes no arguments or pointers.
-    let trusted = unsafe { AXIsProcessTrusted() } != 0;
     ensure!(
-        trusted,
-        "Grant tt-pane Accessibility access in System Settings → Privacy & Security → Accessibility, then restart tt-pane"
+        accessibility_trusted(false),
+        "Grant tt-pane Accessibility access in System Settings → Privacy & Security → Accessibility"
     );
     let mtm =
         MainThreadMarker::new().context("Window control must run on the macOS main thread")?;

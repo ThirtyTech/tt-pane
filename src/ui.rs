@@ -621,7 +621,21 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
     // A persistent entity owns the shortcuts and tray independently of any window.
     let failure = std::rc::Rc::new(std::cell::RefCell::new(None));
     let result = failure.clone();
-    Application::new().run(move |cx: &mut App| {
+    // Launching tt-pane.app again from Finder, Launchpad or Spotlight while it
+    // runs reaches the running instance as a reopen; show its settings, since
+    // a menu-bar app otherwise gives no sign it heard.
+    let reopened: std::rc::Rc<std::cell::RefCell<Option<Entity<Settings>>>> = Default::default();
+    let app = Application::new();
+    let on_reopen = reopened.clone();
+    app.on_reopen(move |cx| {
+        let settings = on_reopen.borrow().clone();
+        if let Some(settings) = settings
+            && let Err(e) = show_settings(&settings, cx)
+        {
+            settings.update(cx, |this, cx| this.message(format!("{e:#}"), true, cx));
+        }
+    });
+    app.run(move |cx: &mut App| {
         #[cfg(target_os = "macos")]
         {
             use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
@@ -661,6 +675,20 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                 None
             }
         };
+        // Ask macOS for Accessibility access up front (its dialog adds tt-pane
+        // to System Settings), and open settings to explain why, rather than
+        // failing silently on the first shortcut.
+        #[cfg(target_os = "macos")]
+        let open_settings = if !error && !crate::platform::accessibility_trusted(true) {
+            status = "tt-pane needs Accessibility access to move windows. Turn on tt-pane in \
+                System Settings → Privacy & Security → Accessibility; shortcuts work as soon as \
+                it is on."
+                .into();
+            error = true;
+            true
+        } else {
+            open_settings
+        };
         if error {
             let _ = tray.set_tooltip(Some(format!("tt-pane — {status}")));
         }
@@ -678,6 +706,7 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             window: None,
             _tray: tray,
         });
+        *reopened.borrow_mut() = Some(settings.clone());
         let on_close = settings.clone();
         cx.on_window_closed(move |cx| {
             if cx.windows().is_empty() {

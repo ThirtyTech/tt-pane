@@ -85,6 +85,8 @@ pub fn description() -> &'static str {
     }
 }
 
+#[cfg(target_os = "macos")]
+pub use macos::{accessibility_trusted, show_alert};
 #[cfg(windows)]
 pub use windows::attach_parent_console;
 #[cfg(all(windows, feature = "window-icon"))]

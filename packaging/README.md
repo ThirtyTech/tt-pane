@@ -2,7 +2,7 @@
 
 `.github/workflows/release.yml` follows [tt-git's release workflow](https://github.com/ThirtyTech/tt-git/blob/main/.github/workflows/release.yml): version tags must match Cargo, each platform builds natively, and all successful builds are published together with SHA-256 checksums. Unlike tt-git's separate TUI/GUI jobs, tt-pane has one executable, so every platform must succeed before publication.
 
-The initial matrix is Windows x64, Linux x64 (Ubuntu 22.04), and macOS Apple Silicon. Linux and macOS ship standalone archives; Windows also ships a native installer. Intel macOS, native Windows ARM64, Linux ARM64, signing, notarization, and Linux/macOS system installers are not included.
+The initial matrix is Windows x64, Linux x64 (Ubuntu 22.04), and macOS Apple Silicon. Every platform ships a standalone archive; Windows also ships a native installer and macOS a `.dmg` holding `tt-pane.app`. Intel macOS, native Windows ARM64, Linux ARM64, Windows signing, and Linux system packages are not included.
 
 ## Build locally on Windows
 
@@ -31,11 +31,32 @@ The stable AppId identifies upgrades. Files live in `%LOCALAPPDATA%\Programs\tt-
 
 Silent install: `setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=""`. Select optional tasks with `/TASKS="desktopicon,startup"`. Silent installs do not launch tt-pane. Uninstall uses `unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`.
 
+## Build locally on macOS
+
+Install Rust, Xcode with the Metal Toolchain, and Python 3. From the repository root:
+
+```sh
+cargo build --release --locked
+packaging/macos/package.sh target/release v0.2.0
+```
+
+Use the current Cargo version for the tag. `package.sh` checks the binary's reported version, builds `tt-pane.app` (Info.plist from `packaging/macos/Info.plist`, `.icns` from the committed `packaging/macos/icons/`), signs it, and builds the disk image with a pinned [dmgbuild](https://dmgbuild.readthedocs.io) installed by hash into a throwaway venv (pip needs network access). The output is `dist/tt-pane-vVERSION-macos-arm64.dmg`; pass a platform name and output directory as the third and fourth arguments to change it. This follows tt-git's `crates/tt-git-gui/packaging/macos/`, including its macOS 26 Finder background workaround in `dmg.py`.
+
+Signing uses the same environment as tt-git: `MACOS_CERT_P12` (base64 Developer ID Application .p12), `MACOS_CERT_PASSWORD`, optional `MACOS_SIGNING_IDENTITY`, and `MACOS_NOTARY_APPLE_ID`, `MACOS_NOTARY_TEAM_ID`, `MACOS_NOTARY_PASSWORD` for notarization and stapling. Without a certificate the app is signed ad hoc: it runs, but Gatekeeper blocks the first launch from a download, and macOS can forget its Accessibility grant after an update. Add these as repository secrets to sign releases.
+
+## macOS app behavior
+
+`tt-pane.app` (bundle id `net.thirtytech.tt-pane`) is an `LSUIElement` menu-bar app, so it never shows a Dock icon and needs no terminal. At launch it calls `AXIsProcessTrustedWithOptions` with the prompt option: macOS shows its Accessibility dialog and lists tt-pane in System Settings. While access is missing, Settings opens with an explanation. Opening the app again while it runs (Finder, Launchpad, Spotlight) opens Settings in the running instance rather than starting a second one. An error that stops startup is shown in an alert, because stderr is not visible from Finder.
+
+## macOS installer artwork
+
+`macos/dmg-background.svg` is the Finder window background (660×420 points), drawn in the tt-pane palette after tt-git's layout: icon and wordmark header, the app and Applications icons at (190, 200) and (470, 200) with light tags under Finder's black labels, and a snapping-window arrow between them. `macos/render-artwork.sh` (needs `rsvg-convert`) renders it to the checked-in `dmg-background.png` and `@2x`, and renders `assets/tt-pane.svg` into `macos/icons/`. Run it after changing either SVG. `macos/screenshots/installer.png` is the built disk image open in Finder on macOS 26.
+
 ## GitHub Actions
 
 Run **Actions → Release → Run workflow** for downloadable artifacts without publishing. To publish, update the application and platform crate versions, Herdr plugin version, and lockfile, then push a matching `vMAJOR.MINOR.PATCH` tag. Tags such as `v0.2.0-rc.1` create prereleases. The version guard rejects mismatched tags. Only the publication job has `contents: write`; builds use read-only permissions. Windows installation smoke tests run before uploading artifacts.
 
-The release includes the three platform archives, Windows setup executable, generated release notes, and `SHA256SUMS.txt`. Manual builds are identified by the Actions run/commit, while their filenames and binary versions retain the Cargo version. No workflow run, tag, or release is created by local packaging.
+The release includes the three platform archives, Windows setup executable, macOS disk image, generated release notes, and `SHA256SUMS.txt`. Manual builds are identified by the Actions run/commit, while their filenames and binary versions retain the Cargo version. No workflow run, tag, or release is created by local packaging.
 
 ## Installer artwork
 

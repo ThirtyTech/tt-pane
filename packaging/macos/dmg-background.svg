@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 420" width="660" height="420">
+  <!-- The .dmg window's background, after tt-git's installer and in tt-pane's
+       palette (assets/tt-pane.svg: navy #102333, mint #64e4bd, ice #e6f4f5,
+       teal #398d99). 660x420 points, the window size in dmg.py. Finder draws
+       the icons on top, centred at (190, 200) and (470, 200), and always
+       draws their names in black on a picture background, hence the light
+       tags under them. render-artwork.sh renders this to dmg-background.png
+       and dmg-background@2x.png. -->
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#132B3E" />
+      <stop offset="55%" stop-color="#0D1E2C" />
+      <stop offset="100%" stop-color="#08141E" />
+    </linearGradient>
+    <radialGradient id="glowTop" cx="20%" cy="8%" r="60%">
+      <stop offset="0%" stop-color="#64E4BD" stop-opacity="0.13" />
+      <stop offset="100%" stop-color="#64E4BD" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="glowLow" cx="82%" cy="92%" r="55%">
+      <stop offset="0%" stop-color="#398D99" stop-opacity="0.16" />
+      <stop offset="100%" stop-color="#398D99" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="iconGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#64E4BD" stop-opacity="0.18" />
+      <stop offset="100%" stop-color="#64E4BD" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="card" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#16324A" stop-opacity="0.72" />
+      <stop offset="100%" stop-color="#0B1A27" stop-opacity="0.72" />
+    </linearGradient>
+    <linearGradient id="lane" gradientUnits="userSpaceOnUse" x1="268" y1="0" x2="392" y2="0">
+      <stop offset="0%" stop-color="#398D99" />
+      <stop offset="100%" stop-color="#64E4BD" />
+    </linearGradient>
+    <pattern id="grid" width="22" height="22" patternUnits="userSpaceOnUse">
+      <path d="M 22 0 L 0 0 0 22" fill="none" stroke="#E6F4F5" stroke-opacity="0.035" stroke-width="1" />
+    </pattern>
+  </defs>
+
+  <rect width="660" height="420" fill="url(#bg)" />
+  <rect width="660" height="420" fill="url(#grid)" />
+  <rect width="660" height="420" fill="url(#glowTop)" />
+  <rect width="660" height="420" fill="url(#glowLow)" />
+
+  <!-- Faint snapped-window tiles under the card's bottom corners -->
+  <g opacity="0.22">
+    <rect x="574" y="378" width="22" height="42" rx="4" fill="#64E4BD" />
+    <rect x="600" y="378" width="22" height="19" rx="4" fill="#E6F4F5" />
+    <rect x="600" y="401" width="22" height="19" rx="4" fill="#398D99" />
+  </g>
+  <g opacity="0.12">
+    <rect x="38" y="378" width="22" height="42" rx="4" fill="#64E4BD" />
+    <rect x="64" y="378" width="22" height="19" rx="4" fill="#E6F4F5" />
+    <rect x="64" y="401" width="22" height="19" rx="4" fill="#398D99" />
+  </g>
+
+  <!-- The card -->
+  <rect x="28" y="24" width="604" height="344" rx="18" fill="url(#card)" stroke="#24445C" stroke-width="1.2" />
+  <line x1="48" y1="90" x2="612" y2="90" stroke="#1F3A50" stroke-width="1" />
+
+  <!-- Header: the app icon (assets/tt-pane.svg at 36 points), the wordmark,
+       and THIRTYTECH on the right -->
+  <g transform="translate(46, 39) scale(0.140625)">
+    <rect x="8" y="8" width="240" height="240" rx="56" fill="#102333" stroke="#2A4C66" stroke-width="6" />
+    <rect x="40" y="40" width="80" height="176" rx="12" fill="#64E4BD" />
+    <rect x="136" y="40" width="80" height="80" rx="12" fill="#E6F4F5" />
+    <rect x="136" y="136" width="80" height="80" rx="12" fill="#398D99" />
+  </g>
+  <text x="94" y="66" font-family="Inter, 'SF Pro Display', 'Helvetica Neue', sans-serif" font-size="24" font-weight="700" fill="#FFFFFF" letter-spacing="-0.3">tt<tspan fill="#64E4BD">-</tspan>pane</text>
+  <text x="612" y="62" text-anchor="end" font-family="Inter, 'SF Pro Text', 'Helvetica Neue', sans-serif" font-size="10" font-weight="600" letter-spacing="2.4" fill="#6F8798">THIRTYTECH</text>
+
+  <!-- Behind the app's icon -->
+  <circle cx="190" cy="200" r="96" fill="url(#iconGlow)" />
+
+  <!-- The arrow: a window gliding into place, leaving snap ticks -->
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="268" y1="200" x2="388" y2="200" stroke="url(#lane)" stroke-width="4" />
+    <path d="M 376 190 L 390 200 L 376 210" stroke="#64E4BD" stroke-width="4" />
+  </g>
+  <rect x="283" y="191" width="18" height="18" rx="4" fill="#0D1E2C" stroke="#398D99" stroke-width="2.4" />
+  <rect x="320" y="189" width="22" height="22" rx="5" fill="#0D1E2C" stroke="#64E4BD" stroke-width="2.6" />
+  <rect x="325" y="194" width="5" height="12" rx="1.5" fill="#64E4BD" />
+  <rect x="332" y="194" width="5" height="5" rx="1.5" fill="#E6F4F5" />
+  <rect x="332" y="201" width="5" height="5" rx="1.5" fill="#398D99" />
+
+  <!-- Tags for Finder's black icon names -->
+  <rect x="134" y="272" width="112" height="22" rx="11" fill="#E6F4F5" />
+  <rect x="414" y="272" width="112" height="22" rx="11" fill="#E6F4F5" />
+
+  <text x="330" y="326" text-anchor="middle" font-family="Inter, 'SF Pro Text', 'Helvetica Neue', sans-serif" font-size="13" fill="#B4C7D2">Drag tt-pane to Applications to install it.</text>
+  <text x="330" y="346" text-anchor="middle" font-family="Inter, 'SF Pro Text', 'Helvetica Neue', sans-serif" font-size="11" fill="#6F8798">Then open it from Applications and allow Accessibility access when asked.</text>
+</svg>
