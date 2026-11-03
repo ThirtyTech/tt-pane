@@ -129,12 +129,23 @@ pub fn focus_window_outside_group(
     include_obscured: bool,
     group: &[u64],
 ) -> Result<()> {
+    focus_window_filtered(handle, action, include_obscured, group, false)
+}
+
+/// Restrict hold navigation to snapped windows, skipping centered members.
+pub fn focus_window_filtered(
+    handle: Option<u64>,
+    action: Action,
+    include_obscured: bool,
+    group: &[u64],
+    snapped_only: bool,
+) -> Result<()> {
     anyhow::ensure!(action.focuses(), "Expected a directional focus action");
     #[cfg(target_os = "windows")]
-    return windows::focus_window(handle, action, include_obscured, group);
+    return windows::focus_window(handle, action, include_obscured, group, snapped_only);
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (handle, action, include_obscured, group);
+        let _ = (handle, action, include_obscured, group, snapped_only);
         anyhow::bail!("Directional window focus currently supports Windows only")
     }
 }

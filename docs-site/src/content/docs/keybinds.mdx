@@ -54,6 +54,8 @@ Outside centered groups, focus moves to the nearest window by center distance wi
 
 Snapped windows are considered even when covered. Their current frame must fit within the monitor work area and touch an edge (within two pixels), covering halves, quarters, resized edge layouts, and native Windows snaps. Moving a window into the middle removes this exemption. Only middle/floating windows require at least 50% of their full frame to be on-screen and uncovered by default. Enable **Settings → Window focus → Include obscured windows** to also include covered middle/floating or off-screen windows. Minimized, hidden, cloaked, and utility windows remain excluded. Focus and paired boundary resizing are currently Windows-only.
 
+Hold **Ctrl + Alt + H/L** for **400 ms** to jump directly to a snapped window in that direction on the same monitor, skipping all middle/floating windows and centered-group members. The jump fires once per hold; release before 400 ms for a normal step. If no snapped window qualifies, focus stays put. This also works with remapped left/right focus shortcuts and requires the running Windows tray app.
+
 ## Centered groups — Windows
 
 Press **Ctrl + Alt + 3** on each window you want in a group. Windows must be on the same monitor and placed using Center; dragging them to the middle does not enroll them.

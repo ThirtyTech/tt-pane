@@ -134,6 +134,10 @@ impl Group {
         Ok(true)
     }
 
+    pub fn handles(&self) -> Vec<u64> {
+        self.members.iter().map(|m| m.handle).collect()
+    }
+
     pub fn exit_members(&self, handle: Option<u64>, action: Action) -> Vec<u64> {
         if !action.focuses() {
             return Vec::new();
@@ -275,6 +279,40 @@ pub fn observe(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires interactive Windows desktop; briefly focuses disposable windows"]
+    fn native_hold_skips_middle_windows_for_snapped_edges() {
+        platform::test_support::with_group_windows(|handles| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            let mut config = crate::config::Config::default();
+            config.focus.glow_enabled = false;
+            let [left, middle, right] = handles;
+            for (handle, action) in [
+                (left, Action::Left),
+                (middle, Action::Center),
+                (right, Action::Right),
+            ] {
+                crate::positioning::apply(&config, &path, action, Some(handle)).unwrap();
+            }
+            for include_obscured in [false, true] {
+                config.focus.include_obscured = include_obscured;
+                for (source, action, destination) in [
+                    (left, Action::FocusRight, right),
+                    (right, Action::FocusLeft, left),
+                    (middle, Action::FocusRight, right),
+                    (middle, Action::FocusLeft, left),
+                ] {
+                    platform::focus_snapshot(&platform::window_snapshot(source).unwrap().unwrap())
+                        .unwrap();
+                    crate::positioning::apply_gesture(&config, &path, action, Some(source), true)
+                        .unwrap();
+                    assert_eq!(platform::foreground_handle(), Some(destination));
+                }
+            }
+        });
+    }
 
     #[test]
     #[ignore = "requires an interactive Windows desktop and briefly focuses disposable windows"]

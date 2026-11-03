@@ -1,7 +1,7 @@
 use crate::{config::Config, geometry::Action, platform};
 use anyhow::{Context, Result};
 use global_hotkey::{
-    GlobalHotKeyManager,
+    GlobalHotKeyManager, HotKeyState,
     hotkey::{Code, HotKey, Modifiers},
 };
 
@@ -32,10 +32,88 @@ fn configured_hotkeys(config: &Config) -> Result<Vec<(HotKey, Action)>> {
     Ok(keys)
 }
 
+const HOLD_DURATION: std::time::Duration = std::time::Duration::from_millis(400);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Invocation {
+    pub action: Action,
+    pub window: Option<u64>,
+    pub snapped_only: bool,
+}
+
+struct HeldFocus {
+    id: u32,
+    started: std::time::Instant,
+    invocation: Invocation,
+    fired: bool,
+}
+
+#[derive(Default)]
+struct FocusGesture {
+    held: Option<HeldFocus>,
+}
+
+impl FocusGesture {
+    fn event(
+        &mut self,
+        id: u32,
+        action: Action,
+        state: HotKeyState,
+        now: std::time::Instant,
+        window: Option<u64>,
+    ) -> Option<Invocation> {
+        if state == HotKeyState::Released {
+            if self.held.as_ref().is_some_and(|held| held.id == id) {
+                let held = self.held.take().unwrap();
+                return (!held.fired).then_some(Invocation {
+                    snapped_only: now.duration_since(held.started) >= HOLD_DURATION,
+                    ..held.invocation
+                });
+            }
+            return None;
+        }
+        if !matches!(action, Action::FocusLeft | Action::FocusRight) {
+            self.held = None;
+            return Some(Invocation {
+                action,
+                window,
+                snapped_only: false,
+            });
+        }
+        // Ignore native repeat presses without restarting the hold timer.
+        if !self.held.as_ref().is_some_and(|held| held.id == id) {
+            self.held = Some(HeldFocus {
+                id,
+                started: now,
+                invocation: Invocation {
+                    action,
+                    window,
+                    snapped_only: false,
+                },
+                fired: false,
+            });
+        }
+        None
+    }
+
+    fn poll(&mut self, now: std::time::Instant) -> Option<Invocation> {
+        let held = self.held.as_mut()?;
+        if held.fired || now.duration_since(held.started) < HOLD_DURATION {
+            return None;
+        }
+        held.fired = true;
+        Some(Invocation {
+            snapped_only: true,
+            ..held.invocation
+        })
+    }
+}
+
 /// Lives on the GPUI event-loop thread (required by macOS and Windows).
 pub struct Shortcuts {
     manager: Option<GlobalHotKeyManager>,
     registered: Vec<(HotKey, Action)>,
+    gesture: FocusGesture,
 }
 
 impl Shortcuts {
@@ -47,6 +125,7 @@ impl Shortcuts {
                 Some(GlobalHotKeyManager::new()?)
             },
             registered: Vec::new(),
+            gesture: FocusGesture::default(),
         })
     }
 
@@ -55,6 +134,29 @@ impl Shortcuts {
             .iter()
             .find(|(key, _)| key.id() == id)
             .map(|(_, action)| *action)
+    }
+
+    pub fn event(
+        &mut self,
+        id: u32,
+        state: HotKeyState,
+        now: std::time::Instant,
+    ) -> Option<Invocation> {
+        let action = self.action(id)?;
+        if cfg!(windows) {
+            self.gesture
+                .event(id, action, state, now, platform::foreground_handle())
+        } else {
+            (state == HotKeyState::Pressed).then_some(Invocation {
+                action,
+                window: None,
+                snapped_only: false,
+            })
+        }
+    }
+
+    pub fn poll(&mut self, now: std::time::Instant) -> Option<Invocation> {
+        self.gesture.poll(now)
     }
 
     /// Register a complete set, rolling back on OS shortcut conflicts.
@@ -88,6 +190,7 @@ impl Shortcuts {
                 }
             }
         }
+        self.gesture = FocusGesture::default();
         self.registered = next;
         Ok(())
     }
@@ -222,6 +325,102 @@ pub fn wayland_bindings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn horizontal_tap_and_hold_are_mutually_exclusive_and_repeat_safe() {
+        use std::time::{Duration, Instant};
+        for action in [Action::FocusLeft, Action::FocusRight] {
+            let start = Instant::now();
+            let mut gesture = FocusGesture::default();
+            assert_eq!(
+                gesture.event(1, action, HotKeyState::Pressed, start, Some(42)),
+                None
+            );
+            assert_eq!(gesture.poll(start + Duration::from_millis(399)), None);
+            assert_eq!(
+                gesture.event(
+                    1,
+                    action,
+                    HotKeyState::Released,
+                    start + Duration::from_millis(100),
+                    Some(99)
+                ),
+                Some(Invocation {
+                    action,
+                    window: Some(42),
+                    snapped_only: false
+                })
+            );
+            assert_eq!(gesture.poll(start + HOLD_DURATION), None);
+            gesture.event(1, action, HotKeyState::Pressed, start, Some(42));
+            gesture.event(
+                1,
+                action,
+                HotKeyState::Pressed,
+                start + Duration::from_millis(300),
+                Some(99),
+            );
+            assert_eq!(
+                gesture.poll(start + HOLD_DURATION),
+                Some(Invocation {
+                    action,
+                    window: Some(42),
+                    snapped_only: true
+                })
+            );
+            assert_eq!(gesture.poll(start + HOLD_DURATION * 2), None);
+            assert_eq!(
+                gesture.event(
+                    1,
+                    action,
+                    HotKeyState::Released,
+                    start + HOLD_DURATION * 2,
+                    Some(99)
+                ),
+                None
+            );
+            // A release received before the next timer tick must still count as a hold.
+            gesture.event(1, action, HotKeyState::Pressed, start, Some(42));
+            assert!(
+                gesture
+                    .event(
+                        1,
+                        action,
+                        HotKeyState::Released,
+                        start + HOLD_DURATION,
+                        None
+                    )
+                    .unwrap()
+                    .snapped_only
+            );
+        }
+    }
+
+    #[test]
+    fn other_actions_and_rebinding_cancel_pending_holds() {
+        let start = std::time::Instant::now();
+        let mut gesture = FocusGesture::default();
+        gesture.event(1, Action::FocusLeft, HotKeyState::Pressed, start, Some(42));
+        assert_eq!(
+            gesture.event(2, Action::FocusDown, HotKeyState::Pressed, start, Some(42)),
+            Some(Invocation {
+                action: Action::FocusDown,
+                window: Some(42),
+                snapped_only: false
+            })
+        );
+        assert_eq!(gesture.poll(start + HOLD_DURATION), None);
+        let mut shortcuts = Shortcuts {
+            manager: None,
+            registered: Vec::new(),
+            gesture,
+        };
+        shortcuts
+            .gesture
+            .event(1, Action::FocusRight, HotKeyState::Pressed, start, Some(42));
+        shortcuts.suspend().unwrap();
+        assert_eq!(shortcuts.poll(start + HOLD_DURATION), None);
+    }
+
     #[test]
     fn plus_alias_respects_explicit_bindings_and_exports() {
         let mut config = Config::default();

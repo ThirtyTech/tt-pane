@@ -4,7 +4,7 @@ use crate::{
     platform,
     shortcuts::{Shortcuts, wayland_bindings},
 };
-use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
+use global_hotkey::GlobalHotKeyEvent;
 use gpui::{prelude::*, *};
 use std::{
     path::PathBuf,
@@ -151,6 +151,23 @@ impl Settings {
             "tt-pane — window shortcuts"
         }));
         cx.notify();
+    }
+
+    fn invoke(&mut self, invocation: crate::shortcuts::Invocation, cx: &mut Context<Self>) {
+        match crate::positioning::apply_gesture(
+            &self.active,
+            &self.path,
+            invocation.action,
+            invocation.window,
+            invocation.snapped_only,
+        ) {
+            Ok(()) => self.message(
+                format!("Positioned: {}", invocation.action.label()),
+                false,
+                cx,
+            ),
+            Err(e) => self.message(format!("{e:#}"), true, cx),
+        }
     }
 
     fn resume(&mut self) -> anyhow::Result<()> {
@@ -671,26 +688,20 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                                 }
                             }
                             while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
-                                if event.state != HotKeyState::Pressed || this.recording.is_some() {
-                                    continue;
-                                }
-                                if let Some(action) =
-                                    this.shortcuts.as_ref().and_then(|s| s.action(event.id))
+                                if this.recording.is_none()
+                                    && let Some(invocation) =
+                                        this.shortcuts.as_mut().and_then(|s| {
+                                            s.event(event.id, event.state, Instant::now())
+                                        })
                                 {
-                                    match crate::positioning::apply(
-                                        &this.active,
-                                        &this.path,
-                                        action,
-                                        None,
-                                    ) {
-                                        Ok(()) => this.message(
-                                            format!("Positioned: {}", action.label()),
-                                            false,
-                                            cx,
-                                        ),
-                                        Err(e) => this.message(format!("{e:#}"), true, cx),
-                                    }
+                                    this.invoke(invocation, cx);
                                 }
+                            }
+                            if this.recording.is_none()
+                                && let Some(invocation) =
+                                    this.shortcuts.as_mut().and_then(|s| s.poll(Instant::now()))
+                            {
+                                this.invoke(invocation, cx);
                             }
                         });
                     })

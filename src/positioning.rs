@@ -219,10 +219,25 @@ pub(crate) fn sidecar(config: &Path, suffix: &str) -> PathBuf {
 /// Serialize concurrent tray/plugin/CLI requests using a separate lock file.
 /// Only successful native requests advance the persisted cycle. Cache loss resets it.
 pub fn apply(config: &Config, path: &Path, action: Action, window: Option<u64>) -> Result<()> {
+    apply_gesture(config, path, action, window, false)
+}
+
+/// A held horizontal shortcut bypasses floating windows and centered groups.
+pub fn apply_gesture(
+    config: &Config,
+    path: &Path,
+    action: Action,
+    window: Option<u64>,
+    snapped_only: bool,
+) -> Result<()> {
+    ensure!(
+        !snapped_only || matches!(action, Action::FocusLeft | Action::FocusRight),
+        "Only horizontal focus supports hold navigation"
+    );
     // Capture the source before placement; focus actions resolve their destination afterward.
     #[cfg(windows)]
     let source = window.or_else(platform::foreground_handle);
-    let result = apply_inner(config, path, action, window);
+    let result = apply_inner(config, path, action, window, snapped_only);
     #[cfg(windows)]
     if result.is_ok() && config.focus.glow_enabled {
         let target = if action.focuses() {
@@ -237,24 +252,34 @@ pub fn apply(config: &Config, path: &Path, action: Action, window: Option<u64>) 
     result
 }
 
-fn apply_inner(config: &Config, path: &Path, action: Action, window: Option<u64>) -> Result<()> {
+fn apply_inner(
+    config: &Config,
+    path: &Path,
+    action: Action,
+    window: Option<u64>,
+    snapped_only: bool,
+) -> Result<()> {
     config.validate()?;
     #[cfg(not(windows))]
     if action.focuses() {
-        return platform::focus_window_with_visibility(
+        return platform::focus_window_filtered(
             window,
             action,
             config.focus.include_obscured,
+            &[],
+            snapped_only,
         );
     }
     // Resolve symlinks when the config exists so aliases share one cycle.
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     #[cfg(windows)]
     if action.focuses() && !sidecar(&path, ".centered.json").exists() {
-        return platform::focus_window_with_visibility(
+        return platform::focus_window_filtered(
             window,
             action,
             config.focus.include_obscured,
+            &[],
+            snapped_only,
         );
     }
     let parent = path
@@ -279,12 +304,17 @@ fn apply_inner(config: &Config, path: &Path, action: Action, window: Option<u64>
     #[cfg(windows)]
     if action.focuses() {
         let result = (|| -> Result<()> {
-            if !group.focus(window, action)? {
-                platform::focus_window_outside_group(
+            if snapped_only || !group.focus(window, action)? {
+                platform::focus_window_filtered(
                     window,
                     action,
                     config.focus.include_obscured,
-                    &group.exit_members(window, action),
+                    &if snapped_only {
+                        group.handles()
+                    } else {
+                        group.exit_members(window, action)
+                    },
+                    snapped_only,
                 )?;
                 group.refresh()?;
             }

@@ -143,25 +143,27 @@ fn animate(handle: u64, color: u32, generation: u64) -> Result<()> {
             width > 0 && height > 0 && i64::from(width) * i64::from(height) <= 40_000_000,
             "Invalid glow bounds"
         );
-        let mut surface = Surface::default();
-        surface.window = CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
-            w!("STATIC"),
-            w!("tt-pane focus glow"),
-            WS_POPUP,
-            bounds.left - pad,
-            bounds.top - pad,
-            width,
-            height,
-            None,
-            None,
-            None,
-            None,
-        )?;
+        let mut surface = Surface {
+            window: CreateWindowExW(
+                WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+                w!("STATIC"),
+                w!("tt-pane focus glow"),
+                WS_POPUP,
+                bounds.left - pad,
+                bounds.top - pad,
+                width,
+                height,
+                None,
+                None,
+                None,
+                None,
+            )?,
+            ..Surface::default()
+        };
         SetPropW(
             surface.window,
             w!("tt-pane.focus-glow"),
-            Some(HANDLE(1usize as *mut _)),
+            Some(HANDLE(std::ptr::dangling_mut())),
         )?;
         surface.dc = CreateCompatibleDC(None);
         ensure!(!surface.dc.is_invalid(), "Create glow DC");
@@ -352,20 +354,20 @@ mod tests {
             let observer = thread::spawn(|| {
                 let deadline = Instant::now() + Duration::from_secs(2);
                 loop {
-                    if let Ok(overlay) = FindWindowW(None, w!("tt-pane focus glow")) {
-                        if IsWindowVisible(overlay).as_bool() {
-                            let style = GetWindowLongPtrW(overlay, GWL_EXSTYLE) as u32;
-                            for flag in [
-                                WS_EX_TRANSPARENT,
-                                WS_EX_NOACTIVATE,
-                                WS_EX_LAYERED,
-                                WS_EX_TOOLWINDOW,
-                            ] {
-                                assert_ne!(style & flag.0, 0);
-                            }
-                            assert!(is_glow(overlay));
-                            return;
+                    if let Ok(overlay) = FindWindowW(None, w!("tt-pane focus glow"))
+                        && IsWindowVisible(overlay).as_bool()
+                    {
+                        let style = GetWindowLongPtrW(overlay, GWL_EXSTYLE) as u32;
+                        for flag in [
+                            WS_EX_TRANSPARENT,
+                            WS_EX_NOACTIVATE,
+                            WS_EX_LAYERED,
+                            WS_EX_TOOLWINDOW,
+                        ] {
+                            assert_ne!(style & flag.0, 0);
                         }
+                        assert!(is_glow(overlay));
+                        return;
                     }
                     assert!(Instant::now() < deadline, "Glow was never visible");
                     thread::sleep(Duration::from_millis(5));

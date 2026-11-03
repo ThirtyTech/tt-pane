@@ -492,6 +492,7 @@ pub fn focus_window(
     action: crate::geometry::Action,
     include_obscured: bool,
     group: &[u64],
+    snapped_only: bool,
 ) -> Result<()> {
     use windows::Win32::Foundation::LPARAM;
     use windows::core::BOOL;
@@ -578,7 +579,7 @@ pub fn focus_window(
             };
             let rect = from_rect(rect);
             let selectable = window != selected
-                && (group.is_empty()
+                && ((!snapped_only && group.is_empty())
                     || (!group.contains(&(window.0 as usize as u64))
                         && MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST)
                             == MonitorFromWindow(selected, MONITOR_DEFAULTTONEAREST)))
@@ -590,7 +591,7 @@ pub fn focus_window(
                 ..Default::default()
             };
             let work_area = (selectable
-                && !include_obscured
+                && (snapped_only || !include_obscured)
                 && GetMonitorInfoW(
                     MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST),
                     &mut info,
@@ -598,6 +599,7 @@ pub fn focus_window(
                 .as_bool())
             .then(|| from_rect(info.rcWork));
             if selectable
+                && (!snapped_only || crate::visibility::is_snapped(rect, work_area))
                 && crate::visibility::focus_eligible(
                     rect,
                     work_area,

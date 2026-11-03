@@ -76,7 +76,16 @@ pub(crate) fn focus_eligible(
     above: &[Rect],
     include_obscured: bool,
 ) -> bool {
-    let snapped = work_area.is_some_and(|area| {
+    focus_visible(
+        window,
+        screens,
+        above,
+        include_obscured || is_snapped(window, work_area),
+    )
+}
+
+pub(crate) fn is_snapped(window: Rect, work_area: Option<Rect>) -> bool {
+    work_area.is_some_and(|area| {
         if window.width <= 0 || window.height <= 0 || area.width <= 0 || area.height <= 0 {
             return false;
         }
@@ -95,8 +104,7 @@ pub(crate) fn focus_eligible(
             ]
             .into_iter()
             .any(|distance| distance.abs() <= 2)
-    });
-    focus_visible(window, screens, above, include_obscured || snapped)
+    })
 }
 
 fn focus_visible(window: Rect, screens: &[Rect], above: &[Rect], include_obscured: bool) -> bool {
@@ -149,6 +157,36 @@ mod tests {
         width: 100,
         height: 100,
     };
+
+    #[test]
+    fn hold_targets_skip_visible_middle_windows_in_both_directions() {
+        use crate::geometry::{Action, focus_neighbor};
+        let area = Rect {
+            x: -1600,
+            y: 40,
+            width: 1600,
+            height: 1000,
+        };
+        let left = Action::Left.target(area, area);
+        let right = Action::Right.target(area, area);
+        let middle = Action::Center.target(area, area);
+        for (source, direction, destination) in [
+            (left, Action::FocusRight, right),
+            (right, Action::FocusLeft, left),
+        ] {
+            let candidates = [middle, destination];
+            assert_eq!(focus_neighbor(source, &candidates, direction), Some(0));
+            let snaps: Vec<_> = candidates
+                .into_iter()
+                .filter(|r| is_snapped(*r, Some(area)))
+                .collect();
+            assert_eq!(snaps, vec![destination]);
+            assert_eq!(focus_neighbor(source, &snaps, direction), Some(0));
+        }
+        assert!(!is_snapped(middle, Some(area)));
+        assert!(!is_snapped(left, None));
+        assert_eq!(focus_neighbor(right, &[left], Action::FocusRight), None);
+    }
 
     #[test]
     fn covered_snaps_remain_eligible_but_middle_windows_require_half_visible() {
