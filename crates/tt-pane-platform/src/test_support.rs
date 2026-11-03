@@ -8,6 +8,11 @@ pub use tray_lifecycle::terminal_ctrl_c_terminates_tray_app;
 
 /// Exercise group placement with three disposable, non-activated native windows.
 pub fn with_group_windows(run: impl FnOnce([u64; 3])) {
+    with_focus_windows(run);
+}
+
+/// Disposable native focus fixtures, restoring the original foreground on exit.
+pub fn with_focus_windows<const N: usize>(run: impl FnOnce([u64; N])) {
     use windows::{
         Win32::{Foundation::HWND, UI::WindowsAndMessaging::*},
         core::w,
@@ -35,7 +40,7 @@ pub fn with_group_windows(run: impl FnOnce([u64; 3])) {
     }
     // SAFETY: STATIC is an OS-provided window class. These temporary windows are
     // owned by this thread, shown without activation, and destroyed by their guards.
-    let windows: [Owned; 3] = std::array::from_fn(|_| unsafe {
+    let windows: [Owned; N] = std::array::from_fn(|_| unsafe {
         let window = CreateWindowExW(
             Default::default(),
             w!("STATIC"),

@@ -222,7 +222,7 @@ pub fn apply(config: &Config, path: &Path, action: Action, window: Option<u64>) 
     apply_gesture(config, path, action, window, false)
 }
 
-/// A held horizontal shortcut includes middle windows regardless of occlusion.
+/// A hold enters covered middle windows from an edge, or exits them to background edges.
 pub fn apply_gesture(
     config: &Config,
     path: &Path,
@@ -261,7 +261,7 @@ fn apply_inner(
 ) -> Result<()> {
     config.validate()?;
     let visibility = if include_hidden {
-        platform::FocusVisibility::IncludeHidden
+        platform::FocusVisibility::Hold
     } else {
         platform::FocusVisibility::MoreThanPercent(config.focus.minimum_visible_percent)
     };
@@ -297,7 +297,7 @@ fn apply_inner(
     #[cfg(windows)]
     if action.focuses() {
         let result = (|| -> Result<()> {
-            if !group.focus(window, action, visibility)? {
+            if include_hidden || !group.focus(window, action, visibility)? {
                 platform::focus_window_filtered(
                     window,
                     action,

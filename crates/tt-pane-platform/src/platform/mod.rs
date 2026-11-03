@@ -116,6 +116,8 @@ pub enum FocusVisibility {
     MoreThanPercent(u32),
     AtLeastHalf,
     IncludeHidden,
+    /// Enter covered windows from an edge; exit middle windows to background edges.
+    Hold,
 }
 
 /// Edge-snapped windows qualify regardless of occlusion. Floating middle windows

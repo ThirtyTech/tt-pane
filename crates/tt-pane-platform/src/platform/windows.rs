@@ -533,6 +533,29 @@ fn focus_candidates(
             "Select a non-minimized window to change focus"
         );
         let current = from_rect(read_bounds(selected)?.1);
+        let snapped_only = if visibility == super::FocusVisibility::Hold {
+            let mut info = MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            ensure!(
+                GetMonitorInfoW(
+                    MonitorFromWindow(selected, MONITOR_DEFAULTTONEAREST),
+                    &mut info
+                )
+                .as_bool(),
+                "Could not read the selected window's monitor"
+            );
+            !group.is_empty()
+                || !crate::visibility::is_snapped(current, Some(from_rect(info.rcWork)))
+        } else {
+            false
+        };
+        let visibility = if visibility == super::FocusVisibility::Hold {
+            super::FocusVisibility::IncludeHidden
+        } else {
+            visibility
+        };
         let mut windows = Vec::<HWND>::new();
         EnumWindows(Some(collect), LPARAM(&mut windows as *mut _ as isize))?;
         let mut screens = Vec::<Rect>::new();
@@ -577,7 +600,7 @@ fn focus_candidates(
             };
             let rect = from_rect(rect);
             let selectable = window != selected
-                && ((group.is_empty())
+                && ((!snapped_only && group.is_empty())
                     || (!group.contains(&(window.0 as usize as u64))
                         && MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST)
                             == MonitorFromWindow(selected, MONITOR_DEFAULTTONEAREST)))
@@ -589,7 +612,7 @@ fn focus_candidates(
                 ..Default::default()
             };
             let work_area = (selectable
-                && visibility != super::FocusVisibility::IncludeHidden
+                && (snapped_only || visibility != super::FocusVisibility::IncludeHidden)
                 && GetMonitorInfoW(
                     MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST),
                     &mut info,
@@ -597,6 +620,7 @@ fn focus_candidates(
                 .as_bool())
             .then(|| from_rect(info.rcWork));
             if selectable
+                && (!snapped_only || crate::visibility::is_snapped(rect, work_area))
                 && crate::visibility::focus_eligible(rect, work_area, &screens, &above, visibility)
             {
                 candidates.push(window);

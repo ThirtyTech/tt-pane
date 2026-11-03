@@ -376,6 +376,53 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires interactive Windows desktop; briefly focuses disposable windows"]
+    fn native_hold_exits_middle_group_in_both_directions() {
+        platform::test_support::with_focus_windows(|[left, first, second, right]| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            let mut config = crate::config::Config::default();
+            config.focus.glow_enabled = false;
+            for (handle, action) in [
+                (left, Action::Left),
+                (right, Action::Right),
+                (first, Action::Center),
+                (second, Action::Center),
+            ] {
+                crate::positioning::apply(&config, &path, action, Some(handle)).unwrap();
+            }
+            for source in [first, second] {
+                for (action, expected) in [(Action::FocusLeft, left), (Action::FocusRight, right)] {
+                    platform::focus_snapshot(&platform::window_snapshot(source).unwrap().unwrap())
+                        .unwrap();
+                    observe(&path).unwrap();
+                    config.focus.minimum_visible_percent = 99;
+                    crate::positioning::apply_gesture(&config, &path, action, Some(source), true)
+                        .unwrap();
+                    assert_eq!(platform::foreground_handle(), Some(expected));
+                }
+            }
+            // Move a member manually so it becomes an ungrouped floating window.
+            let live = platform::window_snapshot(first).unwrap().unwrap();
+            platform::move_snapshot(
+                &live,
+                Rect {
+                    x: live.bounds.x + 7,
+                    ..live.bounds
+                },
+            )
+            .unwrap();
+            for (action, expected) in [(Action::FocusLeft, left), (Action::FocusRight, right)] {
+                platform::focus_snapshot(&platform::window_snapshot(first).unwrap().unwrap())
+                    .unwrap();
+                crate::positioning::apply_gesture(&config, &path, action, Some(first), true)
+                    .unwrap();
+                assert_eq!(platform::foreground_handle(), Some(expected));
+            }
+        });
+    }
+
+    #[test]
     #[ignore = "requires an interactive Windows desktop and briefly focuses disposable windows"]
     fn native_center_group_promotes_members_and_releases_manually_moved_windows() {
         platform::test_support::with_group_windows(|handles| {
@@ -401,13 +448,13 @@ mod tests {
                     .bounds,
                 group.members[0].centered
             );
-            // Holds keep hidden-by-overlap peers reachable.
+            // Regular presses traverse sufficiently visible group peers.
             crate::positioning::apply_gesture(
                 &config,
                 &path,
                 Action::FocusRight,
                 Some(handles[0]),
-                true,
+                false,
             )
             .unwrap();
             assert_eq!(platform::foreground_handle(), Some(handles[1]));
@@ -416,7 +463,7 @@ mod tests {
                 &path,
                 Action::FocusLeft,
                 Some(handles[1]),
-                true,
+                false,
             )
             .unwrap();
             assert_eq!(platform::foreground_handle(), Some(handles[0]));

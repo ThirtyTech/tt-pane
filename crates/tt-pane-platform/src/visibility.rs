@@ -120,7 +120,10 @@ fn focus_visible(
     if window.width <= 0 || window.height <= 0 {
         return false;
     }
-    if visibility == FocusVisibility::IncludeHidden {
+    if matches!(
+        visibility,
+        FocusVisibility::IncludeHidden | FocusVisibility::Hold
+    ) {
         return true;
     }
     let window = Bounds::from_rect(window);
@@ -152,7 +155,7 @@ fn focus_visible(
             visible_area * 100 > window.area() * i128::from(percent)
         }
         FocusVisibility::AtLeastHalf => visible_area * 2 >= window.area(),
-        FocusVisibility::IncludeHidden => true,
+        FocusVisibility::IncludeHidden | FocusVisibility::Hold => true,
     }
 }
 
