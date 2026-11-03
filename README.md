@@ -147,9 +147,9 @@ Gaps record tt-pane's own resizing operations, rather than scanning the desktop 
 
 ### Repeated shortcuts
 
-Press the same positioning shortcut again on the same window to grow it. By default, each repeat multiplies its width and height by **1.15**, with **two growth steps** before returning to the original placement:
+Press the same positioning shortcut again on the same window to grow it. By default, each repeat multiplies its width and height by **1.15**, with **three growth steps** before returning to the original placement:
 
-**Place → 115% → 132.25% → original placement → repeat.** Percentages describe dimensions, not area; dimensions round to the nearest pixel.
+**Place → 115% → 132.25% → 152.0875% → original placement → repeat.** Percentages describe dimensions, not area; dimensions round to the nearest pixel.
 
 Corners stay anchored: bottom left grows upward and to the right. Left/right halves grow inward horizontally; top/bottom halves grow inward vertically. Center starts at 50% width and 50% height, grows equally in every direction, and resets to that centered size. For example, Center after a left-half snap reduces the full height to half height. Growth is capped at the current monitor's available work area, so an already full dimension stays full. Fill work area remains full throughout the cycle.
 
@@ -205,7 +205,7 @@ version = 1
 
 [growth]
 percent = 15
-steps = 2
+steps = 3
 
 [width_resize]
 percent = 25
@@ -241,7 +241,7 @@ tt-pane config
 tt-pane --config ./my-config.toml
 ```
 
-`apply` acts immediately on the current foreground window and reads the configuration's resize options (or defaults when the file is absent). It does not require GPUI, a tray instance, or global key registration. Repeated positioning commands advance the same growth cycle; width commands resize continually. Use `--config PATH` to select a configuration and its independent state. Older files without `[growth]` use 15% and two steps; missing `[width_resize]` uses 25%. Existing bindings are preserved: add the two width bindings above, record them in Settings, or reset defaults to enable them in an older file. Exported Wayland shortcuts include the selected configuration path and the shifted-plus alias when available.
+`apply` acts immediately on the current foreground window and reads the configuration's resize options (or defaults when the file is absent). It does not require GPUI, a tray instance, or global key registration. Repeated positioning commands advance the same growth cycle; width commands resize continually. Use `--config PATH` to select a configuration and its independent state. Older files without `[growth]` use 15% and three steps; missing `[width_resize]` uses 25%. Existing bindings are preserved: add the two width bindings above, record them in Settings, or reset defaults to enable them in an older file. Exported Wayland shortcuts include the selected configuration path and the shifted-plus alias when available.
 
 ## Executable plugin interface
 

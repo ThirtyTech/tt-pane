@@ -28,7 +28,7 @@ version = 1
 
 [growth]
 percent = 15
-steps = 2
+steps = 3
 
 [width_resize]
 percent = 25

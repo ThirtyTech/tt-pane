@@ -598,7 +598,7 @@ mod tests {
             height: 600,
         };
         assert_eq!((cycle.step, cycle.last), (0, base));
-        for expected_step in [1, 2, 0] {
+        for expected_step in [1, 2, 3, 0] {
             cycle = Cycle::next(
                 Some(&cycle),
                 "one",
@@ -616,7 +616,7 @@ mod tests {
     }
 
     #[test]
-    fn two_growth_steps_then_original_for_every_anchor() {
+    fn three_growth_steps_then_original_for_every_anchor() {
         for action in Action::POSITIONS {
             let base = Cycle::next(None, "window", action, AREA, CURRENT, Growth::default());
             let first = Cycle::next(Some(&base), "window", action, AREA, base.last, base.growth);
@@ -628,7 +628,7 @@ mod tests {
                 first.last,
                 first.growth,
             );
-            let reset = Cycle::next(
+            let third = Cycle::next(
                 Some(&second),
                 "window",
                 action,
@@ -636,9 +636,17 @@ mod tests {
                 second.last,
                 second.growth,
             );
+            let reset = Cycle::next(
+                Some(&third),
+                "window",
+                action,
+                AREA,
+                third.last,
+                third.growth,
+            );
             assert_eq!(
-                (base.step, first.step, second.step, reset.step),
-                (0, 1, 2, 0)
+                (base.step, first.step, second.step, third.step, reset.step),
+                (0, 1, 2, 3, 0)
             );
             assert_eq!(reset.last, base.last, "{action:?}");
             assert_eq!(
@@ -653,7 +661,13 @@ mod tests {
                     .round()
                     .min(f64::from(AREA.height)) as i32
             );
-            assert_eq!(second.last.intersection(AREA), Some(second.last));
+            assert_eq!(third.last.intersection(AREA), Some(third.last));
+            assert_eq!(
+                third.last.height,
+                (f64::from(base.last.height) * 1.520875)
+                    .round()
+                    .min(f64::from(AREA.height)) as i32
+            );
         }
     }
 

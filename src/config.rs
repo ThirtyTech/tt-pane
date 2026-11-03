@@ -108,7 +108,7 @@ impl Default for Growth {
     fn default() -> Self {
         Self {
             percent: 15,
-            steps: 2,
+            steps: 3,
         }
     }
 }
@@ -295,7 +295,7 @@ mod tests {
             config.growth,
             Growth {
                 percent: 15,
-                steps: 2
+                steps: 3
             }
         );
         assert_eq!(config.bindings[0].shortcut, "Ctrl+Alt+Digit1");
@@ -306,7 +306,7 @@ mod tests {
             partial.growth,
             Growth {
                 percent: 25,
-                steps: 2
+                steps: 3
             }
         );
     }

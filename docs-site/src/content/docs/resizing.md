@@ -7,7 +7,7 @@ description: Learn anchored growth, width adjustments, gap filling, and paired v
 
 Press the same positioning shortcut on the same window to cycle through:
 
-**Place → 115% → 132.25% → original placement.**
+**Place → 115% → 132.25% → 152.0875% → original placement.**
 
 These percentages describe each dimension relative to the initial placement, not area. Each repeat multiplies width and height by 1.15, rounded to pixels and capped at the monitor work area. A full dimension stays full.
 

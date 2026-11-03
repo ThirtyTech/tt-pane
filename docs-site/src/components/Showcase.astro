@@ -45,7 +45,7 @@ import { positions } from '../data/positions';
         buttons.forEach((b, i) => b.setAttribute('aria-pressed', String(i === selected)));
         status.setAttribute('aria-live', announce ? 'polite' : 'off');
         const rounded = (value: number) => Math.round((value + 1e-9) * 100) / 100;
-        status.textContent = `${step ? `Growth ${step} of 2` : 'Initial placement'} · ${rounded(w)}% width × ${rounded(h)}% height`;
+        status.textContent = `${step ? `Growth ${step} of 3` : 'Initial placement'} · ${rounded(w)}% width × ${rounded(h)}% height`;
       };
       const setPlaying = (value: boolean) => {
         playing = value;
@@ -56,7 +56,7 @@ import { positions } from '../data/positions';
         setPlaying(false); selected = index; step = 0; render();
       }));
       this.querySelector('[data-grow]')!.addEventListener('click', () => {
-        setPlaying(false); step = (step + 1) % 3; render();
+        setPlaying(false); step = (step + 1) % 4; render();
       });
       play.addEventListener('click', () => setPlaying(!playing));
       const onMotionChange = () => { if (motion.matches) setPlaying(false); };
