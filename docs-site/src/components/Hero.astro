@@ -1,10 +1,12 @@
 ---
 import DefaultHero from '@astrojs/starlight/components/Hero.astro';
 import Showcase from './Showcase.astro';
+import HeroWindows from './HeroWindows.astro';
 const home = Astro.locals.starlightRoute.id === '';
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 ---
 {home ? <section class="tt-pane-hero">
+  <HeroWindows />
   <div class="hero-copy">
     <p class="eyebrow"><span></span> YOUR DESKTOP, IN POSITION</p>
     <h1 id="_top" data-page-title>Make room<br />for <em>your flow.</em></h1>
@@ -14,3 +16,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
   </div>
   <Showcase />
 </section> : <DefaultHero />}
+
+<style>
+  .tt-pane-hero { position: relative; isolation: isolate; }
+</style>

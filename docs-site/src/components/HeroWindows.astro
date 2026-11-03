@@ -1,0 +1,117 @@
+---
+// Each cluster previews a new three-window layout before its windows follow.
+const tiles = [
+  { x: '-8%', y: '18%', w: '39%', h: '46%', ax: '2%', ay: '4%', aw: '46%', ah: '88%', bx: '2%', by: '4%', bw: '96%', bh: '40%', tilt: '-5deg' },
+  { x: '58%', y: '-5%', w: '36%', h: '48%', ax: '52%', ay: '4%', aw: '46%', ah: '42%', bx: '2%', by: '50%', bw: '46%', bh: '42%', tilt: '4deg' },
+  { x: '65%', y: '64%', w: '39%', h: '38%', ax: '52%', ay: '50%', aw: '46%', ah: '42%', bx: '52%', by: '50%', bw: '46%', bh: '42%', tilt: '-3deg' },
+];
+const colors = ['mint', 'blue', 'lilac', 'peach'];
+---
+
+<label class="motion-control">
+  <input type="checkbox" aria-controls="hero-windows" />
+  <span>Pause background animation</span>
+</label>
+<div class="hero-windows" id="hero-windows" aria-hidden="true">
+  {colors.map((_, group) => (
+    <div class={`window-cluster cluster-${group}`} style={`--delay:${-group * 6}s`}>
+      {tiles.map((tile, index) => (
+        <div class={`window-pair ${colors[(group + index) % colors.length]}`} style={Object.entries(tile).map(([key, value]) => `--${key}:${value}`).join(';')}>
+          <div class="snap-target"></div>
+          <div class="ambient-window">
+            <div class="ambient-titlebar"><i></i><i></i><i></i><span></span></div>
+            <div class="ambient-content"><b></b><b></b><b></b></div>
+          </div>
+        </div>
+      ))}
+    </div>
+  ))}
+</div>
+
+<style>
+  .hero-windows {
+    position: absolute;
+    inset: 0 -2rem;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+    contain: layout paint;
+    opacity: .32;
+    /* Fade the decoration under the copy, retaining detail around its edges. */
+    mask-image: linear-gradient(transparent, #000 5%, #000 92%, transparent),
+      radial-gradient(ellipse at 22% 46%, #0003 12%, #000 65%);
+    mask-composite: intersect;
+  }
+  .window-cluster { position: absolute; width: clamp(210px, 24vw, 310px); height: 156px; }
+  .cluster-0 { left: 3%; top: 1%; }
+  .cluster-1 { right: 3%; top: 0; }
+  .cluster-2 { left: 9%; bottom: 3%; }
+  .cluster-3 { left: 35%; top: 37%; width: 220px; height: 180px; }
+  .mint { color: #69bfa8; }
+  .blue { color: #78a9d5; }
+  .lilac { color: #b49aca; }
+  .peach { color: #c5a184; }
+  :global([data-theme=light]) .mint { color: #387e6e; }
+  :global([data-theme=light]) .blue { color: #427aa3; }
+  :global([data-theme=light]) .lilac { color: #8766a1; }
+  :global([data-theme=light]) .peach { color: #a8774f; }
+  .ambient-window, .snap-target {
+    position: absolute;
+    box-sizing: border-box;
+    left: var(--ax); top: var(--ay); width: var(--aw); height: var(--ah);
+    border: 1px solid currentColor;
+    border-radius: 5px;
+    animation-duration: 24s;
+    animation-timing-function: cubic-bezier(.22, 1, .36, 1);
+    animation-delay: var(--delay);
+    animation-iteration-count: infinite;
+    animation-fill-mode: both;
+  }
+  .snap-target {
+    border-style: dashed;
+    background: color-mix(in srgb, currentColor 4%, transparent);
+    animation-name: target-layout;
+  }
+  .ambient-window {
+    background: color-mix(in srgb, currentColor 14%, var(--sl-color-black));
+    overflow: hidden;
+    animation-name: window-layout;
+  }
+  .ambient-titlebar { display: flex; align-items: center; gap: 3px; height: 17px; padding: 0 6px; border-bottom: 1px solid color-mix(in srgb, currentColor 45%, transparent); }
+  .ambient-titlebar i { width: 2px; height: 2px; border-radius: 50%; background: currentColor; }
+  .ambient-titlebar span { width: 22%; height: 2px; margin-left: auto; background: currentColor; opacity: .5; }
+  .ambient-content { padding: 9px; }
+  .ambient-content b { display: block; width: 58%; height: 2px; margin-bottom: 6px; background: currentColor; opacity: .45; }
+  .ambient-content b:nth-child(2) { width: 78%; }
+  .ambient-content b:nth-child(3) { width: 38%; }
+  .motion-control { position: absolute; right: 0; bottom: .5rem; display: flex; align-items: center; gap: .4rem; min-height: 32px; color: var(--muted); font-size: .65rem; cursor: pointer; }
+  .motion-control input { margin: 0; accent-color: var(--mint); }
+  .motion-control input:focus-visible { outline: 2px solid var(--mint); outline-offset: 4px; }
+  .motion-control:has(input:checked) ~ .hero-windows :is(.ambient-window, .snap-target) { animation-play-state: paused; }
+  /* Targets settle roughly two seconds before their windows start moving. */
+  @keyframes target-layout {
+    0%, 4% { left: var(--x); top: var(--y); width: var(--w); height: var(--h); opacity: 0; }
+    10%, 32% { left: var(--ax); top: var(--ay); width: var(--aw); height: var(--ah); opacity: .85; }
+    39%, 72% { left: var(--bx); top: var(--by); width: var(--bw); height: var(--bh); opacity: .85; }
+    80%, 100% { left: var(--bx); top: var(--by); width: var(--bw); height: var(--bh); opacity: 0; }
+  }
+  @keyframes window-layout {
+    0%, 18%, 100% { left: var(--x); top: var(--y); width: var(--w); height: var(--h); transform: rotate(var(--tilt)); }
+    23%, 47% { left: var(--ax); top: var(--ay); width: var(--aw); height: var(--ah); transform: rotate(0); }
+    52%, 80% { left: var(--bx); top: var(--by); width: var(--bw); height: var(--bh); transform: rotate(0); }
+    92% { left: var(--x); top: var(--y); width: var(--w); height: var(--h); transform: rotate(var(--tilt)); }
+  }
+  @media (max-width: 50rem) {
+    .hero-windows { inset: 0 -.75rem; max-height: 38rem; opacity: .24; }
+    .window-cluster { width: 180px; height: 120px; }
+    .cluster-0 { left: -5%; top: 0; }
+    .cluster-1 { right: -12%; top: 22%; }
+    .cluster-2 { left: 2%; bottom: 2%; }
+    .cluster-3 { left: -15%; top: 53%; width: 150px; height: 120px; }
+    .motion-control { min-height: 44px; bottom: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ambient-window, .snap-target { animation: none; }
+    .snap-target, .motion-control { display: none; }
+  }
+</style>
