@@ -15,7 +15,11 @@ npm run preview
 
 Open the printed local URL under `/sTile/`. Production output is `docs-site/dist/`. Search is indexed by Pagefind during the production build; use preview to test it.
 
-The configuration targets `https://jsheely.github.io/sTile/`, but this change does not enable hosting or publish the site. Set GitHub Pages to GitHub Actions and add a deployment workflow when ready. If changing the base, update internal `/sTile/` content links as well as `astro.config.mjs`.
+The configuration targets `https://jsheely.github.io/sTile/`. The `Docs` workflow in `.github/workflows/docs.yml` installs locked dependencies, checks types, builds the site, and deploys it to GitHub Pages when documentation or workflow changes are pushed to `main`. Pull requests run the checks and build without deployment. Manual runs are supported; only runs on `main` deploy.
+
+One-time repository setup: **Settings → Pages → Build and deployment → Source → GitHub Actions**. The workflow must be merged to `main` before automatic publication starts. It uses the `github-pages` environment and grants Pages/OIDC write permissions only to the deployment job. This does not change repository visibility or configure Pages settings automatically.
+
+If changing the base, update internal `/sTile/` content links as well as `astro.config.mjs`.
 
 ## Editing
 

@@ -1,12 +1,22 @@
-name: Documentation checks
+name: Docs
+
+# One-time setup: Settings > Pages > Source > GitHub Actions.
+# Published at https://jsheely.github.io/sTile/.
 on:
   pull_request:
     paths: ['docs-site/**', '.github/workflows/docs.yml']
   push:
+    branches: [main]
     paths: ['docs-site/**', '.github/workflows/docs.yml']
   workflow_dispatch:
 permissions:
   contents: read
+
+# Serialize deployments without letting a pull-request build block Pages.
+concurrency:
+  group: docs-${{ github.event_name == 'pull_request' && github.ref || 'pages' }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -14,8 +24,8 @@ jobs:
       run:
         working-directory: docs-site
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -23,7 +33,21 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         with:
-          name: documentation-site
           path: docs-site/dist
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
