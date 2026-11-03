@@ -309,6 +309,18 @@ impl Settings {
             self.message(format!("Saved, but {error:#}"), true, cx);
             return;
         }
+        #[cfg(target_os = "linux")]
+        if platform::is_gnome_wayland() {
+            match std::env::current_exe()
+                .and_then(|exe| Ok((exe, std::path::absolute(&self.path)?)))
+                .map_err(anyhow::Error::from)
+                .and_then(|(exe, path)| crate::gnome::setup(&self.active, &exe, &path))
+            {
+                Ok(setup) => self.message(format!("Saved. {}", setup.summary()), false, cx),
+                Err(error) => self.message(format!("Saved, but {error:#}"), true, cx),
+            }
+            return;
+        }
         self.message(
             if platform::is_wayland() {
                 "Saved. Export shortcuts and reload your compositor to activate them."
@@ -321,6 +333,18 @@ impl Settings {
     }
 
     fn export(&mut self, cx: &mut Context<Self>) {
+        #[cfg(target_os = "linux")]
+        if platform::is_gnome_wayland() {
+            let result = std::env::current_exe()
+                .and_then(|exe| Ok((exe, std::path::absolute(&self.path)?)))
+                .map_err(anyhow::Error::from)
+                .and_then(|(exe, path)| crate::gnome::setup(&self.active, &exe, &path));
+            match result {
+                Ok(setup) => self.message(setup.summary(), false, cx),
+                Err(error) => self.message(format!("{error:#}"), true, cx),
+            }
+            return;
+        }
         let result = (|| -> anyhow::Result<PathBuf> {
             let compositor = if std::env::var_os("SWAYSOCK").is_some() {
                 "sway"
@@ -560,7 +584,9 @@ impl Render for Settings {
                             this.message("Growth updated. Save to activate.", false, cx);
                         }))))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("First press places the window. Repeats multiply its size, keeping the corner or edge anchored. Center starts at 50% width and height, then grows equally in every direction. Growth stops at the work area; 0 steps turns it off.")))
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child(if platform::is_wayland() {
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child(if platform::is_gnome_wayland() {
+                        "GNOME: saving registers these as GNOME keyboard shortcuts. The first time, log out and back in so GNOME loads the tt-pane extension. Directional focus isn't available on Linux yet."
+                    } else if platform::is_wayland() {
                         "Wayland: save, export shortcuts, then include the file in your compositor config. Sway and Hyprland are supported."
                     } else { "Closing settings keeps tt-pane running in the tray. Use the tray menu to quit." }))))
             .child(div().text_sm().text_color(rgb(if self.error { 0xffa59b } else { 0x91a4bb })).child(self.status.clone()))
@@ -573,7 +599,7 @@ impl Render for Settings {
                     this.message(result.err().map(|e| format!("{e:#}")).unwrap_or_else(|| "Defaults restored. Save to activate.".into()), false, cx);
                 })))
                 .child(div().flex().gap_3()
-                    .when(platform::is_wayland(), |el| el.child(button("export", "Export shortcuts").on_click(cx.listener(|this, _, _, cx| this.export(cx)))))
+                    .when(platform::is_wayland(), |el| el.child(button("export", if platform::is_gnome_wayland() { "Set up GNOME" } else { "Export shortcuts" }).on_click(cx.listener(|this, _, _, cx| this.export(cx)))))
                     .child(button("save", "Save changes").bg(rgb(0x217b68)).on_click(cx.listener(|this, _, _, cx| this.save(cx))))))
     }
 }
@@ -678,6 +704,19 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
         // installs a login item pointing into target/.
         if !(config.launch_at_login && cfg!(debug_assertions))
             && let Err(e) = crate::autostart::apply(config.launch_at_login)
+        {
+            status = format!("{e:#}");
+            error = true;
+        }
+        // GNOME runs tt-pane's shortcuts itself; keep them pointed at this
+        // executable. Debug builds skip it, as with autostart above.
+        #[cfg(target_os = "linux")]
+        if platform::is_gnome_wayland()
+            && !cfg!(debug_assertions)
+            && let Err(e) = std::env::current_exe()
+                .and_then(|exe| Ok((exe, std::path::absolute(&path)?)))
+                .map_err(anyhow::Error::from)
+                .and_then(|(exe, path)| crate::gnome::setup(&config, &exe, &path))
         {
             status = format!("{e:#}");
             error = true;

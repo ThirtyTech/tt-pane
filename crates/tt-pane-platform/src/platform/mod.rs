@@ -67,6 +67,18 @@ pub fn is_wayland() -> bool {
             || std::env::var("XDG_SESSION_TYPE").is_ok_and(|s| s == "wayland"))
 }
 
+/// GNOME Wayland sessions, which need the bundled Shell extension.
+pub fn is_gnome_wayland() -> bool {
+    is_wayland() && is_gnome()
+}
+
+#[cfg(target_os = "linux")]
+use linux::is_gnome;
+#[cfg(not(target_os = "linux"))]
+fn is_gnome() -> bool {
+    false
+}
+
 pub fn description() -> &'static str {
     if cfg!(target_os = "windows") {
         "Windows · native Win32"
@@ -77,6 +89,8 @@ pub fn description() -> &'static str {
             "Wayland · Sway IPC"
         } else if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
             "Wayland · Hyprland IPC"
+        } else if is_gnome() {
+            "Wayland · GNOME Shell extension"
         } else {
             "Wayland · compositor not yet supported"
         }

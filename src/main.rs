@@ -44,6 +44,19 @@ enum Command {
         #[arg(value_parser = ["sway", "hyprland"])]
         compositor: String,
     },
+    /// GNOME Wayland: install the tt-pane Shell extension and register shortcuts.
+    #[cfg(target_os = "linux")]
+    Gnome {
+        #[command(subcommand)]
+        command: GnomeCommand,
+    },
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Subcommand)]
+enum GnomeCommand {
+    /// Install or update the extension and replace tt-pane's GNOME custom shortcuts.
+    Setup,
 }
 
 fn run(cli: Cli) -> Result<()> {
@@ -96,6 +109,13 @@ fn run(cli: Cli) -> Result<()> {
                 &std::env::current_exe()?,
                 Some(&std::path::absolute(&path)?)
             )?
+        ),
+        #[cfg(target_os = "linux")]
+        Some(Command::Gnome {
+            command: GnomeCommand::Setup,
+        }) => println!(
+            "{}",
+            tt_pane::gnome::setup(&config, &std::env::current_exe()?, &path)?.summary()
         ),
         Some(Command::Apply { .. } | Command::Actions) => unreachable!(),
         command @ (None | Some(Command::Settings)) => {

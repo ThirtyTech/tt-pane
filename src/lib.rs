@@ -4,6 +4,8 @@ pub mod autostart;
 #[cfg(windows)]
 pub mod centered;
 pub mod config;
+#[cfg(target_os = "linux")]
+pub mod gnome;
 pub mod positioning;
 pub use tt_pane_platform as platform;
 pub use tt_pane_platform::geometry;

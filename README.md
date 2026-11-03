@@ -182,9 +182,10 @@ Tray shortcuts, `apply`, Herdr actions, and exported Wayland shortcuts share the
 | Linux X11 | EWMH active-window/move-resize messages, RandR monitors, monitor-specific partial panel struts | X11 key grabs through `global-hotkey` |
 | Wayland / Sway | Native Unix-socket IPC; containing workspace rectangle excludes panels | Exported compositor bindings |
 | Wayland / Hyprland | Native Unix-socket IPC; window monitor ID, scale, rotation, and reserved margins | Exported compositor bindings |
-| Wayland / GNOME, KDE, other compositors | **Not implemented yet.** Requires compositor-specific integration | Not implemented |
+| Wayland / GNOME | Bundled GNOME Shell extension over session D-Bus; focused window's frame and current-monitor work area | GNOME custom keyboard shortcuts, registered by tt-pane |
+| Wayland / KDE, other compositors | **Not implemented yet.** Requires compositor-specific integration | Not implemented |
 
-Wayland does not offer a universal API to reposition another application's windows. Native Wayland windows cannot be controlled through the X11 backend. Sway and Hyprland are supported explicitly; GNOME Shell and KWin adapters remain future work. The Sway and Hyprland backends float the selected window so that exact placement is possible. Exit fullscreen before positioning on Hyprland or macOS. On X11, the window manager must implement EWMH move/resize and RandR 1.5 monitor enumeration. Panels exposing only legacy struts are not yet accounted for.
+Wayland does not offer a universal API to reposition another application's windows. Native Wayland windows cannot be controlled through the X11 backend. Sway, Hyprland and GNOME are supported explicitly; a KWin adapter remains future work. The Sway and Hyprland backends float the selected window so that exact placement is possible. Exit fullscreen before positioning on Hyprland, GNOME or macOS. On X11, the window manager must implement EWMH move/resize and RandR 1.5 monitor enumeration. Panels exposing only legacy struts are not yet accounted for.
 
 ### Wayland shortcuts
 
@@ -201,6 +202,16 @@ tt-pane export hyprland > ~/.config/hypr/tt-pane.conf
 # Add to ~/.config/hypr/hyprland.conf:
 # source = ~/.config/hypr/tt-pane.conf
 ```
+
+### GNOME on Wayland
+
+GNOME doesn't let applications move other applications' windows, so tt-pane ships a small GNOME Shell extension (`packaging/gnome/tt-pane@thirtytech.net`) that reads and moves the focused window on request over the session bus. Click **Set up GNOME** or **Save changes** in Settings, or run:
+
+```sh
+tt-pane gnome setup
+```
+
+This installs or updates the extension under `~/.local/share/gnome-shell/extensions/`, enables it, and registers tt-pane's bindings as GNOME custom keyboard shortcuts (Settings → Keyboard → Custom Shortcuts) that run `tt-pane apply`. Only entries named `tt-pane-*` are written or removed; your own custom shortcuts are kept. GNOME loads a newly installed extension at the next login, so log out and back in once. A release build re-registers the shortcuts at startup so they follow the running executable. Directional focus and paired vertical resizing aren't available on Linux yet, so those bindings aren't registered.
 
 Export embeds the executable's absolute path. Generate bindings after installing the executable in its final location. Export supports letters, number-row and numpad digits, function keys, arrows, and common navigation keys; other physical keys report an explicit error. Generated shortcuts invoke the native Rust backend directly, so the GPUI settings window need not stay open on Wayland.
 
@@ -306,7 +317,7 @@ The lifecycle test briefly creates its own settings window, closes it with a nat
 - `config.rs`: versioned TOML, validation, atomic save.
 - `positioning.rs`: shared repeated-action cycles, persisted baseline and cross-process locking.
 - `shortcuts.rs`: native shortcut lifetime, conflict handling, Wayland export.
-- `crates/tt-pane-platform/`: native Windows, macOS, X11, Sway, and Hyprland adapters, plus Windows icon/console interop. The application reexports geometry and platform APIs at their existing paths.
+- `crates/tt-pane-platform/`: native Windows, macOS, X11, Sway, Hyprland, and GNOME adapters, plus Windows icon/console interop. The application reexports geometry and platform APIs at their existing paths.
 - `ui.rs`: GPUI settings, shortcut recorder, preview, save/error feedback.
 
 ```sh
