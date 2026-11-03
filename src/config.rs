@@ -135,10 +135,10 @@ impl Default for Config {
             "Shift+8",
             "ArrowUp",
             "ArrowDown",
-            "H",
-            "J",
-            "K",
-            "L",
+            "h",
+            "j",
+            "k",
+            "l",
         ];
         Self {
             version: 1,
@@ -183,6 +183,7 @@ impl Config {
             Ok(text) => {
                 let mut config: Self =
                     toml::from_str(&text).context("Invalid configuration TOML")?;
+                config.normalize_letter_keys();
                 config.validate()?;
                 config.add_missing_focus_bindings();
                 config.validate()?;
@@ -190,6 +191,18 @@ impl Config {
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(error) => Err(error).with_context(|| format!("Read {}", path.display())),
+        }
+    }
+
+    // Match the recorder, which stores letter keys in lowercase.
+    fn normalize_letter_keys(&mut self) {
+        for binding in &mut self.bindings {
+            if let Some((mods, key)) = binding.shortcut.rsplit_once('+')
+                && key.len() == 1
+                && key.as_bytes()[0].is_ascii_uppercase()
+            {
+                binding.shortcut = format!("{mods}+{}", key.to_ascii_lowercase());
+            }
         }
     }
 
@@ -439,10 +452,10 @@ mod focus_binding_tests {
     fn old_configs_gain_vim_defaults_without_overriding_user_bindings() {
         let mut config = Config::default();
         for (action, key) in [
-            (Action::FocusLeft, "H"),
-            (Action::FocusDown, "J"),
-            (Action::FocusUp, "K"),
-            (Action::FocusRight, "L"),
+            (Action::FocusLeft, "h"),
+            (Action::FocusDown, "j"),
+            (Action::FocusUp, "k"),
+            (Action::FocusRight, "l"),
         ] {
             assert_eq!(
                 config
@@ -464,7 +477,7 @@ mod focus_binding_tests {
         let path = dir.path().join("config.toml");
         config.save(&path).unwrap();
         let loaded = Config::load(&path).unwrap();
-        assert_eq!(loaded.bindings[0].shortcut, "Ctrl+Alt+H");
+        assert_eq!(loaded.bindings[0].shortcut, "Ctrl+Alt+h");
         for action in [Action::FocusLeft, Action::FocusDown] {
             assert!(
                 loaded
@@ -483,7 +496,7 @@ mod focus_binding_tests {
                 .find(|b| b.action == Action::FocusRight)
                 .unwrap()
                 .shortcut,
-            "Ctrl+Alt+L"
+            "Ctrl+Alt+l"
         );
         loaded.save(&path).unwrap();
         assert_eq!(
