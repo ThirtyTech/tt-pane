@@ -1,6 +1,12 @@
+<img src="assets/tt-pane.svg" alt="tt-pane logo" width="96" height="96">
+
 # tt-pane
 
 A keyboard-first window position manager written in Rust, with a GPUI settings screen and native platform backends.
+
+![Window-snapping illustration: Ctrl+Alt+1 snaps the active window to the left half, Ctrl+Alt+3 centers it at half width and height, and Ctrl+Alt+9 snaps it to the top-right quarter.](assets/window-snapping-preview.svg)
+
+Snap the active window into place with a shortcut. Each illustration shows the monitor's usable work area, with the active window in green.
 
 ## Documentation site
 
