@@ -144,8 +144,11 @@ impl Shortcuts {
     ) -> Option<Invocation> {
         let action = self.action(id)?;
         if cfg!(windows) {
-            self.gesture
-                .event(id, action, state, now, platform::foreground_handle())
+            #[cfg(windows)]
+            let window = platform::foreground_handle();
+            #[cfg(not(windows))]
+            let window = None;
+            self.gesture.event(id, action, state, now, window)
         } else {
             (state == HotKeyState::Pressed).then_some(Invocation {
                 action,
