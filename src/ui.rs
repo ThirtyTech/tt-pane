@@ -461,9 +461,20 @@ impl Render for Settings {
                             .child(button("glow-color", &format!("Color: {}", self.draft.focus.glow_color))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     #[cfg(windows)]
-                                    if let Some(color) = platform::choose_glow_color(this.draft.focus.glow_rgb().unwrap_or(0xf2f0e8)) {
-                                        this.draft.focus.glow_color = format!("#{color:06X}");
-                                        this.message("Glow color updated. Save to activate.", false, cx);
+                                    {
+                                        let initial = this.draft.focus.glow_rgb().unwrap_or(0xf2f0e8);
+                                        cx.spawn(async move |this, cx| {
+                                            // ChooseColorW pumps Windows messages. Run it after the
+                                            // click listener releases GPUI's App/entity borrows so
+                                            // activation observers and foreground tasks can re-enter.
+                                            let color = platform::choose_glow_color(initial);
+                                            if let Some(color) = color {
+                                                let _ = this.update(cx, |this, cx| {
+                                                    this.draft.focus.glow_color = format!("#{color:06X}");
+                                                    this.message("Glow color updated. Save to activate.", false, cx);
+                                                });
+                                            }
+                                        }).detach();
                                     }
                                     let _ = (this, cx);
                                 }))))

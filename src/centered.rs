@@ -655,7 +655,7 @@ mod tests {
                 let selected = (turn % count) as usize;
                 assert_eq!(handle, selected as u64 + 1);
                 let mut positions = Vec::new();
-                let mut left = 0;
+                let mut left: i32 = 0;
                 let mut right = 0;
                 for (index, peer) in group.members.iter().enumerate() {
                     let rect = target(&group.members, index, selected);
@@ -675,7 +675,7 @@ mod tests {
                     assert!(!positions.contains(&(rect.x, rect.y)));
                     positions.push((rect.x, rect.y));
                 }
-                assert!((left - right as i32).abs() <= 1);
+                assert!((left - right).abs() <= 1);
                 handle = group.neighbor(handle, Action::FocusRight).unwrap();
             }
             assert_eq!(target(&group.members, 0, 0), saved);
