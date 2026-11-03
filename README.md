@@ -14,6 +14,8 @@ The [Astro Starlight documentation site](docs-site/README.md) includes an animat
 
 Every action targets the **active window on its current monitor**, using that monitor's work area. Windows spanning displays use the display with the largest overlap; an off-screen window uses the nearest display. The first Center press resizes the window to 50% of the work area's width and height and centers it on both axes. There is no primary-monitor assumption in the positioning engine.
 
+See [CHANGELOG.md](CHANGELOG.md) for changes by release.
+
 ## Install
 
 Download packages from [GitHub Releases](https://github.com/thirtytech/tt-pane/releases). Release packages become available after a matching version tag is published.
@@ -91,7 +93,7 @@ The digit shortcuts use number-row keys (Digit0 through Digit9). The minus short
 
 **Ctrl+Alt+-** reduces the current width by 25%; **Ctrl+Alt+=** increases it by 25%. Both preserve height and vertical position. The last matching placement supplies the anchor: left positions keep their left edge, right positions keep their right edge, and centered positions keep their midpoint. For a manually placed window, its horizontal position on the current monitor determines the anchor. Shrinking a bottom-left window moves only its right edge inward.
 
-Repeated presses keep resizing, with no reset cycle. Expansion stops at the available monitor boundary for that anchor, and shrinking stops at the application's minimum width (at least one pixel). Percentages apply to the current width, so shrinking and expanding once are not inverse operations: 1000 → 750 → 938 pixels. Adjust the shared percentage under **Width adjustment → Width change per press** in Settings (1–99%, default 25%). The two-dimensional growth controls below it apply only to repeated positioning shortcuts.
+Repeated presses keep resizing, with no reset cycle. Expansion stops at the available monitor boundary for that anchor, and shrinking stops at the application's minimum width (at least one pixel). Percentages apply to the current width, so shrinking and expanding once are not inverse operations: 1000 → 750 → 938 pixels. Adjust the shared percentage under **Advanced → Width adjustment → Width change per press** in Settings (1–99%, default 25%). The two-dimensional growth controls below it apply only to repeated positioning shortcuts.
 
 In Position preview, hover a placement first, then Shrink width or Expand width to see how the width changes for that placement. The preview uses the configured width percentage.
 

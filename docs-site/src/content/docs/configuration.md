@@ -55,11 +55,15 @@ When middle-window navigation is enabled, **Settings → Advanced → Filter mid
 
 Tap **Ctrl+Alt+H/L** (release before **400 ms**) for regular navigation. Hold for **400 ms** from a background edge-snapped window to enter middle windows, including covered ones. From a centered member or floating middle window, hold to exit to background edge-snapped windows on the same monitor. Holds fire once; release before holding again. If no candidate qualifies, focus stays put. Remapped horizontal focus shortcuts work the same way. Holds require the running Windows tray app.
 
+Saved growth settings are preserved on upgrade. New configurations and files without growth settings default to 15% and three steps; reset defaults and save to adopt these values in an existing configuration. Width and growth controls are under **Advanced**, which starts collapsed.
+
 Old `include_obscured = false` settings migrate to 50%, and `true` or an omitted value migrates to 10%. An explicit `minimum_visible_percent` wins if both keys exist. Saving writes only the new percentage key.
 
-## Command line
+## Focus glow — Windows
 
 On Windows, **Settings → Window focus → Focus glow** enables a soft, click-through gradient cue after moves/resizes and Vim-style focus navigation. It fades in and out over 480 ms. Click **Color** to open the color picker, then save. The default is enabled with neutral off-white (`#F2F0E8`); `glow_color` accepts `#RRGGBB`. Existing configurations inherit these defaults. CLI actions use the same cue and wait for it before exiting. Other platforms do not render the glow.
+
+## Command line
 
 Use the installed executable’s full path if it is not on PATH. On Windows, the installer does not add it automatically.
 

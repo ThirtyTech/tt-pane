@@ -13,7 +13,7 @@ These percentages describe each dimension relative to the initial placement, not
 
 Corners stay anchored. Bottom left grows upward and right; left and right halves grow inward; center grows around its midpoint. Fill work area stays full throughout the cycle.
 
-In Settings, adjust **Growth per press** (1–100%) and **Growth steps before reset** (0–20). Zero steps disables growth. Changing action, window, monitor work area, or growth settings starts a new cycle. External moves or resizes also reset it, allowing two pixels for platform rounding. There is no timeout.
+In **Settings → Advanced → Repeat shortcut to grow**, adjust **Growth per press** (1–100%) and **Growth steps before reset** (0–20). Zero steps disables growth. Changing action, window, monitor work area, or growth settings starts a new cycle. External moves or resizes also reset it, allowing two pixels for platform rounding. There is no timeout.
 
 ## Adjust only the width
 
@@ -23,7 +23,7 @@ The last matching placement supplies the anchor: left positions keep the left ed
 
 Width adjustments do not cycle or reset. Expansion stops at the monitor boundary; application minimum widths can stop shrinking. Each change uses the current width, so shrinking and expanding are not inverse operations: **1000 → 750 → 938 pixels**.
 
-Change the shared percentage in **Width adjustment → Width change per press** (1–99%). It is separate from repeated-placement growth.
+Change the shared percentage in **Advanced → Width adjustment → Width change per press** (1–99%). It is separate from repeated-placement growth.
 
 ## Fill the gap
 
