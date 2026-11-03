@@ -27,6 +27,7 @@ If changing the base, update internal `/tt-pane/` content links as well as `astr
 - Theme and responsive layout: `src/styles/theme.css`
 - Homepage: `src/components/Hero.astro`
 - Shared animated demo: `src/components/Showcase.astro`
+- Homepage promo: `src/components/PromoVideo.astro`; only the custom thumbnail lives in `public/media/`. The native HTML player streams from the public Thirtytech OneDrive sharing link with `download=1`. No server-side code, bundled MP4, or temporary download token is needed. Keep the sharing link public and downloads enabled. SharePoint sets an anonymous access cookie during its redirect, so browsers blocking third-party cookies may prevent playback; the direct YouTube callout remains available. The player uses `preload="none"` and does not autoplay.
 - Initial position geometry: `src/data/positions.ts`
 
 The demo never registers desktop shortcuts or moves real windows. Native buttons support keyboard and touch input. Its optional tour pauses on hover, focus, and hidden tabs; reduced-motion preference disables autoplay and transitions. Keep the ten placements and growth behavior aligned with Rust geometry when updating the app.
