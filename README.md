@@ -27,17 +27,18 @@ Download packages from [GitHub Releases](https://github.com/thirtytech/tt-pane/r
   ```
 
   Or run `tt-pane-vVERSION-windows-x64-setup.exe` yourself. It installs for your account without administrator rights, adds a Start menu shortcut, and offers optional desktop and sign-in shortcuts. Launch tt-pane from Start, then open Settings from its tray menu. The portable ZIP can be unpacked anywhere instead.
-- **Linux x64 / macOS Apple Silicon:** run the install script. It verifies the download's checksum and installs `tt-pane` into `~/.local/bin`; on Linux it also adds an app launcher and icon under `~/.local/share`. Set `TTPANE_VERSION` (such as `v0.2.0`) for a specific release, or `TTPANE_PREFIX` for another location (`/usr/local` with `sudo` for every user). Rerun it to upgrade; pass `--uninstall` to remove it.
+- **macOS Apple Silicon:** open `tt-pane-vVERSION-macos-arm64.dmg` and drag **tt-pane** onto **Applications**. Open tt-pane from Applications, Launchpad, or Spotlight; it runs in the menu bar with no Dock icon and no terminal. On first launch macOS asks to let tt-pane control the computer: choose **Open System Settings** and turn on tt-pane under **Privacy & Security → Accessibility**. Settings opens and explains this until access is granted; shortcuts work as soon as it is on. Opening tt-pane again while it runs shows Settings. If the build is not notarized, macOS blocks the first launch: choose **Done**, then **System Settings → Privacy & Security → Open Anyway**. The CLI is the same executable: `/Applications/tt-pane.app/Contents/MacOS/tt-pane`.
+- **Linux x64** (and the macOS command-line executable)**:** run the install script. It verifies the download's checksum and installs `tt-pane` into `~/.local/bin`; on Linux it also adds an app launcher and icon under `~/.local/share`. Set `TTPANE_VERSION` (such as `v0.2.0`) for a specific release, or `TTPANE_PREFIX` for another location (`/usr/local` with `sudo` for every user). Rerun it to upgrade; pass `--uninstall` to remove it. On macOS this installs only the bare executable for scripted use; the `.dmg` above is the app.
 
   ```sh
   curl -fsSL https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.sh | sh
   ```
 
-  Or extract the matching `.tar.gz` and run `./tt-pane`. These are standalone executables, not system packages or a macOS app bundle. See the platform prerequisites below; macOS requires Accessibility permission and Linux requires its native libraries and a tray host.
+  Or extract the matching `.tar.gz` and run `./tt-pane`. It is a standalone executable, not a system package. See the platform prerequisites below; Linux requires its native libraries and a tray host.
 
-Packages are unsigned. Each release includes `SHA256SUMS.txt`; compare your download with `Get-FileHash -Algorithm SHA256` (Windows), `sha256sum` (Linux), or `shasum -a 256` (macOS).
+Windows and Linux packages are unsigned; the macOS app is signed and notarized when the release has signing credentials, and signed ad hoc otherwise. Each release includes `SHA256SUMS.txt`; compare your download with `Get-FileHash -Algorithm SHA256` (Windows), `sha256sum` (Linux), or `shasum -a 256` (macOS).
 
-Quit the existing tray instance before upgrading. On Windows, rerun the installer; deselecting a previously selected shortcut removes it. Uninstall through **Settings → Apps → Installed apps → tt-pane**. From PowerShell: `$env:TTPANE_UNINSTALL = '1'; irm https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.ps1 | iex`. Your configuration in `%APPDATA%\tt-pane\config` is preserved. The installer does not change PATH; use the installed executable's full path for CLI commands. Login startup is available through the Windows installer; other platforms still require manual setup. To remove a script install: `curl -fsSL https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.sh | sh -s -- --uninstall`.
+Quit the existing tray instance before upgrading. On macOS, quit from the menu-bar icon and drag the new tt-pane onto Applications, replacing the old one; an ad-hoc-signed update may need Accessibility turned off and on again. On Windows, rerun the installer; deselecting a previously selected shortcut removes it. Uninstall through **Settings → Apps → Installed apps → tt-pane**. From PowerShell: `$env:TTPANE_UNINSTALL = '1'; irm https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.ps1 | iex`. Your configuration in `%APPDATA%\tt-pane\config` is preserved. The installer does not change PATH; use the installed executable's full path for CLI commands. Login startup is available through the Windows installer; other platforms still require manual setup. To remove a script install: `curl -fsSL https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.sh | sh -s -- --uninstall`.
 
 For local packaging, release workflow details, and installer artwork, see [packaging/README.md](packaging/README.md).
 
@@ -57,12 +58,12 @@ Hover over a keybinding row to animate **Position preview** to that action's ini
 
 Windows GUI builds do not allocate a console. When launched from a terminal (including `cargo run`), they attach to that terminal so **Ctrl+C terminates tt-pane**. Launching from Explorer or a shortcut remains console-free; piped CLI output is preserved. macOS uses an accessory app with a menu-bar icon and no Dock icon. Linux uses the StatusNotifierItem D-Bus protocol; enable a tray host such as KDE, a Waybar tray module, or the GNOME AppIndicator extension. No GTK tray event loop is required.
 
-Signed application bundles, launch-at-login installation outside Windows, and automatic configuration-file watching remain future work.
+Launch-at-login installation outside Windows, and automatic configuration-file watching remain future work.
 
 ### Build prerequisites
 
 - **Windows:** Visual Studio Build Tools with Desktop development with C++ and a Windows SDK. GPUI uses Direct3D. Run normally; elevated apps may reject changes from an unelevated process.
-- **macOS:** Xcode and its command-line tools, including Metal tooling. Grant the executable Accessibility access in System Settings → Privacy & Security → Accessibility. Rebuilding or moving an unsigned executable can require granting access again.
+- **macOS:** Xcode and its command-line tools, including the Metal Toolchain (`xcodebuild -downloadComponent MetalToolchain` on Xcode 26). Grant the executable Accessibility access in System Settings → Privacy & Security → Accessibility. Rebuilding or moving an unsigned executable can require granting access again.
 - **Linux:** a GPU driver supporting GPUI, compiler/build tools, pkg-config, and the development packages for fontconfig, FreeType, X11/XCB, XKB, and Wayland. On Ubuntu/Debian, start with:
 
 ```sh
