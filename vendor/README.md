@@ -18,3 +18,7 @@ The opt-in `preserve-numpad` feature also preserves modified numeric keypad even
 ## proc-macro-error2 2.0.1
 
 `proc-macro-error2/` is the published 2.0.1 source (MIT OR Apache-2.0; both licenses are preserved), used transitively by GPUI's stacksafe macros. The only source change makes `extern crate proc_macro` public, matching its existing public re-export in `__export`. This fixes Rust's private-extern-crate re-export incompatibility (rust-lang/rust#127909) without suppressing the warning or changing macro behavior. Cargo's root patch and lockfile ensure clean checkouts use this fix. Remove the override when the dependency chain provides a compatible release.
+
+## xattr 0.2.3
+
+`xattr/` is the published 0.2.3 source (MIT OR Apache-2.0; both licenses and upstream tests are preserved), used by GPUI through `gpui_http_client` and `zed-async-tar`. In `src/sys/mod.rs`, Linux and Android use `libc::ENODATA` for missing extended attributes because modern libc versions removed their deprecated `ENOATTR` alias. macOS and BSD retain `libc::ENOATTR`. This preserves missing-attribute behavior without pinning an outdated libc. Remove the patch when the upstream dependency chain adopts a compatible xattr release.

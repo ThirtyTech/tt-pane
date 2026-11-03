@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/tt-pane-platform"]
-exclude = ["vendor/gpui", "vendor/proc-macro-error2"]
+exclude = ["vendor/gpui", "vendor/proc-macro-error2", "vendor/xattr"]
 resolver = "3"
 
 [lints.rust]
@@ -48,3 +48,4 @@ embed-resource = "3"
 [patch.crates-io]
 gpui = { path = "vendor/gpui" }
 proc-macro-error2 = { path = "vendor/proc-macro-error2" }
+xattr = { path = "vendor/xattr" }
