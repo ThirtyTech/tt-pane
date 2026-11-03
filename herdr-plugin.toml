@@ -1,6 +1,6 @@
 id = "dev.tt-pane"
 name = "tt-pane"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.7.0"
 description = "Position the active desktop window on its current monitor"
 platforms = ["linux", "macos", "windows"]

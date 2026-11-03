@@ -3,6 +3,24 @@
 use std::process::Command;
 
 #[test]
+fn binary_and_plugin_versions_match_package() {
+    let output = Command::new(env!("CARGO_BIN_EXE_tt-pane"))
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        concat!("tt-pane ", env!("CARGO_PKG_VERSION"))
+    );
+    let manifest: toml::Value = toml::from_str(include_str!("../herdr-plugin.toml")).unwrap();
+    assert_eq!(
+        manifest["version"].as_str(),
+        Some(env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
 fn discovery_matches_plugin_manifest_without_loading_config() {
     let output = Command::new(env!("CARGO_BIN_EXE_tt-pane"))
         .args([

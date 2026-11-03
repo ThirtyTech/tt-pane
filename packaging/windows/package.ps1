@@ -21,6 +21,10 @@ $reported = & $binary --version | Out-String
 if ($LASTEXITCODE -ne 0 -or "$reported".Trim() -ne "tt-pane $version") {
     throw "Binary version '$reported' does not match $Tag"
 }
+$metadata = (Get-Item -LiteralPath $binary).VersionInfo
+if ($metadata.FileVersion -ne $version -or $metadata.ProductVersion -ne $version) {
+    throw "Windows file/product version does not match $Tag"
+}
 if (-not $Iscc) {
     $candidates = @(
         "$env:LOCALAPPDATA/Programs/Inno Setup 7/ISCC.exe",

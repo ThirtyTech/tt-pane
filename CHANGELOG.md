@@ -11,6 +11,8 @@ Changes since 0.1.0:
 - New configurations default to three 15% growth steps. Saved growth values remain unchanged. Percentage controls now live under the collapsed Advanced settings section.
 - Removed the redundant Close settings button; use the window close control to leave the tray running.
 - Documentation includes updated navigation and settings guidance, an animated hero, a playable promo thumbnail, and social sharing previews.
+- Fixed Linux/macOS compilation of shortcut handling by gating the Windows foreground-window lookup.
+- Windows file and product versions now derive from Cargo, alongside CLI version reporting; packaging rejects version mismatches.
 
 The new grouping, directional focus, and glow behavior is Windows-only. Hold shortcuts and continuous mouse/Alt+Tab group observation require the tray app.
 

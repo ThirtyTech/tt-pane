@@ -2,7 +2,7 @@
 
 `.github/workflows/release.yml` follows [tt-git's release workflow](https://github.com/ThirtyTech/tt-git/blob/main/.github/workflows/release.yml): version tags must match Cargo, each platform builds natively, and all successful builds are published together with SHA-256 checksums. Unlike tt-git's separate TUI/GUI jobs, tt-pane has one executable, so every platform must succeed before publication.
 
-The initial matrix is Windows x64, Linux x64 (Ubuntu 22.04), and macOS Apple Silicon. Linux and macOS ship standalone archives; this task adds a native installer for Windows. Intel macOS, native Windows ARM64, Linux ARM64, signing, notarization, and Linux/macOS system installers are not included.
+The initial matrix is Windows x64, Linux x64 (Ubuntu 22.04), and macOS Apple Silicon. Linux and macOS ship standalone archives; Windows also ships a native installer. Intel macOS, native Windows ARM64, Linux ARM64, signing, notarization, and Linux/macOS system installers are not included.
 
 ## Build locally on Windows
 
@@ -11,11 +11,11 @@ Install Rust, Visual Studio C++ Build Tools, and [Inno Setup 6 or newer](https:/
 ```powershell
 $env:RUSTFLAGS = '-C target-feature=+crt-static'
 cargo build --release --locked --target x86_64-pc-windows-msvc
-./packaging/windows/package.ps1 -BinDir target/x86_64-pc-windows-msvc/release -Tag v0.1.0
-./packaging/windows/test-installer.ps1 -BinDir target/x86_64-pc-windows-msvc/release -Tag v0.1.0
+./packaging/windows/package.ps1 -BinDir target/x86_64-pc-windows-msvc/release -Tag v0.2.0
+./packaging/windows/test-installer.ps1 -BinDir target/x86_64-pc-windows-msvc/release -Tag v0.2.0
 ```
 
-Use the current Cargo version for `-Tag`. Static CRT linking avoids requiring a separate Visual C++ runtime installation. `package.ps1` checks the PE architecture and the executable's reported version. It requires the compiler rather than silently omitting the installer. Set `ISCC` or pass `-Iscc` for a nonstandard compiler location. `-OutputDir` defaults to ignored `dist/`.
+Use the current Cargo version for `-Tag`. Static CRT linking avoids requiring a separate Visual C++ runtime installation. `package.ps1` checks the PE architecture, the executable's reported version, and Windows file/product versions. CLI and Windows metadata derive from the application Cargo version; the installer version derives from the matching tag. It requires the compiler rather than silently omitting the installer. Set `ISCC` or pass `-Iscc` for a nonstandard compiler location. `-OutputDir` defaults to ignored `dist/`.
 
 Outputs:
 
@@ -33,7 +33,7 @@ Silent install: `setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=""`. 
 
 ## GitHub Actions
 
-Run **Actions → Release → Run workflow** for downloadable artifacts without publishing. To publish, update the package version and lockfile, then push a matching `vMAJOR.MINOR.PATCH` tag. Tags such as `v0.2.0-rc.1` create prereleases. The version guard rejects mismatched tags. Only the publication job has `contents: write`; builds use read-only permissions. Windows installation smoke tests run before uploading artifacts.
+Run **Actions → Release → Run workflow** for downloadable artifacts without publishing. To publish, update the application and platform crate versions, Herdr plugin version, and lockfile, then push a matching `vMAJOR.MINOR.PATCH` tag. Tags such as `v0.2.0-rc.1` create prereleases. The version guard rejects mismatched tags. Only the publication job has `contents: write`; builds use read-only permissions. Windows installation smoke tests run before uploading artifacts.
 
 The release includes the three platform archives, Windows setup executable, generated release notes, and `SHA256SUMS.txt`. Manual builds are identified by the Actions run/commit, while their filenames and binary versions retain the Cargo version. No workflow run, tag, or release is created by local packaging.
 
