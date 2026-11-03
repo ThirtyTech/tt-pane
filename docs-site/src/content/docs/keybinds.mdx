@@ -52,7 +52,7 @@ Read [Resize & refine](/tt-pane/resizing/) for anchoring, growth cycles, and nei
 
 Outside centered groups, focus moves to the nearest window by center distance within a 90° cone, including across monitors. Ungrouped windows stay in place. Spatial navigation has no wraparound; focus stays put if there is no candidate. A grouped destination returns to its saved center.
 
-By default, at least 50% of a window’s full frame must be on-screen and uncovered. Enable **Settings → Window focus → Include obscured windows** to include covered or off-screen windows. Minimized, hidden, cloaked, and utility windows remain excluded. Focus and paired boundary resizing are currently Windows-only.
+Snapped windows are considered even when covered. Their current frame must fit within the monitor work area and touch an edge (within two pixels), covering halves, quarters, resized edge layouts, and native Windows snaps. Moving a window into the middle removes this exemption. Only middle/floating windows require at least 50% of their full frame to be on-screen and uncovered by default. Enable **Settings → Window focus → Include obscured windows** to also include covered middle/floating or off-screen windows. Minimized, hidden, cloaked, and utility windows remain excluded. Focus and paired boundary resizing are currently Windows-only.
 
 ## Centered groups — Windows
 

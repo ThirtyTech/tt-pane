@@ -67,12 +67,39 @@ impl Bounds {
     }
 }
 
-pub(crate) fn focus_visible(
+/// Edge placements remain navigable even when covered. Use live work-area
+/// alignment so native OS snaps and resized tiles qualify without stale history.
+pub(crate) fn focus_eligible(
     window: Rect,
+    work_area: Option<Rect>,
     screens: &[Rect],
     above: &[Rect],
     include_obscured: bool,
 ) -> bool {
+    let snapped = work_area.is_some_and(|area| {
+        if window.width <= 0 || window.height <= 0 || area.width <= 0 || area.height <= 0 {
+            return false;
+        }
+        let w = Bounds::from_rect(window);
+        let a = Bounds::from_rect(area);
+        let contained = w.left >= a.left - 2
+            && w.top >= a.top - 2
+            && w.right <= a.right + 2
+            && w.bottom <= a.bottom + 2;
+        contained
+            && [
+                (w.left - a.left),
+                (w.top - a.top),
+                (w.right - a.right),
+                (w.bottom - a.bottom),
+            ]
+            .into_iter()
+            .any(|distance| distance.abs() <= 2)
+    });
+    focus_visible(window, screens, above, include_obscured || snapped)
+}
+
+fn focus_visible(window: Rect, screens: &[Rect], above: &[Rect], include_obscured: bool) -> bool {
     if window.width <= 0 || window.height <= 0 {
         return false;
     }
@@ -122,6 +149,81 @@ mod tests {
         width: 100,
         height: 100,
     };
+
+    #[test]
+    fn covered_snaps_remain_eligible_but_middle_windows_require_half_visible() {
+        use crate::geometry::Action;
+        let area = r(-1600, 40, 1600, 1000);
+        for action in Action::POSITIONS {
+            let window = action.target(area, area);
+            assert_eq!(
+                focus_eligible(window, Some(area), &[area], &[area], false),
+                action != Action::Center,
+                "{action:?}"
+            );
+        }
+        let middle = Action::Center.target(area, area);
+        assert!(focus_eligible(
+            middle,
+            Some(area),
+            &[area],
+            &[r(middle.x, middle.y, middle.width / 2, middle.height)],
+            false
+        ));
+        assert!(!focus_eligible(
+            middle,
+            Some(area),
+            &[area],
+            &[r(middle.x, middle.y, middle.width / 2 + 1, middle.height)],
+            false
+        ));
+        assert!(focus_eligible(middle, Some(area), &[area], &[area], true));
+    }
+
+    #[test]
+    fn resized_edge_tiles_qualify_until_moved_into_the_middle() {
+        let area = r(-1600, 40, 1600, 1000);
+        let edge = r(-1600, 140, 333, 400);
+        assert!(focus_eligible(edge, Some(area), &[area], &[area], false));
+        assert!(focus_eligible(
+            Rect {
+                x: edge.x + 2,
+                ..edge
+            },
+            Some(area),
+            &[area],
+            &[area],
+            false
+        ));
+        assert!(!focus_eligible(
+            Rect {
+                x: edge.x + 3,
+                ..edge
+            },
+            Some(area),
+            &[area],
+            &[area],
+            false
+        ));
+        assert!(!focus_eligible(
+            Rect {
+                x: edge.x - 20,
+                ..edge
+            },
+            Some(area),
+            &[area],
+            &[area],
+            false
+        ));
+        assert!(!focus_eligible(edge, None, &[area], &[area], false));
+        assert!(!focus_eligible(
+            Rect { width: 0, ..edge },
+            Some(area),
+            &[area],
+            &[],
+            false
+        ));
+    }
 
     #[test]
     fn exact_half_is_included_but_less_is_not() {

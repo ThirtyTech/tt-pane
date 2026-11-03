@@ -110,7 +110,8 @@ pub fn focus_window(handle: Option<u64>, action: Action) -> Result<()> {
     focus_window_with_visibility(handle, action, false)
 }
 
-/// Optionally include obscured windows; otherwise require at least 50% visible area.
+/// Edge-snapped windows qualify regardless of occlusion. Floating middle windows
+/// require at least 50% visible area unless include_obscured is enabled.
 pub fn focus_window_with_visibility(
     handle: Option<u64>,
     action: Action,

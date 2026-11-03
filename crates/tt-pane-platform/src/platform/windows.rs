@@ -553,8 +553,26 @@ pub fn focus_window(
                 && (GetWindowLongPtrW(window, GWL_EXSTYLE) as u32
                     & (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0))
                     == 0;
+            let mut info = MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            let work_area = (selectable
+                && !include_obscured
+                && GetMonitorInfoW(
+                    MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST),
+                    &mut info,
+                )
+                .as_bool())
+            .then(|| from_rect(info.rcWork));
             if selectable
-                && crate::visibility::focus_visible(rect, &screens, &above, include_obscured)
+                && crate::visibility::focus_eligible(
+                    rect,
+                    work_area,
+                    &screens,
+                    &above,
+                    include_obscured,
+                )
             {
                 candidates.push(window);
                 bounds.push(rect);

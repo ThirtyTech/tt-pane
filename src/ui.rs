@@ -437,7 +437,7 @@ impl Render for Settings {
                             this.draft.focus.include_obscured = !this.draft.focus.include_obscured;
                             this.message("Window focus updated. Save to activate.", false, cx);
                         })))
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Off: at least 50% of a window must be on-screen and uncovered. On: also include covered windows. Minimized windows and other virtual desktops stay excluded."))
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Snapped windows are always considered. Off: middle/floating windows need 50% visibility. On: also include covered middle windows. Minimized windows and other virtual desktops stay excluded."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Width adjustment"))
                     .child(div().text_sm().child("Width change per press"))
                     .child(div().flex().items_center().justify_between()
