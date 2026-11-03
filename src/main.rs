@@ -7,7 +7,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::{path::PathBuf, process::ExitCode};
-use stile::{config::Config, geometry::Action};
+use tt_pane::{config::Config, geometry::Action};
 
 #[derive(Parser)]
 #[command(
@@ -56,7 +56,7 @@ fn run(cli: Cli) -> Result<()> {
             let result = (|| -> Result<()> {
                 let path = cli.config.clone().map_or_else(Config::path, Ok)?;
                 let config = Config::load(&path)?;
-                stile::positioning::apply(&config, &path, action, window)
+                tt_pane::positioning::apply(&config, &path, action, window)
             })();
             if json {
                 println!(
@@ -88,7 +88,7 @@ fn run(cli: Cli) -> Result<()> {
         Some(Command::Config) => print!("{}", toml::to_string_pretty(&config)?),
         Some(Command::Export { compositor }) => print!(
             "{}",
-            stile::shortcuts::wayland_bindings(
+            tt_pane::shortcuts::wayland_bindings(
                 &config,
                 &compositor,
                 &std::env::current_exe()?,
@@ -98,7 +98,7 @@ fn run(cli: Cli) -> Result<()> {
         Some(Command::Apply { .. } | Command::Actions) => unreachable!(),
         command @ (None | Some(Command::Settings)) => {
             #[cfg(feature = "gui")]
-            stile::ui::run(config, path, command.is_some())?;
+            tt_pane::ui::run(config, path, command.is_some())?;
             #[cfg(not(feature = "gui"))]
             {
                 let _ = command;
@@ -113,7 +113,7 @@ fn main() -> ExitCode {
     // Attach terminal launches (including no-argument cargo run) so Ctrl+C reaches
     // the GUI process. Explorer launches still do not allocate a console.
     #[cfg(all(target_os = "windows", feature = "gui"))]
-    stile::platform::attach_parent_console();
+    tt_pane::platform::attach_parent_console();
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {

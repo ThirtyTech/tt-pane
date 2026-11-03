@@ -1,9 +1,9 @@
 [package]
-name = "stile-platform"
+name = "tt-pane-platform"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Safe native window-control interfaces for sTile"
+description = "Safe native window-control interfaces for tt-pane"
 
 [features]
 window-icon = ["dep:raw-window-handle"]

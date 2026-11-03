@@ -2,7 +2,7 @@
 
 ## GPUI 0.2.2
 
-`gpui/` is the published GPUI 0.2.2 source from crates.io (Apache-2.0; upstream license is preserved). sTile enables a local `keep-alive` feature. Without it, GPUI automatically stops the Windows, X11, and Wayland event loops when the last window is destroyed, which also stops tray shortcuts.
+`gpui/` is the published GPUI 0.2.2 source from crates.io (Apache-2.0; upstream license is preserved). tt-pane enables a local `keep-alive` feature. Without it, GPUI automatically stops the Windows, X11, and Wayland event loops when the last window is destroyed, which also stops tray shortcuts.
 
 Changes from the release:
 

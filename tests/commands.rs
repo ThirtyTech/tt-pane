@@ -4,7 +4,7 @@ use std::process::Command;
 
 #[test]
 fn discovery_matches_plugin_manifest_without_loading_config() {
-    let output = Command::new(env!("CARGO_BIN_EXE_stile"))
+    let output = Command::new(env!("CARGO_BIN_EXE_tt-pane"))
         .args([
             "--config",
             "nonexistent-do-not-create/config.toml",
@@ -36,7 +36,7 @@ fn invalid_target_returns_json_and_failure_exit_status() {
     let dir = tempfile::tempdir().unwrap();
     let state = dir.path().join("config.toml.cycle.json");
     std::fs::write(&state, "existing cycle").unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_stile"))
+    let output = Command::new(env!("CARGO_BIN_EXE_tt-pane"))
         .arg("--config")
         .arg(dir.path().join("config.toml"))
         .args(["apply", "left", "--window", "0", "--json"])
@@ -54,7 +54,7 @@ fn invalid_growth_config_returns_json_error() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "version = 1\nbindings = []\n[growth]\npercent = 0").unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_stile"))
+    let output = Command::new(env!("CARGO_BIN_EXE_tt-pane"))
         .arg("--config")
         .arg(path)
         .args(["apply", "left", "--json"])
@@ -74,7 +74,7 @@ fn invalid_growth_config_returns_json_error() {
 #[test]
 fn fill_gap_without_saved_state_reports_json_error() {
     let dir = tempfile::tempdir().unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_stile"))
+    let output = Command::new(env!("CARGO_BIN_EXE_tt-pane"))
         .arg("--config")
         .arg(dir.path().join("config.toml"))
         .args(["apply", "fill-gap", "--json"])
@@ -90,17 +90,17 @@ fn fill_gap_without_saved_state_reports_json_error() {
 #[test]
 fn binary_positions_disposable_window_on_every_monitor() {
     for growth in [
-        stile::config::Growth::default(),
-        stile::config::Growth {
+        tt_pane::config::Growth::default(),
+        tt_pane::config::Growth {
             percent: 25,
             steps: 1,
         },
     ] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        let config = stile::config::Config {
+        let config = tt_pane::config::Config {
             growth,
-            width_resize: stile::config::WidthResize {
+            width_resize: tt_pane::config::WidthResize {
                 percent: if growth.steps == 1 { 50 } else { 25 },
             },
             ..Default::default()
@@ -108,8 +108,8 @@ fn binary_positions_disposable_window_on_every_monitor() {
         config.save(&path).unwrap();
         // Corrupt or obsolete cache content must reset instead of preventing placement.
         std::fs::write(dir.path().join("config.toml.cycle.json"), "invalid json").unwrap();
-        stile_platform::test_support::binary_positions_disposable_window_on_every_monitor(
-            env!("CARGO_BIN_EXE_stile"),
+        tt_pane_platform::test_support::binary_positions_disposable_window_on_every_monitor(
+            env!("CARGO_BIN_EXE_tt-pane"),
             path.to_str().unwrap(),
             growth.percent,
             growth.steps,
@@ -126,7 +126,7 @@ fn focus_errors_leave_saved_placement_state_untouched() {
     let state = dir.path().join("config.toml.cycle.json");
     std::fs::write(&state, "existing gap and growth state").unwrap();
     for direction in ["focus-left", "focus-down", "focus-up", "focus-right"] {
-        let output = Command::new(env!("CARGO_BIN_EXE_stile"))
+        let output = Command::new(env!("CARGO_BIN_EXE_tt-pane"))
             .arg("--config")
             .arg(&path)
             .args(["apply", direction, "--window", "0", "--json"])

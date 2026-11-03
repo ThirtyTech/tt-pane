@@ -12,13 +12,13 @@ $root = (Resolve-Path "$PSScriptRoot/../..").Path
 if ($Tag -notmatch '^v(\d+\.\d+\.\d+)(-[0-9A-Za-z.-]+)?$') { throw "Invalid release tag: $Tag" }
 $fileVersion = $Matches[1]
 $version = $Tag.Substring(1)
-$binary = (Resolve-Path (Join-Path $BinDir 'stile.exe')).Path
+$binary = (Resolve-Path (Join-Path $BinDir 'tt-pane.exe')).Path
 # Reject accidentally packaging an ARM64/x86 binary as x64.
 $bytes = [IO.File]::ReadAllBytes($binary)
 $pe = [BitConverter]::ToInt32($bytes, 0x3c)
-if ([BitConverter]::ToUInt16($bytes, $pe + 4) -ne 0x8664) { throw 'Expected an x64 stile.exe' }
+if ([BitConverter]::ToUInt16($bytes, $pe + 4) -ne 0x8664) { throw 'Expected an x64 tt-pane.exe' }
 $reported = & $binary --version | Out-String
-if ($LASTEXITCODE -ne 0 -or "$reported".Trim() -ne "stile $version") {
+if ($LASTEXITCODE -ne 0 -or "$reported".Trim() -ne "tt-pane $version") {
     throw "Binary version '$reported' does not match $Tag"
 }
 if (-not $Iscc) {
@@ -35,7 +35,7 @@ if (-not $Iscc -or -not (Test-Path -LiteralPath $Iscc)) {
 }
 $out = [IO.Path]::GetFullPath($OutputDir)
 New-Item -ItemType Directory -Force -Path $out | Out-Null
-$name = "stile-$Tag-windows-x64"
+$name = "tt-pane-$Tag-windows-x64"
 # Unique staging path, kept under the output directory for predictable cleanup.
 $stage = Join-Path $out ('.stage-' + [Guid]::NewGuid().ToString('N'))
 $bundle = Join-Path $stage $name
@@ -44,7 +44,7 @@ try {
     Copy-Item -LiteralPath $binary -Destination $bundle
     Copy-Item -LiteralPath "$root/README.md" -Destination $bundle
     & $Iscc /Qp "/DAppVersion=$version" "/DFileVersion=$fileVersion" "/DStageDir=$bundle" `
-        "/DOutputBase=$name-setup" "/O$out" "$PSScriptRoot/stile.iss"
+        "/DOutputBase=$name-setup" "/O$out" "$PSScriptRoot/tt-pane.iss"
     if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
     if (-not (Test-Path -LiteralPath "$out/$name-setup.exe")) { throw 'Installer is missing' }
     Compress-Archive -LiteralPath $bundle -DestinationPath "$out/$name.zip" -Force

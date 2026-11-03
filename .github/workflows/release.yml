@@ -22,7 +22,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          version=$(cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[] | select(.name == "stile") | .version')
+          version=$(cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[] | select(.name == "tt-pane") | .version')
           tag="v$version"
           if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "$tag" ]]; then
             echo "::error::Tag $GITHUB_REF_NAME does not match Cargo version $version"
@@ -77,14 +77,14 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          name="stile-$RELEASE_TAG-${{ matrix.platform }}"
+          name="tt-pane-$RELEASE_TAG-${{ matrix.platform }}"
           mkdir -p "dist/$name"
-          cp "target/${{ matrix.target }}/release/stile" README.md "dist/$name/"
+          cp "target/${{ matrix.target }}/release/tt-pane" README.md "dist/$name/"
           tar -czf "dist/$name.tar.gz" -C dist "$name"
           rm -r "dist/$name"
       - uses: actions/upload-artifact@v7
         with:
-          name: stile-${{ matrix.platform }}
+          name: tt-pane-${{ matrix.platform }}
           path: |
             dist/*.zip
             dist/*-setup.exe
@@ -101,12 +101,12 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          pattern: stile-*
+          pattern: tt-pane-*
           path: dist
           merge-multiple: true
       - name: Checksums
         working-directory: dist
-        run: sha256sum stile-* > SHA256SUMS.txt
+        run: sha256sum tt-pane-* > SHA256SUMS.txt
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -116,12 +116,12 @@ jobs:
           prerelease=()
           [[ "$GITHUB_REF_NAME" == *-* ]] && prerelease=(--prerelease)
           {
-            echo '## Install sTile'
+            echo '## Install tt-pane'
             echo
             echo 'Windows x64: download the setup.exe for a per-user install, or unpack the portable ZIP.'
-            echo 'Linux x64 / macOS Apple Silicon: unpack the tar.gz and run stile. See README.md in the archive for runtime dependencies and macOS Accessibility access.'
-            echo 'sTile starts in the system tray. Quit an existing instance before upgrading.'
+            echo 'Linux x64 / macOS Apple Silicon: unpack the tar.gz and run tt-pane. See README.md in the archive for runtime dependencies and macOS Accessibility access.'
+            echo 'tt-pane starts in the system tray. Quit an existing instance before upgrading.'
             echo 'These packages are unsigned. SHA256SUMS.txt contains the SHA-256 checksum of each download.'
           } > notes.md
           gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
-            --title "sTile $GITHUB_REF_NAME" --notes-file notes.md --generate-notes "${prerelease[@]}"
+            --title "tt-pane $GITHUB_REF_NAME" --notes-file notes.md --generate-notes "${prerelease[@]}"

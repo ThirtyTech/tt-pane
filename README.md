@@ -1,23 +1,23 @@
-# sTile
+# tt-pane
 
 A keyboard-first window position manager written in Rust, with a GPUI settings screen and native platform backends.
 
 ## Documentation site
 
-The [Astro Starlight documentation site](docs-site/README.md) includes an animated position playground, light and dark themes, and the complete keybind reference. Run `npm ci` then `npm run dev` from `docs-site`, and open the printed local URL under `/sTile/`.
+The [Astro Starlight documentation site](docs-site/README.md) includes an animated position playground, light and dark themes, and the complete keybind reference. Run `npm ci` then `npm run dev` from `docs-site`, and open the printed local URL under `/tt-pane/`.
 
 Every action targets the **active window on its current monitor**, using that monitor's work area. Windows spanning displays use the display with the largest overlap; an off-screen window uses the nearest display. The first Center press resizes the window to 50% of the work area's width and height and centers it on both axes. There is no primary-monitor assumption in the positioning engine.
 
 ## Install
 
-Download packages from [GitHub Releases](https://github.com/jsheely/sTile/releases). Release packages become available after a matching version tag is published.
+Download packages from [GitHub Releases](https://github.com/thirtytech/tt-pane/releases). Release packages become available after a matching version tag is published.
 
-- **Windows x64:** run `stile-vVERSION-windows-x64-setup.exe`. It installs for your account without administrator rights, adds a Start menu shortcut, and offers optional desktop and sign-in shortcuts. Launch sTile from Start, then open Settings from its tray menu. The portable ZIP can be unpacked anywhere instead.
-- **Linux x64 / macOS Apple Silicon:** extract the matching `.tar.gz` and run `./stile`. These are standalone executables, not system packages or a macOS app bundle. See the platform prerequisites below; macOS requires Accessibility permission and Linux requires its native libraries and a tray host.
+- **Windows x64:** run `tt-pane-vVERSION-windows-x64-setup.exe`. It installs for your account without administrator rights, adds a Start menu shortcut, and offers optional desktop and sign-in shortcuts. Launch tt-pane from Start, then open Settings from its tray menu. The portable ZIP can be unpacked anywhere instead.
+- **Linux x64 / macOS Apple Silicon:** extract the matching `.tar.gz` and run `./tt-pane`. These are standalone executables, not system packages or a macOS app bundle. See the platform prerequisites below; macOS requires Accessibility permission and Linux requires its native libraries and a tray host.
 
 Packages are unsigned. Each release includes `SHA256SUMS.txt`; compare your download with `Get-FileHash -Algorithm SHA256` (Windows), `sha256sum` (Linux), or `shasum -a 256` (macOS).
 
-Quit the existing tray instance before upgrading. On Windows, rerun the installer; deselecting a previously selected shortcut removes it. Uninstall through **Settings → Apps → Installed apps → sTile**. Your configuration in `%APPDATA%\stile\config` is preserved. The installer does not change PATH; use the installed executable's full path for CLI commands. Login startup is available through the Windows installer; other platforms still require manual setup.
+Quit the existing tray instance before upgrading. On Windows, rerun the installer; deselecting a previously selected shortcut removes it. Uninstall through **Settings → Apps → Installed apps → tt-pane**. Your configuration in `%APPDATA%\tt-pane\config` is preserved. The installer does not change PATH; use the installed executable's full path for CLI commands. Login startup is available through the Windows installer; other platforms still require manual setup.
 
 For local packaging, release workflow details, and installer artwork, see [packaging/README.md](packaging/README.md).
 
@@ -29,13 +29,13 @@ Install a recent stable Rust toolchain, then:
 cargo run --release
 ```
 
-sTile starts in the system tray without a settings window. Open **Settings…** from its tray menu, click a shortcut to record a replacement, then **Save changes**. Escape cancels recording; Backspace disables an action. Changes are validated for duplicate actions and shortcuts. Native registration conflicts appear in the settings screen, and a failed registration preserves the previous bindings. Saving uses a temporary file in the same directory followed by replacement.
+tt-pane starts in the system tray without a settings window. Open **Settings…** from its tray menu, click a shortcut to record a replacement, then **Save changes**. Escape cancels recording; Backspace disables an action. Changes are validated for duplicate actions and shortcuts. Native registration conflicts appear in the settings screen, and a failed registration preserves the previous bindings. Saving uses a temporary file in the same directory followed by replacement.
 
-Closing Settings leaves the tray and shortcuts running. **Quit sTile** in the tray menu exits the app. `stile settings` opens settings immediately when starting an instance. Start one tray instance at a time; single-instance forwarding is not implemented yet.
+Closing Settings leaves the tray and shortcuts running. **Quit tt-pane** in the tray menu exits the app. `tt-pane settings` opens settings immediately when starting an instance. Start one tray instance at a time; single-instance forwarding is not implemented yet.
 
 Hover over a keybinding row to animate **Position preview** to that action's initial placement. The green rectangle represents the window and the dark rectangle represents the monitor's usable space. The preview keeps the last hovered action when the pointer leaves. Clicking the shortcut button starts recording; hovering only changes the illustration.
 
-Windows GUI builds do not allocate a console. When launched from a terminal (including `cargo run`), they attach to that terminal so **Ctrl+C terminates sTile**. Launching from Explorer or a shortcut remains console-free; piped CLI output is preserved. macOS uses an accessory app with a menu-bar icon and no Dock icon. Linux uses the StatusNotifierItem D-Bus protocol; enable a tray host such as KDE, a Waybar tray module, or the GNOME AppIndicator extension. No GTK tray event loop is required.
+Windows GUI builds do not allocate a console. When launched from a terminal (including `cargo run`), they attach to that terminal so **Ctrl+C terminates tt-pane**. Launching from Explorer or a shortcut remains console-free; piped CLI output is preserved. macOS uses an accessory app with a menu-bar icon and no Dock icon. Linux uses the StatusNotifierItem D-Bus protocol; enable a tray host such as KDE, a Waybar tray module, or the GNOME AppIndicator extension. No GTK tray event loop is required.
 
 Signed application bundles, launch-at-login installation outside Windows, and automatic configuration-file watching remain future work.
 
@@ -102,23 +102,23 @@ include_obscured = false
 
 Focus stays put when there is no candidate; there is no wraparound. Saved growth and gap state is preserved.
 
-The focus actions are editable in Settings and available as `stile apply focus-left`, `focus-down`, `focus-up`, and `focus-right` (also with `--window HWND --json`). Existing configurations gain missing focus bindings on load; custom or explicitly disabled focus bindings remain unchanged. If a default key is already assigned to another action, the new focus action stays unbound so you can choose a key in Settings. Other platforms report that directional focus is currently Windows-only.
+The focus actions are editable in Settings and available as `tt-pane apply focus-left`, `focus-down`, `focus-up`, and `focus-right` (also with `--window HWND --json`). Existing configurations gain missing focus bindings on load; custom or explicitly disabled focus bindings remain unchanged. If a default key is already assigned to another action, the new focus action stays unbound so you can choose a key in Settings. Other platforms report that directional focus is currently Windows-only.
 
-**Ctrl+Alt+Up/Down** moves the shared horizontal boundary by **25% of the selected window's current height**. With the bottom-left window selected, Up grows it upward and shrinks the window above: a 50/50 split becomes 62.5/37.5. Down shrinks the bottom window and grows the top window by the same pixel amount. There is a **50/50 stop** in the middle: 400 pixels grows to 500, then Down returns it to 400; shrinking to 300 then pressing Up also returns to 400. When moving toward equal heights, sTile snaps there if the boundary is within one normal step from equal (25% of half the combined height), or if the current step would cross it. Another press continues past equal. Elsewhere, each press uses the selected window's current height. Odd combined heights give the bottom window the extra pixel. With the top window selected, Up shrinks it and grows the window below. Widths and the pair's outside edges stay fixed; any existing gap is preserved.
+**Ctrl+Alt+Up/Down** moves the shared horizontal boundary by **25% of the selected window's current height**. With the bottom-left window selected, Up grows it upward and shrinks the window above: a 50/50 split becomes 62.5/37.5. Down shrinks the bottom window and grows the top window by the same pixel amount. There is a **50/50 stop** in the middle: 400 pixels grows to 500, then Down returns it to 400; shrinking to 300 then pressing Up also returns to 400. When moving toward equal heights, tt-pane snaps there if the boundary is within one normal step from equal (25% of half the combined height), or if the current step would cross it. Another press continues past equal. Elsewhere, each press uses the selected window's current height. Odd combined heights give the bottom window the extra pixel. With the top window selected, Up shrinks it and grows the window below. Widths and the pair's outside edges stay fixed; any existing gap is preserved.
 
-The neighbor must be visible, restored, on the same monitor, and have matching left/right edges (within two pixels). sTile accepts up to 16 pixels of vertical spacing and two pixels of border-rounding overlap. It excludes minimized, maximized, cloaked, desktop, and tool windows. If there are neighbors both above and below, the arrow chooses that side; with only one neighbor, both arrows adjust that pair. Missing or ambiguous neighbors produce an error without moving windows.
+The neighbor must be visible, restored, on the same monitor, and have matching left/right edges (within two pixels). tt-pane accepts up to 16 pixels of vertical spacing and two pixels of border-rounding overlap. It excludes minimized, maximized, cloaked, desktop, and tool windows. If there are neighbors both above and below, the arrow chooses that side; with only one neighbor, both arrows adjust that pair. Missing or ambiguous neighbors produce an error without moving windows.
 
-The boundary stops before either window reaches zero height. If an application rejects the requested size (for example, its minimum height), sTile attempts to restore both original bounds and reports the error. Successful paired adjustments clear saved growth/gap state to avoid reusing stale rectangles. These actions currently require Windows; other backends return an explicit unsupported error.
+The boundary stops before either window reaches zero height. If an application rejects the requested size (for example, its minimum height), tt-pane attempts to restore both original bounds and reports the error. Successful paired adjustments clear saved growth/gap state to avoid reusing stale rectangles. These actions currently require Windows; other backends return an explicit unsupported error.
 
-The actions are editable in Settings and available as `stile apply resize-up` / `stile apply resize-down`, including `--window HWND --json` and Herdr actions. Older saved configurations preserve their bindings: record Ctrl+Alt+Up/Down for the two **Move shared boundary** actions in Settings, or reset defaults and save. These use a fixed 25% step independent of the width and repeated-growth settings. The preview shows the selected bottom-left window in green and its neighbor in blue.
+The actions are editable in Settings and available as `tt-pane apply resize-up` / `tt-pane apply resize-down`, including `--window HWND --json` and Herdr actions. Older saved configurations preserve their bindings: record Ctrl+Alt+Up/Down for the two **Move shared boundary** actions in Settings, or reset defaults and save. These use a fixed 25% step independent of the width and repeated-growth settings. The preview shows the selected bottom-left window in green and its neighbor in blue.
 
 ### Fill a freed gap
 
-After positioning and shrinking a window, select a **different window on the same monitor** and press **Ctrl+Alt+Shift+8** (`*` on the number row). sTile resizes and places that window into the space freed from the original position. For example, shrinking a 1000-pixel-wide bottom-left slot to 750 pixels leaves a 250-pixel-wide gap immediately to its right, at the same height. Repeated shrinking accumulates the freed space within that original slot.
+After positioning and shrinking a window, select a **different window on the same monitor** and press **Ctrl+Alt+Shift+8** (`*` on the number row). tt-pane resizes and places that window into the space freed from the original position. For example, shrinking a 1000-pixel-wide bottom-left slot to 750 pixels leaves a 250-pixel-wide gap immediately to its right, at the same height. Repeated shrinking accumulates the freed space within that original slot.
 
-One gap is remembered per monitor. Switching windows does not lose it; successfully filling it consumes it. If a centered window leaves two gaps, the larger side is selected, with the right side winning ties. A missing gap or selecting the source window reports an error without repositioning it. Use `stile apply fill-gap --json` for the same operation from scripts or Herdr. The binding is editable in Settings; a numpad Multiply key can also be recorded.
+One gap is remembered per monitor. Switching windows does not lose it; successfully filling it consumes it. If a centered window leaves two gaps, the larger side is selected, with the right side winning ties. A missing gap or selecting the source window reports an error without repositioning it. Use `tt-pane apply fill-gap --json` for the same operation from scripts or Herdr. The binding is editable in Settings; a numpad Multiply key can also be recorded.
 
-Gaps record sTile's own resizing operations, rather than scanning the desktop for empty space. sTile updates or clears them when it resizes/repositions their source, or places a window over the saved slot. Manual dragging, resizing, and closing windows outside sTile are not monitored; make a fresh width adjustment to update the gap. A monitor work-area change requires a new gap. Application minimum sizes can constrain how closely a destination fits.
+Gaps record tt-pane's own resizing operations, rather than scanning the desktop for empty space. tt-pane updates or clears them when it resizes/repositions their source, or places a window over the saved slot. Manual dragging, resizing, and closing windows outside tt-pane are not monitored; make a fresh width adjustment to update the gap. A monitor work-area change requires a new gap. Application minimum sizes can constrain how closely a destination fits.
 
 ### Repeated shortcuts
 
@@ -152,13 +152,13 @@ Save your configuration in GPUI, then click **Export shortcuts**. Add the export
 Alternatively, generate the file with the installed executable:
 
 ```sh
-stile export sway > ~/.config/sway/stile.conf
+tt-pane export sway > ~/.config/sway/tt-pane.conf
 # Add to ~/.config/sway/config:
-# include ~/.config/sway/stile.conf
+# include ~/.config/sway/tt-pane.conf
 
-stile export hyprland > ~/.config/hypr/stile.conf
+tt-pane export hyprland > ~/.config/hypr/tt-pane.conf
 # Add to ~/.config/hypr/hyprland.conf:
-# source = ~/.config/hypr/stile.conf
+# source = ~/.config/hypr/tt-pane.conf
 ```
 
 Export embeds the executable's absolute path. Generate bindings after installing the executable in its final location. Export supports letters, number-row and numpad digits, function keys, arrows, and common navigation keys; other physical keys report an explicit error. Generated shortcuts invoke the native Rust backend directly, so the GPUI settings window need not stay open on Wayland.
@@ -167,9 +167,11 @@ Export embeds the executable's absolute path. Generate bindings after installing
 
 The default file is:
 
-- Windows: `%APPDATA%\stile\config\config.toml`
-- macOS: `~/Library/Application Support/stile/config.toml`
-- Linux: `${XDG_CONFIG_HOME:-~/.config}/stile/config.toml`
+- Windows: `%APPDATA%\tt-pane\config\config.toml`
+- macOS: `~/Library/Application Support/tt-pane/config.toml`
+- Linux: `${XDG_CONFIG_HOME:-~/.config}/tt-pane/config.toml`
+
+Existing installations continue using their previous `stile` configuration directory when it contains `config.toml` and the new `tt-pane` configuration does not exist. This preserves custom shortcuts and adjacent saved placement state. Explicit `--config` paths are unchanged.
 
 The settings screen displays the resolved path. Use `--config PATH` for a different file. A missing file uses defaults; an invalid existing file returns an error instead of overwriting it. Omitted actions appear disabled in the UI. An empty shortcut disables an action.
 
@@ -205,13 +207,13 @@ shortcut = "Ctrl+Alt+Shift+8"
 ```
 
 ```sh
-stile apply top-left
-stile apply center
-stile apply shrink-width
-stile apply expand-width
-stile apply fill-gap
-stile config
-stile --config ./my-config.toml
+tt-pane apply top-left
+tt-pane apply center
+tt-pane apply shrink-width
+tt-pane apply expand-width
+tt-pane apply fill-gap
+tt-pane config
+tt-pane --config ./my-config.toml
 ```
 
 `apply` acts immediately on the current foreground window and reads the configuration's resize options (or defaults when the file is absent). It does not require GPUI, a tray instance, or global key registration. Repeated positioning commands advance the same growth cycle; width commands resize continually. Use `--config PATH` to select a configuration and its independent state. Older files without `[growth]` use 15% and two steps; missing `[width_resize]` uses 25%. Existing bindings are preserved: add the two width bindings above, record them in Settings, or reset defaults to enable them in an older file. Exported Wayland shortcuts include the selected configuration path and the shifted-plus alias when available.
@@ -222,8 +224,8 @@ The root `herdr-plugin.toml` follows [Herdr’s executable plugin contract](http
 
 ```sh
 cargo build --release --locked --no-default-features --target-dir target/plugin
-herdr plugin link /absolute/path/to/sTile
-herdr plugin action invoke dev.stile.top-left
+herdr plugin link /absolute/path/to/tt-pane
+herdr plugin action invoke dev.tt-pane.top-left
 ```
 
 Build before linking: `plugin link` does not run build commands. Herdr executes relative commands from the plugin root; Windows resolves the executable’s `.exe` extension. Herdr pane IDs identify terminal panes, not OS windows. These actions position the foreground desktop window on the machine running the plugin; they do not reposition remote client windows over SSH. Use Herdr’s plugin keybindings to invoke them within Herdr. The manifest is tested against the CLI action inventory; installation/invocation inside Herdr still needs integration testing.
@@ -231,17 +233,17 @@ Build before linking: `plugin link` does not run build commands. Herdr executes 
 For scripts and test runners:
 
 ```sh
-stile actions
-stile apply top-left --json
+tt-pane actions
+tt-pane apply top-left --json
 # Windows only: target a decimal HWND without changing focus.
-stile apply bottom-right --window 123456 --json
+tt-pane apply bottom-right --window 123456 --json
 ```
 
 `actions` returns a JSON object with `schema_version: 1` and an `actions` array of `id`/`title` pairs without accessing the desktop. `apply --json` returns one JSON object with `schema_version`, `ok`, `action`, `window` (null for foreground), and `error`. Exit code 0 means the native request succeeded, 1 means execution failed, and 2 means invalid CLI arguments. Argument errors use Clap’s stderr diagnostics, not JSON. Success acknowledges the backend request; compositors or application minimum sizes may constrain the resulting geometry. Handles are transient and must be refreshed if a window closes.
 
 ## Icon and tray lifecycle
 
-`assets/stile.svg` is the editable window-grid mark. PNG, multi-resolution ICO, ICNS, and macOS template tray assets are included. Windows embeds the ICO; macOS uses a template icon that adapts to the menu bar. Regenerate raster assets with Pillow and `python scripts/generate_icons.py`.
+`assets/tt-pane.svg` is the editable window-grid mark. PNG, multi-resolution ICO, ICNS, and macOS template tray assets are included. Windows embeds the ICO; macOS uses a template icon that adapts to the menu bar. Regenerate raster assets with Pillow and `python scripts/generate_icons.py`.
 
 GPUI 0.2.2 normally exits after closing its last Windows/X11/Wayland window. The pinned, vendored dependency adds an opt-in `keep-alive` feature so settings can be destroyed while the tray keeps running. See `vendor/README.md` for the exact changes. No hidden GPUI window is created at startup.
 
@@ -259,11 +261,11 @@ The lifecycle test briefly creates its own settings window, closes it with a nat
 
 ## Structure and validation
 
-- `crates/stile-platform/src/geometry.rs`: shared placement math and monitor selection.
+- `crates/tt-pane-platform/src/geometry.rs`: shared placement math and monitor selection.
 - `config.rs`: versioned TOML, validation, atomic save.
 - `positioning.rs`: shared repeated-action cycles, persisted baseline and cross-process locking.
 - `shortcuts.rs`: native shortcut lifetime, conflict handling, Wayland export.
-- `crates/stile-platform/`: native Windows, macOS, X11, Sway, and Hyprland adapters, plus Windows icon/console interop. The application reexports geometry and platform APIs at their existing paths.
+- `crates/tt-pane-platform/`: native Windows, macOS, X11, Sway, and Hyprland adapters, plus Windows icon/console interop. The application reexports geometry and platform APIs at their existing paths.
 - `ui.rs`: GPUI settings, shortcut recorder, preview, save/error feedback.
 
 ```sh
@@ -281,7 +283,7 @@ References: [GPUI](https://gpui.rs/), [EWMH](https://specifications.freedesktop.
 
 The application package forbids unsafe Rust through Cargo's `unsafe_code = "forbid"` lint and explicit `#![forbid(unsafe_code)]` attributes on its library, executable, build script, and integration tests. These restrictions apply to our application code; dependencies such as GPUI still contain unsafe implementations.
 
-`stile-platform` exposes safe functions and denies unsafe code by default. Only its private Windows/macOS modules and feature-gated native test helpers allow it. Unsafe operations must be explicit and have `SAFETY:` explanations, enforced by Clippy. Portable geometry forbids unsafe entirely; the Linux adapters inherit the platform crate's default denial.
+`tt-pane-platform` exposes safe functions and denies unsafe code by default. Only its private Windows/macOS modules and feature-gated native test helpers allow it. Unsafe operations must be explicit and have `SAFETY:` explanations, enforced by Clippy. Portable geometry forbids unsafe entirely; the Linux adapters inherit the platform crate's default denial.
 
 Windows icon setup borrows a native window handle for the duration of synchronous calls. Window positioning accepts opaque OS identifiers and handles invalid windows as errors; DPI awareness is restored by a thread-bound guard, including on early returns and unwinding. Handles can still expire or be reused by the OS, so explicit targeting does not establish a persistent window identity.
 

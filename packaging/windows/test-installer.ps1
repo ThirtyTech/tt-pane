@@ -1,5 +1,5 @@
 # End-to-end test of the real installer script with an isolated AppId and
-# shortcut names. Never installs over or uninstalls the user's sTile instance.
+# shortcut names. Never installs over or uninstalls the user's tt-pane instance.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)] [string] $BinDir,
@@ -22,14 +22,14 @@ if (-not $Iscc) {
 }
 if (-not $Iscc) { throw 'Inno Setup is required' }
 $id = [Guid]::NewGuid().ToString()
-$name = "sTile installer test $id"
+$name = "tt-pane installer test $id"
 $testRoot = Join-Path $root "target/installer-smoke/$id"
 $stage = Join-Path $testRoot 'stage'
 $install = Join-Path $testRoot 'installed'
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
-Copy-Item -LiteralPath (Join-Path $BinDir 'stile.exe'), "$root/README.md" -Destination $stage
+Copy-Item -LiteralPath (Join-Path $BinDir 'tt-pane.exe'), "$root/README.md" -Destination $stage
 & $Iscc /Qp "/DAppId=$id" "/DShortcutName=$name" "/DAppVersion=$version" "/DFileVersion=$fileVersion" `
-    "/DStageDir=$stage" /DOutputBase=smoke-setup "/O$testRoot" "$PSScriptRoot/stile.iss"
+    "/DStageDir=$stage" /DOutputBase=smoke-setup "/O$testRoot" "$PSScriptRoot/tt-pane.iss"
 if ($LASTEXITCODE -ne 0) { throw 'Smoke installer compilation failed' }
 $setup = Join-Path $testRoot 'smoke-setup.exe'
 $uninstall = Join-Path $install 'unins000.exe'
@@ -51,11 +51,11 @@ try {
     }
     $shell = New-Object -ComObject WScript.Shell
     foreach ($link in $desktop, $startup, $menu) {
-        if ($shell.CreateShortcut($link).TargetPath -ne (Join-Path $install 'stile.exe')) { throw "Wrong shortcut target: $link" }
+        if ($shell.CreateShortcut($link).TargetPath -ne (Join-Path $install 'tt-pane.exe')) { throw "Wrong shortcut target: $link" }
     }
-    $actual = & "$install/stile.exe" --version | Out-String
-    if ($LASTEXITCODE -ne 0 -or "$actual".Trim() -ne "stile $version") { throw "Wrong installed version: $actual" }
-    $actions = & "$install/stile.exe" actions | ConvertFrom-Json
+    $actual = & "$install/tt-pane.exe" --version | Out-String
+    if ($LASTEXITCODE -ne 0 -or "$actual".Trim() -ne "tt-pane $version") { throw "Wrong installed version: $actual" }
+    $actions = & "$install/tt-pane.exe" actions | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or $actions.schema_version -ne 1 -or 'left' -notin $actions.actions.id -or 'right' -notin $actions.actions.id) { throw 'Installed CLI smoke test failed' }
     # User-owned files must survive both upgrade and uninstall.
     $sentinel = Join-Path $install 'user-owned.txt'
@@ -65,7 +65,7 @@ try {
     if ((Get-ItemProperty -LiteralPath $key).DisplayVersion -ne $version) { throw 'Wrong registered version' }
     $process = Start-Process -FilePath $uninstall -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -WindowStyle Hidden -PassThru -Wait
     if ($process.ExitCode -ne 0) { throw "Uninstall failed: $($process.ExitCode)" }
-    foreach ($path in "$install/stile.exe", $menu, $desktop, $startup, $key) {
+    foreach ($path in "$install/tt-pane.exe", $menu, $desktop, $startup, $key) {
         if (Test-Path -LiteralPath $path) { throw "Uninstall left behind: $path" }
     }
     if ((Get-Content -LiteralPath $sentinel -Raw) -ne 'keep me') { throw 'User-owned file was changed or removed' }

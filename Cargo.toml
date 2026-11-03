@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/stile-platform"]
+members = ["crates/tt-pane-platform"]
 exclude = ["vendor/gpui", "vendor/proc-macro-error2"]
 resolver = "3"
 
@@ -7,7 +7,7 @@ resolver = "3"
 unsafe_code = "forbid"
 
 [package]
-name = "stile"
+name = "tt-pane"
 version = "0.1.0"
 edition = "2024"
 description = "Keyboard-first native window positioning"
@@ -15,10 +15,10 @@ license = "MIT"
 
 [features]
 default = ["gui"]
-gui = ["dep:gpui", "dep:smol", "dep:tray-icon", "stile-platform/window-icon"]
+gui = ["dep:gpui", "dep:smol", "dep:tray-icon", "tt-pane-platform/window-icon"]
 
 [dependencies]
-stile-platform = { path = "crates/stile-platform" }
+tt-pane-platform = { path = "crates/tt-pane-platform" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 directories = "6"
@@ -36,7 +36,7 @@ objc2 = "0.6"
 objc2-app-kit = "0.3"
 
 [dev-dependencies]
-stile-platform = { path = "crates/stile-platform", features = ["test-support"] }
+tt-pane-platform = { path = "crates/tt-pane-platform", features = ["test-support"] }
 
 [profile.dev]
 debug = 0

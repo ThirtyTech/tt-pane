@@ -81,7 +81,7 @@ impl Cycle {
         self.gaps = previous
             .filter(|p| p.version == 1)
             .map_or_else(Vec::new, |p| p.gaps.clone());
-        // A source moved by sTile, an occupied target, or a consumed gap is no longer free.
+        // A source moved by tt-pane, an occupied target, or a consumed gap is no longer free.
         self.gaps.retain(|g| {
             g.usable_on(g.area)
                 && g.source != self.window

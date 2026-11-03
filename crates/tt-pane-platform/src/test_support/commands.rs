@@ -67,7 +67,7 @@ pub fn binary_positions_disposable_window_on_every_monitor(
             CreateWindowExW(
                 WS_EX_TOOLWINDOW,
                 w!("STATIC"),
-                w!("sTile native test"),
+                w!("tt-pane native test"),
                 WS_POPUP,
                 0,
                 0,
@@ -84,7 +84,7 @@ pub fn binary_positions_disposable_window_on_every_monitor(
             CreateWindowExW(
                 WS_EX_TOOLWINDOW,
                 w!("STATIC"),
-                w!("sTile gap destination test"),
+                w!("tt-pane gap destination test"),
                 WS_POPUP,
                 0,
                 0,

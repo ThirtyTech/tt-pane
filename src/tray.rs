@@ -4,19 +4,19 @@ use tray_icon::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
 };
 
-pub const SETTINGS: &str = "stile.settings";
-pub const QUIT: &str = "stile.quit";
+pub const SETTINGS: &str = "tt-pane.settings";
+pub const QUIT: &str = "tt-pane.quit";
 
 pub fn create() -> Result<TrayIcon> {
     let menu = Menu::new();
     menu.append_items(&[
         &MenuItem::with_id(SETTINGS, "Settings…", true, None),
         &PredefinedMenuItem::separator(),
-        &MenuItem::with_id(QUIT, "Quit sTile", true, None),
+        &MenuItem::with_id(QUIT, "Quit tt-pane", true, None),
     ])?;
     let builder = TrayIconBuilder::new()
-        .with_id("stile")
-        .with_tooltip("sTile — window shortcuts")
+        .with_id("tt-pane")
+        .with_tooltip("tt-pane — window shortcuts")
         .with_menu(Box::new(menu));
     #[cfg(target_os = "macos")]
     let builder = builder.with_icon_templated(Icon::from_rgba(

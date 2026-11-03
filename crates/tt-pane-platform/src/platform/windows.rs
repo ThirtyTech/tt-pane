@@ -346,7 +346,7 @@ pub fn set_window_icon(window: &impl raw_window_handle::HasWindowHandle) -> anyh
     // Resource 101 uses Win32 MAKEINTRESOURCE encoding (not a dereferenced pointer).
     // LoadIconW returns a module-owned shared icon that outlives WM_SETICON usage.
     unsafe {
-        // Resource 101 is the same multi-resolution sTile ICO embedded by build.rs.
+        // Resource 101 is the same multi-resolution tt-pane ICO embedded by build.rs.
         // LoadIconW returns a shared resource owned by the module, not this window.
         let module = GetModuleHandleW(None)?;
         let icon = LoadIconW(Some(HINSTANCE(module.0)), PCWSTR(101usize as *const u16))?;
@@ -520,7 +520,7 @@ mod tests {
         unsafe {
             let class = WNDCLASSW {
                 lpfnWndProc: Some(constrained_window),
-                lpszClassName: w!("sTile paired constraint test"),
+                lpszClassName: w!("tt-pane paired constraint test"),
                 ..Default::default()
             };
             assert_ne!(RegisterClassW(&class), 0);
@@ -529,7 +529,7 @@ mod tests {
                     CreateWindowExW(
                         Default::default(),
                         class.lpszClassName,
-                        w!("sTile test"),
+                        w!("tt-pane test"),
                         WS_POPUP,
                         100,
                         y,

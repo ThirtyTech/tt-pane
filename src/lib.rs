@@ -2,8 +2,8 @@
 
 pub mod config;
 pub mod positioning;
-pub use stile_platform as platform;
-pub use stile_platform::geometry;
+pub use tt_pane_platform as platform;
+pub use tt_pane_platform::geometry;
 pub mod shortcuts;
 #[cfg(feature = "gui")]
 mod tray;

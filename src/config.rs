@@ -104,10 +104,23 @@ impl Default for Config {
 
 impl Config {
     pub fn path() -> Result<PathBuf> {
-        Ok(directories::ProjectDirs::from("", "", "stile")
+        let path = directories::ProjectDirs::from("", "", "tt-pane")
             .context("Could not locate the user configuration directory")?
             .config_dir()
-            .join("config.toml"))
+            .join("config.toml");
+        // Keep existing settings and adjacent cycle state usable after the rebrand.
+        let legacy = directories::ProjectDirs::from("", "", "stile")
+            .context("Could not locate the user configuration directory")?
+            .config_dir()
+            .join("config.toml");
+        Self::existing_config_path(path, legacy)
+    }
+
+    fn existing_config_path(path: PathBuf, legacy: PathBuf) -> Result<PathBuf> {
+        if !path.try_exists()? && legacy.try_exists()? {
+            return Ok(legacy);
+        }
+        Ok(path)
     }
 
     pub fn load(path: &Path) -> Result<Self> {
@@ -433,5 +446,35 @@ mod focus_visibility_tests {
             config.save(&path).unwrap();
             assert_eq!(Config::load(&path).unwrap().focus.include_obscured, value);
         }
+    }
+}
+
+#[cfg(test)]
+mod rebrand_tests {
+    use super::*;
+
+    #[test]
+    fn existing_settings_survive_rebrand_and_new_location_takes_precedence() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tt-pane/config.toml");
+        let legacy = dir.path().join("stile/config.toml");
+        assert_eq!(
+            Config::existing_config_path(path.clone(), legacy.clone()).unwrap(),
+            path
+        );
+        let mut config = Config::default();
+        config.growth.percent = 27;
+        config.bindings[0].shortcut.clear();
+        config.save(&legacy).unwrap();
+        let selected = Config::existing_config_path(path.clone(), legacy.clone()).unwrap();
+        assert_eq!(selected, legacy);
+        let loaded = Config::load(&selected).unwrap();
+        assert_eq!(loaded.growth.percent, 27);
+        assert!(loaded.bindings[0].shortcut.is_empty());
+        Config::default().save(&path).unwrap();
+        assert_eq!(
+            Config::existing_config_path(path.clone(), legacy).unwrap(),
+            path
+        );
     }
 }

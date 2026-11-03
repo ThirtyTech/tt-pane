@@ -146,7 +146,7 @@ pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>) -> Resul
     let trusted = unsafe { AXIsProcessTrusted() } != 0;
     ensure!(
         trusted,
-        "Grant sTile Accessibility access in System Settings → Privacy & Security → Accessibility, then restart sTile"
+        "Grant tt-pane Accessibility access in System Settings → Privacy & Security → Accessibility, then restart tt-pane"
     );
     let mtm =
         MainThreadMarker::new().context("Window control must run on the macOS main thread")?;

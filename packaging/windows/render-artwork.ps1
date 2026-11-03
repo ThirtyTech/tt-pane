@@ -21,5 +21,5 @@ function Export-Bitmap([string] $Source, [string] $Destination, [int] $Width, [i
 foreach ($scale in 1, 2) {
     $suffix = if ($scale -eq 1) { '' } else { '-2x' }
     Export-Bitmap "$art/sidebar-source.png" "$art/sidebar$suffix.bmp" (202 * $scale) (386 * $scale) '#102333'
-    Export-Bitmap "$PSScriptRoot/../../assets/stile.png" "$art/small$suffix.bmp" (58 * $scale) (58 * $scale) '#ffffff'
+    Export-Bitmap "$PSScriptRoot/../../assets/tt-pane.png" "$art/small$suffix.bmp" (58 * $scale) (58 * $scale) '#ffffff'
 }

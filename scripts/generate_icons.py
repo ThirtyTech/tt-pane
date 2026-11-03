@@ -17,9 +17,9 @@ for box, radius, color in [
 ]:
     draw.rounded_rectangle(tuple(v * SCALE for v in box), radius * SCALE, fill=color)
 image = image.resize((256, 256), Image.Resampling.LANCZOS)
-image.save(ROOT / "stile.png")
-image.save(ROOT / "stile.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
-image.save(ROOT / "stile.icns")
+image.save(ROOT / "tt-pane.png")
+image.save(ROOT / "tt-pane.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+image.save(ROOT / "tt-pane.icns")
 tray = image.resize((32, 32), Image.Resampling.LANCZOS)
 tray.save(ROOT / "tray.png")
 (ROOT / "tray.rgba").write_bytes(tray.tobytes())

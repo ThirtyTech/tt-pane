@@ -146,9 +146,9 @@ impl Settings {
         self.status = text.into();
         self.error = error;
         let _ = self._tray.set_tooltip(Some(if error {
-            "sTile — action failed; open Settings for details"
+            "tt-pane — action failed; open Settings for details"
         } else {
-            "sTile — window shortcuts"
+            "tt-pane — window shortcuts"
         }));
         cx.notify();
     }
@@ -305,7 +305,7 @@ impl Settings {
             } else if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
                 "hyprland"
             } else {
-                anyhow::bail!("Start sTile inside Sway or Hyprland, or use the export command")
+                anyhow::bail!("Start tt-pane inside Sway or Hyprland, or use the export command")
             };
             let text = wayland_bindings(
                 &self.active,
@@ -313,7 +313,9 @@ impl Settings {
                 &std::env::current_exe()?,
                 Some(&std::path::absolute(&self.path)?),
             )?;
-            let path = self.path.with_file_name(format!("stile-{compositor}.conf"));
+            let path = self
+                .path
+                .with_file_name(format!("tt-pane-{compositor}.conf"));
             std::fs::create_dir_all(path.parent().unwrap())?;
             std::fs::write(&path, text)?;
             Ok(path)
@@ -408,7 +410,7 @@ impl Render for Settings {
             .size_full().bg(rgb(0x0e1724)).text_color(rgb(0xe8eef7)).font_family("Segoe UI")
             .flex().flex_col().p_6().gap_4()
             .child(div().flex().items_center().justify_between()
-                .child(div().flex().flex_col().gap_1().child(div().text_3xl().font_weight(FontWeight::BOLD).child("sTile"))
+                .child(div().flex().flex_col().gap_1().child(div().text_3xl().font_weight(FontWeight::BOLD).child("tt-pane"))
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Your windows. A keystroke away.")))
                 .child(div().text_xs().text_color(rgb(0x6ee7c0)).child(platform::description())))
             .child(div().flex().flex_1().min_h_0().gap_6()
@@ -477,7 +479,7 @@ impl Render for Settings {
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("First press places the window. Repeats multiply its size, keeping the corner or edge anchored. Center starts at 50% width and height, then grows equally in every direction. Growth stops at the work area; 0 steps turns it off."))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child(if platform::is_wayland() {
                         "Wayland: save, export shortcuts, then include the file in your compositor config. Sway and Hyprland are supported."
-                    } else { "Closing settings keeps sTile running in the tray. Use the tray menu to quit." }))
+                    } else { "Closing settings keeps tt-pane running in the tray. Use the tray menu to quit." }))
                     .child(button("close", "Close settings").on_click(|_, window, _| window.remove_window()))))
             .child(div().text_sm().text_color(rgb(if self.error { 0xffa59b } else { 0x91a4bb })).child(self.status.clone()))
             .child(div().flex().items_center().justify_between().gap_3()
@@ -508,12 +510,12 @@ fn show_settings(settings: &Entity<Settings>, cx: &mut App) -> anyhow::Result<()
     let window = cx.open_window(
         WindowOptions {
             titlebar: Some(TitlebarOptions {
-                title: Some("sTile — Keyboard shortcuts".into()),
+                title: Some("tt-pane — Keyboard shortcuts".into()),
                 ..Default::default()
             }),
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(760.), px(600.))),
-            app_id: Some("dev.stile.Stile".into()),
+            app_id: Some("dev.ttpane.TtPane".into()),
             ..Default::default()
         },
         move |window, cx| {
@@ -590,7 +592,7 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             }
         };
         if error {
-            let _ = tray.set_tooltip(Some(format!("sTile — {status}")));
+            let _ = tray.set_tooltip(Some(format!("tt-pane — {status}")));
         }
         let settings = cx.new(|cx| Settings {
             draft: config.clone(),

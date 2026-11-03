@@ -13,7 +13,7 @@ pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>) -> Resul
             return wayland::hyprland(resolve);
         }
         bail!(
-            "This Wayland compositor has no sTile adapter yet. Sway and Hyprland are supported; GNOME requires a Shell extension and KDE requires a KWin script. XWayland cannot control native Wayland windows."
+            "This Wayland compositor has no tt-pane adapter yet. Sway and Hyprland are supported; GNOME requires a Shell extension and KDE requires a KWin script. XWayland cannot control native Wayland windows."
         );
     }
     x11::apply(resolve)

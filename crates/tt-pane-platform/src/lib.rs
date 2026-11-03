@@ -1,4 +1,4 @@
-//! Safe interfaces to sTile native window operations.
+//! Safe interfaces to tt-pane native window operations.
 #![deny(unsafe_code)]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![deny(clippy::undocumented_unsafe_blocks)]

@@ -34,7 +34,7 @@ Change the shared percentage in **Width adjustment → Width change per press** 
 
 A 1000-pixel-wide slot reduced to 750 pixels leaves a 250-pixel-wide gap to its right. Repeated shrinking accumulates space in the original slot. One gap is remembered per monitor; successfully filling it consumes it. For a centered window, the larger gap wins, with the right side winning ties.
 
-Gaps come from sTile’s own resizing, not a scan of empty desktop space. Manual dragging, resizing, or closing outside sTile is not monitored: make a fresh width adjustment to update the gap. Selecting the source window or filling without a saved gap reports an error without repositioning it.
+Gaps come from tt-pane’s own resizing, not a scan of empty desktop space. Manual dragging, resizing, or closing outside tt-pane is not monitored: make a fresh width adjustment to update the gap. Selecting the source window or filling without a saved gap reports an error without repositioning it.
 
 ## Move a shared boundary — Windows
 
@@ -46,4 +46,4 @@ There is a **50/50 stop** when approaching or crossing equal heights; another pr
 
 The neighbor must be visible, restored, on the same monitor, and have matching horizontal edges within two pixels. Up to 16 pixels of vertical spacing and two pixels of border-rounding overlap are accepted. With neighbors on both sides, the arrow chooses the side; with one neighbor, both arrows adjust that pair.
 
-Missing or ambiguous neighbors produce an error. If an application refuses the size, sTile attempts to restore both original bounds and reports the error. Successful adjustments clear saved growth and gap state.
+Missing or ambiguous neighbors produce an error. If an application refuses the size, tt-pane attempts to restore both original bounds and reports the error. Successful adjustments clear saved growth and gap state.

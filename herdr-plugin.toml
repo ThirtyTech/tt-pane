@@ -1,5 +1,5 @@
-id = "dev.stile"
-name = "sTile"
+id = "dev.tt-pane"
+name = "tt-pane"
 version = "0.1.0"
 min_herdr_version = "0.7.0"
 description = "Position the active desktop window on its current monitor"
@@ -12,112 +12,112 @@ command = ["cargo", "build", "--release", "--locked", "--no-default-features", "
 id = "left"
 title = "Left half"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "left", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "left", "--json"]
 
 [[actions]]
 id = "right"
 title = "Right half"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "right", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "right", "--json"]
 
 [[actions]]
 id = "top"
 title = "Top half"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "top", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "top", "--json"]
 
 [[actions]]
 id = "bottom"
 title = "Bottom half"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "bottom", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "bottom", "--json"]
 
 [[actions]]
 id = "top-left"
 title = "Top left quarter"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "top-left", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "top-left", "--json"]
 
 [[actions]]
 id = "top-right"
 title = "Top right quarter"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "top-right", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "top-right", "--json"]
 
 [[actions]]
 id = "bottom-left"
 title = "Bottom left quarter"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "bottom-left", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "bottom-left", "--json"]
 
 [[actions]]
 id = "bottom-right"
 title = "Bottom right quarter"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "bottom-right", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "bottom-right", "--json"]
 
 [[actions]]
 id = "center"
 title = "Center window"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "center", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "center", "--json"]
 
 [[actions]]
 id = "maximize"
 title = "Fill work area"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "maximize", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "maximize", "--json"]
 
 [[actions]]
 id = "shrink-width"
 title = "Shrink width"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "shrink-width", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "shrink-width", "--json"]
 
 [[actions]]
 id = "expand-width"
 title = "Expand width"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "expand-width", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "expand-width", "--json"]
 
 [[actions]]
 id = "fill-gap"
 title = "Fill last gap"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "fill-gap", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "fill-gap", "--json"]
 
 [[actions]]
 id = "resize-up"
 title = "Move shared boundary up"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "resize-up", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "resize-up", "--json"]
 
 [[actions]]
 id = "resize-down"
 title = "Move shared boundary down"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "resize-down", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "resize-down", "--json"]
 
 [[actions]]
 id = "focus-left"
 title = "Focus left"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "focus-left", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "focus-left", "--json"]
 
 [[actions]]
 id = "focus-down"
 title = "Focus down"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "focus-down", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "focus-down", "--json"]
 
 [[actions]]
 id = "focus-up"
 title = "Focus up"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "focus-up", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "focus-up", "--json"]
 
 [[actions]]
 id = "focus-right"
 title = "Focus right"
 contexts = ["workspace"]
-command = ["./target/plugin/release/stile", "apply", "focus-right", "--json"]
+command = ["./target/plugin/release/tt-pane", "apply", "focus-right", "--json"]
