@@ -2,6 +2,10 @@
 
 A keyboard-first window position manager written in Rust, with a GPUI settings screen and native platform backends.
 
+## Documentation site
+
+The [Astro Starlight documentation site](docs-site/README.md) includes an animated position playground, light and dark themes, and the complete keybind reference. Run `npm ci` then `npm run dev` from `docs-site`, and open the printed local URL under `/sTile/`.
+
 Every action targets the **active window on its current monitor**, using that monitor's work area. Windows spanning displays use the display with the largest overlap; an off-screen window uses the nearest display. The first Center press resizes the window to 50% of the work area's width and height and centers it on both axes. There is no primary-monitor assumption in the positioning engine.
 
 ## Install

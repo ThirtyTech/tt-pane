@@ -1,0 +1,16 @@
+---
+import DefaultHero from '@astrojs/starlight/components/Hero.astro';
+import Showcase from './Showcase.astro';
+const home = Astro.locals.starlightRoute.id === '';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+{home ? <section class="stile-hero">
+  <div class="hero-copy">
+    <p class="eyebrow"><span></span> YOUR DESKTOP, IN POSITION</p>
+    <h1 id="_top" data-page-title>Make room<br />for <em>your flow.</em></h1>
+    <p class="hero-description">A keyboard-first window manager that puts everything in its place. Snap, grow, and fine-tune your workspace without breaking your stride.</p>
+    <div class="hero-actions"><a class="primary-link" href={`${base}/install/`}>Get started <span aria-hidden="true">↗︎</span></a><a href={`${base}/keybinds/`}>Learn the shortcuts <span aria-hidden="true">→</span></a></div>
+    <p class="platform-note">Built in Rust <span>·</span> Windows / macOS / Linux</p>
+  </div>
+  <Showcase />
+</section> : <DefaultHero />}

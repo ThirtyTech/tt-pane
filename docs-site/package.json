@@ -1,0 +1,8 @@
+{
+  "name": "stile-docs",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "astro dev", "build": "astro build", "preview": "astro preview", "check": "astro check" },
+  "dependencies": { "@astrojs/starlight": "^0.42.8", "@astrojs/markdown-remark": "^7.3.0", "astro": "^7.4.0" },
+  "devDependencies": { "@astrojs/check": "^0.9.4", "typescript": "^5.9.3" }
+}

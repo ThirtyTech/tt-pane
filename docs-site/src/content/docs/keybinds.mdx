@@ -1,0 +1,66 @@
+---
+title: Positions & keybinds
+description: Explore all ten sTile positions and the complete default keyboard shortcuts.
+---
+import Showcase from '../../components/Showcase.astro';
+
+Choose a tile to animate its starting position. **Repeat shortcut** demonstrates the default two growth steps, then returns to the initial placement. The illustration uses the monitor’s usable work area, excluding panels and taskbars.
+
+<Showcase />
+
+## Place a window
+
+All defaults use **Ctrl + Alt** on Windows and Linux, or **Control + Option** on macOS. Digits are on the **number row**, not the numpad.
+
+| Key with Ctrl + Alt | Position | Initial size |
+| --- | --- | --- |
+| 1 | Left half | 50% width, full height |
+| 2 | Right half | 50% width, full height |
+| 3 | Center | 50% width and height, centered on both axes |
+| 4 | Bottom left | 50% width and height |
+| 5 | Bottom half | Full width, 50% height |
+| 6 | Bottom right | 50% width and height |
+| 7 | Top left | 50% width and height |
+| 8 | Top half | Full width, 50% height |
+| 9 | Top right | 50% width and height |
+| 0 | Fill work area | Full width and height |
+
+Every placement targets the active window on its current monitor. A window spanning displays uses the display with the largest overlap; an off-screen window uses the nearest display. Application minimum sizes can limit the result.
+
+## Resize and fill
+
+| Shortcut | Action |
+| --- | --- |
+| Ctrl + Alt + - | Shrink current width by 25% |
+| Ctrl + Alt + = | Expand current width by 25% |
+| Ctrl + Alt + Shift + 8 | Fill the last saved gap with a different window |
+| Ctrl + Alt + ↑ | Move the shared horizontal boundary up (Windows) |
+| Ctrl + Alt + ↓ | Move the shared horizontal boundary down (Windows) |
+
+Expansion uses the `=` / `+` key **without Shift**. Ctrl + Alt + Shift + = also expands unless assigned to another action. Gap filling uses Shift + 8 (`*` on the number row). Numpad keys can be recorded separately.
+
+Read [Resize & refine](/sTile/resizing/) for anchoring, growth cycles, and neighboring-window behavior.
+
+## Move focus — Windows
+
+| Shortcut | Direction |
+| --- | --- |
+| Ctrl + Alt + H | Left |
+| Ctrl + Alt + J | Down |
+| Ctrl + Alt + K | Up |
+| Ctrl + Alt + L | Right |
+
+Focus moves to the nearest window by center distance within a 90° cone, including across monitors. Windows stay in place. There is no wraparound; focus stays put if there is no candidate.
+
+By default, at least 50% of a window’s full frame must be on-screen and uncovered. Enable **Settings → Window focus → Include obscured windows** to include covered or off-screen windows. Minimized, hidden, cloaked, and utility windows remain excluded. Focus and paired boundary resizing are currently Windows-only.
+
+## Change a shortcut
+
+1. Open **Settings…** from the tray menu.
+2. Click a shortcut and press your replacement combination.
+3. Press **Escape** to cancel recording, or **Backspace** to disable that action.
+4. Select **Save changes**.
+
+Duplicate shortcuts are rejected. Native registration conflicts appear in Settings; failed registration preserves the previous bindings. On Wayland, export and reload compositor bindings after saving. See [platform setup](/sTile/platforms/).
+
+Older configurations gain missing focus actions unless a default key is already taken. Existing custom or disabled bindings are preserved. Older configurations may need the two boundary shortcuts recorded manually, or defaults reset and saved.

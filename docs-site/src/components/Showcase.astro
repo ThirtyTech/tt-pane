@@ -1,0 +1,76 @@
+---
+import { positions } from '../data/positions';
+---
+<position-showcase class="showcase" aria-label="Interactive window positioning demo">
+  <div class="showcase-heading"><span><span class="live-dot"></span> THE POSITION PLAYGROUND</span><button type="button" data-play aria-pressed="true">Pause tour</button></div>
+  <div class="desktop" aria-hidden="true">
+    <div class="desktop-top"><span>sTile workspace</span><span>One window. Ten starting points.</span></div>
+    <div class="workarea">
+      <div class="guide guide-x"></div><div class="guide guide-y"></div>
+      <div class="ghost-window"><div></div><div></div><div></div></div>
+      <div class="demo-window"><div class="window-bar"><span>● ● ●</span><span>in the flow</span><span>↗</span></div><div class="window-content"><span class="code-line long"></span><span class="code-line medium"></span><span class="code-line short"></span><div class="tile-mark"><i></i><i></i><i></i></div><span class="window-label">Left half</span></div></div>
+      <span class="desktop-caption">SPACE TO THINK.</span>
+    </div>
+    <div class="desktop-dock"><i></i><i></i><i></i><i></i><i></i></div>
+  </div>
+  <div class="demo-readout"><div><span class="readout-label">CURRENT POSITION</span><strong data-name>Left half</strong></div><div class="shortcut"><kbd>Ctrl</kbd><span>+</span><kbd>Alt</kbd><span>+</span><kbd data-key>1</kbd></div></div>
+  <div class="position-grid" aria-label="Choose a position">
+    {positions.map((p, index) => <button type="button" data-position={index} aria-label={`${p.name}: Ctrl+Alt+${p.key}`} aria-pressed={index === 0} title={p.name}><span class="mini-monitor" aria-hidden="true"><i style={`left:${p.x}%;top:${p.y}%;width:${p.w}%;height:${p.h}%`}></i></span><span>{p.key}</span></button>)}
+  </div>
+  <div class="demo-bottom"><p>Choose a tile. See the shortcut.</p><button type="button" data-grow>Repeat shortcut <span aria-hidden="true">↗</span></button></div>
+  <p class="growth-status" data-status role="status" aria-live="polite">Initial placement · 50% width × 100% height</p>
+  <p class="demo-footnote">Illustrated work area. On macOS, use Control + Option. Your desktop is never changed.</p>
+</position-showcase>
+<script>
+  import { positions } from '../data/positions';
+  class PositionShowcase extends HTMLElement {
+    connectedCallback() {
+      const windowEl = this.querySelector<HTMLElement>('.demo-window')!;
+      const name = this.querySelector<HTMLElement>('[data-name]')!;
+      const label = this.querySelector<HTMLElement>('.window-label')!;
+      const key = this.querySelector<HTMLElement>('[data-key]')!;
+      const status = this.querySelector<HTMLElement>('[data-status]')!;
+      const play = this.querySelector<HTMLButtonElement>('[data-play]')!;
+      const buttons = this.querySelectorAll<HTMLButtonElement>('[data-position]');
+      const motion = matchMedia('(prefers-reduced-motion: reduce)');
+      let selected = 0, step = 0, playing = !motion.matches;
+      const render = (announce = true) => {
+        const p = positions[selected];
+        const w = Math.min(100, p.w * 1.15 ** step), h = Math.min(100, p.h * 1.15 ** step);
+        const x = p.x === 0 ? 0 : p.x + p.w === 100 ? 100 - w : (100 - w) / 2;
+        const y = p.y === 0 ? 0 : p.y + p.h === 100 ? 100 - h : (100 - h) / 2;
+        Object.assign(windowEl.style, { left: `${x}%`, top: `${y}%`, width: `${w}%`, height: `${h}%` });
+        name.textContent = label.textContent = p.name;
+        key.textContent = p.key;
+        buttons.forEach((b, i) => b.setAttribute('aria-pressed', String(i === selected)));
+        status.setAttribute('aria-live', announce ? 'polite' : 'off');
+        const rounded = (value: number) => Math.round((value + 1e-9) * 100) / 100;
+        status.textContent = `${step ? `Growth ${step} of 2` : 'Initial placement'} · ${rounded(w)}% width × ${rounded(h)}% height`;
+      };
+      const setPlaying = (value: boolean) => {
+        playing = value;
+        play.textContent = value ? 'Pause tour' : 'Play tour';
+        play.setAttribute('aria-pressed', String(value));
+      };
+      buttons.forEach((button, index) => button.addEventListener('click', () => {
+        setPlaying(false); selected = index; step = 0; render();
+      }));
+      this.querySelector('[data-grow]')!.addEventListener('click', () => {
+        setPlaying(false); step = (step + 1) % 3; render();
+      });
+      play.addEventListener('click', () => setPlaying(!playing));
+      const onMotionChange = () => { if (motion.matches) setPlaying(false); };
+      motion.addEventListener('change', onMotionChange);
+      // The tour pauses while the reader interacts or the tab is hidden.
+      const timer = window.setInterval(() => {
+        if (!playing || document.hidden || this.matches(':hover') || this.contains(document.activeElement)) return;
+        selected = (selected + 1) % positions.length; step = 0; render(false);
+      }, 3200);
+      this.cleanup = () => { clearInterval(timer); motion.removeEventListener('change', onMotionChange); };
+      setPlaying(playing); render(false);
+    }
+    cleanup?: () => void;
+    disconnectedCallback() { this.cleanup?.(); }
+  }
+  if (!customElements.get('position-showcase')) customElements.define('position-showcase', PositionShowcase);
+</script>
