@@ -113,6 +113,7 @@ pub fn focus_window(handle: Option<u64>, action: Action) -> Result<()> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusVisibility {
+    BackgroundOnly,
     MoreThanPercent(u32),
     AtLeastHalf,
     IncludeHidden,
@@ -153,12 +154,23 @@ pub fn focus_window_filtered(
     visibility: FocusVisibility,
     group: &[u64],
 ) -> Result<()> {
+    focus_window_with_members(handle, action, visibility, group, &[])
+}
+
+/// Explicit Center members remain middle windows even when grown to an edge.
+pub fn focus_window_with_members(
+    handle: Option<u64>,
+    action: Action,
+    visibility: FocusVisibility,
+    group: &[u64],
+    middle_members: &[u64],
+) -> Result<()> {
     anyhow::ensure!(action.focuses(), "Expected a directional focus action");
     #[cfg(target_os = "windows")]
-    return windows::focus_window(handle, action, visibility, group);
+    return windows::focus_window(handle, action, visibility, group, middle_members);
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (handle, action, visibility, group);
+        let _ = (handle, action, visibility, group, middle_members);
         anyhow::bail!("Directional window focus currently supports Windows only")
     }
 }

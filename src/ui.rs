@@ -445,7 +445,7 @@ impl Render for Settings {
                     .child(div().text_sm().child(selected.label()))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Hover a keybinding to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."))
                     .when(selected.adjusts_pair(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Move the shared boundary by 25% of the selected window's current height, with a 50/50 stop when returning toward the middle. Blue shows the neighbor. Windows only; matching left and right edges required.")))
-                    .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("H: left, J: down, K: up, L: right. Tap H/L to navigate visible windows. Hold for 400 ms to enter covered middle windows from an edge, or exit a middle window to a background edge window. Windows only.")))
+                    .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("H: left, J: down, K: up, L: right. Tap H/J/K/L to navigate background windows by default. Inside a centered group, H/L rotate continuously. Hold for 400 ms to enter covered middle windows from an edge, or exit a middle window to a background edge window. Windows only.")))
                     .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+Shift+8 (*).")))
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Window focus"))
@@ -468,6 +468,12 @@ impl Render for Settings {
                                     let _ = (this, cx);
                                 }))))
                         .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Briefly highlight the target after moving a window or using H/J/K/L. Default: neutral off-white.")))
+                    .child(div().text_sm().child("Include middle windows in H/J/K/L navigation"))
+                    .child(button("include-middle", if self.draft.focus.include_middle_windows { "On" } else { "Off" })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.focus.include_middle_windows = !this.draft.focus.include_middle_windows;
+                            this.message("Window focus updated. Save to activate.", false, cx);
+                        })))
                     .child(button("advanced-toggle", if self.advanced_expanded { "Advanced ▾" } else { "Advanced ▸" })
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.advanced_expanded = !this.advanced_expanded;
@@ -491,7 +497,7 @@ impl Render for Settings {
                             this.draft.focus.minimum_visible_percent = (this.draft.focus.minimum_visible_percent + 1).min(99);
                             this.message("Window focus updated. Save to activate.", false, cx);
                         }))))
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Filter Off (default): include covered middle windows. On: regular focus requires more than the percentage above (default: 10%) to be visible. Hold H/L for 400 ms to enter covered middle windows from an edge, or return from a middle window to the background. Minimized windows and other virtual desktops stay excluded."))
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("When middle-window navigation is enabled, Filter Off includes covered windows. Filter On requires more than the percentage above (default: 10%) to be visible. Hold H/L for 400 ms to enter covered middle windows from an edge, or return from a middle window to the background. Minimized windows and other virtual desktops stay excluded."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Width adjustment"))
                     .child(div().text_sm().child("Width change per press"))
                     .child(div().flex().items_center().justify_between()

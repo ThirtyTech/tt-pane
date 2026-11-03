@@ -151,6 +151,7 @@ fn focus_visible(
     }
     let visible_area = visible.iter().map(|r| r.area()).sum::<i128>();
     match visibility {
+        FocusVisibility::BackgroundOnly => false,
         FocusVisibility::MoreThanPercent(percent) => {
             visible_area * 100 > window.area() * i128::from(percent)
         }
@@ -176,6 +177,26 @@ mod tests {
         width: 100,
         height: 100,
     };
+
+    #[test]
+    fn background_only_excludes_even_fully_visible_middle_windows() {
+        use crate::geometry::Action;
+        let area = r(0, 0, 1600, 1000);
+        assert!(!focus_eligible(
+            Action::Center.target(area, area),
+            Some(area),
+            &[area],
+            &[],
+            FocusVisibility::BackgroundOnly
+        ));
+        assert!(focus_eligible(
+            Action::Left.target(area, area),
+            Some(area),
+            &[area],
+            &[area],
+            FocusVisibility::BackgroundOnly
+        ));
+    }
 
     #[test]
     fn taps_use_configured_threshold_and_holds_reach_covered_middle_windows() {

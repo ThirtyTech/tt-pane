@@ -34,6 +34,7 @@ steps = 3
 percent = 25
 
 [focus]
+include_middle_windows = false
 visibility_filter_enabled = false
 minimum_visible_percent = 10
 glow_enabled = true
@@ -48,7 +49,11 @@ action = "right"
 shortcut = "Ctrl+Alt+2"
 ```
 
-**Settings → Advanced** starts collapsed and contains the visibility percentage, width adjustment, and repeat-growth controls. **Minimum middle-window visibility** defaults to 10% and accepts 0–99%. **Filter middle windows by visibility** defaults to Off (`visibility_filter_enabled = false`), including for existing configurations without this key. Off includes covered middle windows. When On, regular focus presses and CLI focus require strictly more than this percentage of a middle window's full frame to be on-screen and uncovered. Centered-group traversal uses the same threshold. Long H/L presses from edge-snapped windows bypass it to reach covered middle windows. From a centered-group member or floating middle window, they jump out to a background edge-snapped window on the same monitor, skipping other middle windows. If no candidate exists, focus stays put. Edge-snapped windows remain reachable regardless of coverage.
+**Include middle windows in H/J/K/L navigation** in Settings defaults to **Off**, including for existing configurations. Outside a centered group, regular H/J/K/L and CLI focus navigate background edge-snapped windows. Turn it On to include floating and centered windows. Inside a centered group, H/L always rotates through its members.
+
+When middle-window navigation is enabled, **Settings → Advanced → Filter middle windows by visibility** optionally requires more than the **Minimum middle-window visibility** percentage of a middle window's frame to be on-screen and uncovered. The filter defaults to Off and the percentage to 10% (range 0–99%). This applies to spatial navigation, not H/L rotation inside a group or hold-to-enter. Edge snaps remain reachable when covered. Minimized, hidden, cloaked, and utility windows stay excluded. Advanced starts collapsed and also contains width and growth controls.
+
+Tap **Ctrl+Alt+H/L** (release before **400 ms**) for regular navigation. Hold for **400 ms** from a background edge-snapped window to enter middle windows, including covered ones. From a centered member or floating middle window, hold to exit to background edge-snapped windows on the same monitor. Holds fire once; release before holding again. If no candidate qualifies, focus stays put. Remapped horizontal focus shortcuts work the same way. Holds require the running Windows tray app.
 
 Old `include_obscured = false` settings migrate to 50%, and `true` or an omitted value migrates to 10%. An explicit `minimum_visible_percent` wins if both keys exist. Saving writes only the new percentage key.
 

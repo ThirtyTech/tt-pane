@@ -262,6 +262,8 @@ fn apply_inner(
     config.validate()?;
     let visibility = if include_hidden {
         platform::FocusVisibility::Hold
+    } else if !config.focus.include_middle_windows {
+        platform::FocusVisibility::BackgroundOnly
     } else if config.focus.visibility_filter_enabled {
         platform::FocusVisibility::MoreThanPercent(config.focus.minimum_visible_percent)
     } else {
@@ -299,12 +301,15 @@ fn apply_inner(
     #[cfg(windows)]
     if action.focuses() {
         let result = (|| -> Result<()> {
-            if include_hidden || !group.focus(window, action, visibility)? {
-                platform::focus_window_filtered(
+            if include_hidden
+                || !group.focus(window, action, platform::FocusVisibility::IncludeHidden)?
+            {
+                platform::focus_window_with_members(
                     window,
                     action,
                     visibility,
                     &group.exit_members(window, action),
+                    &group.handles(),
                 )?;
                 group.refresh()?;
             }

@@ -44,6 +44,7 @@ pub struct WidthResize {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "FocusInput")]
 pub struct Focus {
+    pub include_middle_windows: bool,
     pub visibility_filter_enabled: bool,
     pub minimum_visible_percent: u32,
     pub glow_enabled: bool,
@@ -53,6 +54,7 @@ pub struct Focus {
 #[derive(Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 struct FocusInput {
+    include_middle_windows: Option<bool>,
     visibility_filter_enabled: Option<bool>,
     minimum_visible_percent: Option<u32>,
     include_obscured: Option<bool>,
@@ -64,6 +66,7 @@ impl From<FocusInput> for Focus {
     fn from(input: FocusInput) -> Self {
         let defaults = Self::default();
         Self {
+            include_middle_windows: input.include_middle_windows.unwrap_or(false),
             visibility_filter_enabled: input.visibility_filter_enabled.unwrap_or(false),
             minimum_visible_percent: input.minimum_visible_percent.unwrap_or_else(|| {
                 if input.include_obscured == Some(false) {
@@ -81,6 +84,7 @@ impl From<FocusInput> for Focus {
 impl Default for Focus {
     fn default() -> Self {
         Self {
+            include_middle_windows: false,
             visibility_filter_enabled: false,
             minimum_visible_percent: 10,
             glow_enabled: true,
@@ -585,6 +589,23 @@ mod rebrand_tests {
         assert_eq!(
             Config::existing_config_path(path.clone(), legacy).unwrap(),
             path
+        );
+    }
+}
+
+#[cfg(test)]
+mod middle_navigation_tests {
+    use super::*;
+    #[test]
+    fn middle_inclusion_defaults_off_and_roundtrips_explicit_opt_in() {
+        assert!(!Focus::default().include_middle_windows);
+        let old: Focus = toml::from_str("visibility_filter_enabled = false").unwrap();
+        assert!(!old.include_middle_windows);
+        let enabled: Focus = toml::from_str("include_middle_windows = true").unwrap();
+        assert!(enabled.include_middle_windows);
+        assert_eq!(
+            toml::from_str::<Focus>(&toml::to_string(&enabled).unwrap()).unwrap(),
+            enabled
         );
     }
 }

@@ -491,6 +491,7 @@ fn focus_candidates(
     handle: Option<u64>,
     visibility: super::FocusVisibility,
     group: &[u64],
+    middle_members: &[u64],
 ) -> Result<(Rect, Vec<HWND>, Vec<Rect>)> {
     use windows::Win32::Foundation::LPARAM;
     use windows::core::BOOL;
@@ -551,6 +552,7 @@ fn focus_candidates(
         } else {
             false
         };
+        let middle_only = visibility == super::FocusVisibility::Hold && !snapped_only;
         let visibility = if visibility == super::FocusVisibility::Hold {
             super::FocusVisibility::IncludeHidden
         } else {
@@ -599,6 +601,7 @@ fn focus_candidates(
                 continue;
             };
             let rect = from_rect(rect);
+            let is_middle = middle_members.contains(&(window.0 as usize as u64));
             let selectable = window != selected
                 && ((!snapped_only && group.is_empty())
                     || (!group.contains(&(window.0 as usize as u64))
@@ -612,7 +615,9 @@ fn focus_candidates(
                 ..Default::default()
             };
             let work_area = (selectable
-                && (snapped_only || visibility != super::FocusVisibility::IncludeHidden)
+                && (snapped_only
+                    || middle_only
+                    || visibility != super::FocusVisibility::IncludeHidden)
                 && GetMonitorInfoW(
                     MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST),
                     &mut info,
@@ -620,7 +625,9 @@ fn focus_candidates(
                 .as_bool())
             .then(|| from_rect(info.rcWork));
             if selectable
-                && (!snapped_only || crate::visibility::is_snapped(rect, work_area))
+                && (!snapped_only || (!is_middle && crate::visibility::is_snapped(rect, work_area)))
+                && (!middle_only || is_middle || !crate::visibility::is_snapped(rect, work_area))
+                && (visibility != super::FocusVisibility::BackgroundOnly || !is_middle)
                 && crate::visibility::focus_eligible(rect, work_area, &screens, &above, visibility)
             {
                 candidates.push(window);
@@ -637,7 +644,7 @@ fn focus_candidates(
 }
 
 pub fn focus_eligible_handles(handle: u64, visibility: super::FocusVisibility) -> Result<Vec<u64>> {
-    let (_, candidates, _) = focus_candidates(Some(handle), visibility, &[])?;
+    let (_, candidates, _) = focus_candidates(Some(handle), visibility, &[], &[])?;
     Ok(candidates
         .into_iter()
         .map(|window| window.0 as usize as u64)
@@ -649,8 +656,10 @@ pub fn focus_window(
     action: crate::geometry::Action,
     visibility: super::FocusVisibility,
     group: &[u64],
+    middle_members: &[u64],
 ) -> Result<()> {
-    let (current, candidates, bounds) = focus_candidates(handle, visibility, group)?;
+    let (current, candidates, bounds) =
+        focus_candidates(handle, visibility, group, middle_members)?;
     let neighbor = if group.is_empty() {
         crate::geometry::focus_neighbor(current, &bounds, action)
     } else {

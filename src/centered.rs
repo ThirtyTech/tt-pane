@@ -34,6 +34,9 @@ pub(crate) struct Group {
 }
 
 impl Group {
+    pub fn handles(&self) -> Vec<u64> {
+        self.members.iter().map(|m| m.handle).collect()
+    }
     pub fn load(path: &Path) -> Result<Self> {
         match File::open(crate::positioning::sidecar(path, ".centered.json")) {
             Ok(file) => Ok(serde_json::from_reader(file.take(128 * 1024)).unwrap_or_default()),
@@ -92,8 +95,7 @@ impl Group {
         }
     }
 
-    /// Stable bounded order keeps covered peers reachable and lets navigation
-    /// leave the group at either end.
+    /// Stable circular order keeps both sides populated as focus rotates.
     #[cfg(test)]
     fn neighbor(&self, handle: u64, action: Action) -> Option<u64> {
         self.neighbor_filtered(handle, action, None)
@@ -119,8 +121,8 @@ impl Group {
         }
         let index = peers.iter().position(|m| m.handle == handle)?;
         let next = match action {
-            Action::FocusLeft => index.checked_sub(1)?,
-            Action::FocusRight => index + 1,
+            Action::FocusLeft => (index + peers.len() - 1) % peers.len(),
+            Action::FocusRight => (index + 1) % peers.len(),
             _ => return None,
         };
         peers.get(next).map(|m| m.handle)
@@ -146,7 +148,8 @@ impl Group {
             Some(platform::focus_eligible_handles(handle, visibility)?)
         };
         let Some(next) = self.neighbor_filtered(handle, action, eligible.as_deref()) else {
-            return Ok(false);
+            // A singleton carousel stays put; only a hold (or J/K) leaves it.
+            return Ok(true);
         };
         let Some(live) = platform::window_snapshot(next)? else {
             return Ok(false);
@@ -188,21 +191,29 @@ impl Group {
     }
 
     pub fn arrange(&mut self, handle: u64) -> Result<()> {
-        let Some(selected) = self.members.iter().find(|m| m.handle == handle).cloned() else {
-            return Ok(());
-        };
+        let selected = self.members.iter().find(|m| m.handle == handle);
         let peers: Vec<_> = self
             .members
             .iter()
-            .filter(|m| m.area == selected.area)
+            .filter(|m| selected.is_some_and(|selected| m.area == selected.area))
             .cloned()
             .collect();
-        let index = peers.iter().position(|m| m.handle == handle).unwrap();
+        let selected_index = peers.iter().position(|m| m.handle == handle);
         // Move background members first, keeping their native Z order and focus.
-        let mut moves: Vec<_> = peers
+        // Leaving the group also shrinks its former main window.
+        let members = self.members.clone();
+        let mut moves: Vec<_> = members
             .iter()
-            .enumerate()
-            .map(|(i, member)| (member, target(&peers, i, index)))
+            .map(|member| {
+                let bounds = match (
+                    selected_index,
+                    peers.iter().position(|m| m.handle == member.handle),
+                ) {
+                    (Some(selected), Some(index)) => target(&peers, index, selected),
+                    _ => inactive_target(member),
+                };
+                (member, bounds)
+            })
             .collect();
         moves.sort_by_key(|(m, _)| m.handle == handle);
         let mut failure = None;
@@ -238,39 +249,62 @@ impl Group {
     }
 }
 
+fn inactive_target(member: &Member) -> Rect {
+    let base = Action::Center.target(member.area, member.area);
+    Rect {
+        x: (member.last.x + (member.last.width - base.width) / 2).clamp(
+            member.area.x,
+            member.area.x + member.area.width - base.width,
+        ),
+        y: (member.last.y + (member.last.height - base.height) / 2).clamp(
+            member.area.y,
+            member.area.y + member.area.height - base.height,
+        ),
+        ..base
+    }
+}
+
+// Signed distance around the ring: the next member is always on the right,
+// the previous on the left (with two members, the sole peer sits on the right).
+fn slot(index: usize, selected: usize, count: usize) -> i64 {
+    let forward = (index + count - selected) % count;
+    if forward <= count / 2 {
+        forward as i64
+    } else {
+        forward as i64 - count as i64
+    }
+}
+
 fn target(peers: &[Member], index: usize, selected_index: usize) -> Rect {
-    let base = peers[index].centered;
     if index == selected_index {
-        return base;
+        return peers[index].centered;
     }
     let selected = &peers[selected_index];
-    let right = index > selected_index;
+    let base = Action::Center.target(peers[index].area, peers[index].area);
+    let offset = slot(index, selected_index, peers.len());
     let mut step_x = i64::from(selected.centered.width / 4);
     let mut step_y = i64::from(selected.centered.height / 4);
-    // Share one step on each side. Limit it before placing any member so
-    // clamping at the work-area edge cannot pile the outer windows together.
+    // Compress a whole side together to retain distinct positions at the edges.
     for (i, member) in peers.iter().enumerate() {
-        if i == selected_index || (i > selected_index) != right {
+        let distance = slot(i, selected_index, peers.len());
+        if distance == 0 || distance.signum() != offset.signum() {
             continue;
         }
-        let distance = i.abs_diff(selected_index) as i64;
-        let rect = member.centered;
+        let rect = Action::Center.target(member.area, member.area);
         let area = member.area;
-        let room_x = if right {
+        let room_x = if distance > 0 {
             i64::from(area.x) + i64::from(area.width) - i64::from(rect.x) - i64::from(rect.width)
         } else {
             i64::from(rect.x) - i64::from(area.x)
         };
         let room_y =
             i64::from(area.y) + i64::from(area.height) - i64::from(rect.y) - i64::from(rect.height);
-        step_x = step_x.min(room_x.max(0) / distance);
-        step_y = step_y.min(room_y.max(0) / distance);
+        step_x = step_x.min(room_x.max(0) / distance.abs());
+        step_y = step_y.min(room_y.max(0) / distance.abs());
     }
-    let distance = index.abs_diff(selected_index) as i64;
-    let sign = if right { 1 } else { -1 };
     Rect {
-        x: (i64::from(base.x) + sign * step_x * distance) as i32,
-        y: (i64::from(base.y) + step_y * distance) as i32,
+        x: (i64::from(base.x) + step_x * offset) as i32,
+        y: (i64::from(base.y) + step_y * offset.abs()) as i32,
         ..base
     }
 }
@@ -325,6 +359,15 @@ mod tests {
                 platform::focus_snapshot(&platform::window_snapshot(handle).unwrap().unwrap())
                     .unwrap();
             };
+            // Default taps skip the middle, but holding enters it.
+            focus(middle);
+            focus(left);
+            crate::positioning::apply(&config, &path, Action::FocusRight, Some(left)).unwrap();
+            assert_eq!(platform::foreground_handle(), Some(right));
+            crate::positioning::apply_gesture(&config, &path, Action::FocusRight, Some(left), true)
+                .unwrap();
+            assert_eq!(platform::foreground_handle(), Some(middle));
+            config.focus.include_middle_windows = true;
             // The left window covers half of the middle window. Taps should
             // visit it at 10%, but skip it at a higher configured threshold.
             for (percent, expected) in [(10, middle), (75, right)] {
@@ -446,6 +489,11 @@ mod tests {
             }
             let mut group = Group::load(&path).unwrap();
             assert_eq!(group.members.len(), 3);
+            // Give one member a larger saved size, then switch away and back.
+            for _ in 0..2 {
+                crate::positioning::apply(&config, &path, Action::Center, Some(handles[0]))
+                    .unwrap();
+            }
             let cycle_before =
                 std::fs::read(crate::positioning::sidecar(&path, ".cycle.json")).unwrap();
             // A regular native focus change is picked up by the tray observer.
@@ -460,7 +508,7 @@ mod tests {
                     .bounds,
                 group.members[0].centered
             );
-            // Regular presses traverse sufficiently visible group peers.
+            // Regular presses traverse group peers even with middle inclusion off.
             crate::positioning::apply_gesture(
                 &config,
                 &path,
@@ -498,12 +546,24 @@ mod tests {
                     selected.centered
                 );
                 for peer in group.members.iter().filter(|m| m.handle != handle) {
+                    let base = Action::Center.target(peer.area, peer.area);
                     assert_ne!(peer.last.x, peer.centered.x);
                     assert!(peer.last.y > peer.centered.y);
-                    assert_eq!(peer.last.width, peer.centered.width);
-                    assert_eq!(peer.last.height, peer.centered.height);
+                    assert_eq!(peer.last.width, base.width);
+                    assert_eq!(peer.last.height, base.height);
                 }
             }
+            // Last-to-first wraps; it must not escape to a background window.
+            group.save(&path).unwrap();
+            crate::positioning::apply(&config, &path, Action::FocusRight, Some(handles[2]))
+                .unwrap();
+            assert_eq!(platform::foreground_handle(), Some(handles[0]));
+            group = Group::load(&path).unwrap();
+            let saved = group.members[0].centered;
+            group.arrange(u64::MAX).unwrap();
+            assert_eq!(group.members[0].last.width, group.members[0].area.width / 2);
+            group.arrange(handles[0]).unwrap();
+            assert_eq!(group.members[0].last, saved);
             let changed = platform::apply_with(Some(handles[0]), &mut |_, _, bounds| {
                 Ok(Rect {
                     x: bounds.x + 20,
@@ -578,29 +638,53 @@ mod tests {
     }
 
     #[test]
-    fn repeated_right_shifts_visited_members_left_until_exit() {
-        for count in [2, 3, 6] {
-            let group = Group {
+    fn circular_layout_balances_sides_and_restores_saved_sizes() {
+        for count in [2, 3, 6, 12] {
+            let mut group = Group {
                 members: (1..=count).map(member).collect(),
             };
+            group.members[0].centered = Rect {
+                x: -1520,
+                y: 70,
+                width: 1440,
+                height: 900,
+            };
+            let saved = group.members[0].centered;
             let mut handle = 1;
-            for selected_index in 0..count as usize {
-                assert_eq!(handle, selected_index as u64 + 1);
+            for turn in 0..count * 3 {
+                let selected = (turn % count) as usize;
+                assert_eq!(handle, selected as u64 + 1);
+                let mut positions = Vec::new();
+                let mut left = 0;
+                let mut right = 0;
                 for (index, peer) in group.members.iter().enumerate() {
-                    let bounds = target(&group.members, index, selected_index);
-                    assert_eq!(bounds.x.cmp(&peer.centered.x), index.cmp(&selected_index));
+                    let rect = target(&group.members, index, selected);
+                    assert!(rect.x >= peer.area.x && rect.y >= peer.area.y);
+                    assert!(rect.x + rect.width <= peer.area.x + peer.area.width);
+                    assert!(rect.y + rect.height <= peer.area.y + peer.area.height);
+                    if index == selected {
+                        assert_eq!(rect, peer.centered);
+                    } else {
+                        assert_eq!((rect.width, rect.height), (800, 500));
+                        if rect.x < -1200 {
+                            left += 1;
+                        } else {
+                            right += 1;
+                        }
+                    }
+                    assert!(!positions.contains(&(rect.x, rect.y)));
+                    positions.push((rect.x, rect.y));
                 }
-                match group.neighbor(handle, Action::FocusRight) {
-                    Some(next) => handle = next,
-                    None => assert_eq!(selected_index, count as usize - 1),
-                }
+                assert!((left - right as i32).abs() <= 1);
+                handle = group.neighbor(handle, Action::FocusRight).unwrap();
             }
-            assert_eq!(group.neighbor(handle, Action::FocusRight), None);
+            assert_eq!(target(&group.members, 0, 0), saved);
+            assert_eq!(group.neighbor(1, Action::FocusLeft), Some(count));
         }
     }
 
     #[test]
-    fn grown_windows_stay_inside_negative_origin_work_area() {
+    fn leaving_group_shrinks_main_without_losing_saved_size() {
         let mut m = member(1);
         m.centered = Rect {
             x: -1520,
@@ -608,87 +692,52 @@ mod tests {
             width: 1440,
             height: 900,
         };
-        assert_eq!(
-            target(&[m.clone(), m.clone(), m.clone()], 2, 1),
-            Rect {
-                x: -1440,
-                y: 120,
-                ..m.centered
-            }
-        );
-        assert_eq!(
-            target(&[m.clone(), m.clone(), m.clone()], 0, 1),
-            Rect {
-                x: -1600,
-                y: 120,
-                ..m.centered
-            }
-        );
+        m.last = m.centered;
+        assert_eq!(inactive_target(&m), member(1).centered);
+        assert_eq!(m.centered.width, 1440);
     }
 
     #[test]
-    fn same_side_members_stagger_and_compress_to_fit() {
-        for count in [3, 4, 6, 12] {
-            let peers: Vec<_> = (1..=count).map(member).collect();
-            for selected in 0..peers.len() {
-                let mut positions = Vec::new();
-                for index in 0..peers.len() {
-                    let rect = target(&peers, index, selected);
-                    let area = peers[index].area;
-                    assert!(rect.x >= area.x && rect.y >= area.y);
-                    assert!(rect.x + rect.width <= area.x + area.width);
-                    assert!(rect.y + rect.height <= area.y + area.height);
-                    assert_eq!((rect.width, rect.height), (800, 500));
-                    assert!(!positions.contains(&(rect.x, rect.y)));
-                    positions.push((rect.x, rect.y));
-                }
-                assert!(positions.windows(2).all(|p| p[0].0 < p[1].0));
-            }
-        }
-        let peers = vec![member(1), member(2), member(3)];
-        assert_eq!(target(&peers, 1, 0).x, -1000);
-        assert_eq!(target(&peers, 2, 0).x, -800);
-        assert_eq!(target(&peers, 2, 0).y, 520);
-        let peers: Vec<_> = (1..=6).map(member).collect();
-        assert_eq!(target(&peers, 1, 0).x, -1120);
-        assert_eq!(target(&peers, 5, 0).x, -800);
-    }
-
-    #[test]
-    fn mixed_sizes_limit_spacing_on_only_the_crowded_side() {
-        let mut peers: Vec<_> = (1..=5).map(member).collect();
-        peers[4].centered = Rect {
+    fn inactive_size_and_offsets_follow_focused_size() {
+        let mut peers: Vec<_> = (1..=3).map(member).collect();
+        peers[1].centered = Rect {
             x: -1520,
             y: 70,
             width: 1440,
             height: 900,
         };
-        // The outer large member has only 80px right and 50px below available.
-        assert_eq!(target(&peers, 3, 2).x, -1160);
-        assert_eq!(target(&peers, 3, 2).y, 295);
         assert_eq!(
-            target(&peers, 4, 2),
+            target(&peers, 0, 1),
             Rect {
-                x: -1440,
-                y: 120,
-                ..peers[4].centered
+                x: -1560,
+                y: 495,
+                width: 800,
+                height: 500
             }
         );
-        assert_eq!(target(&peers, 1, 2).x, -1400);
-        assert_eq!(target(&peers, 0, 2).x, -1600);
-        assert_eq!(target(&peers, 2, 2), peers[2].centered);
+        assert_eq!(
+            target(&peers, 2, 1),
+            Rect {
+                x: -840,
+                y: 495,
+                width: 800,
+                height: 500
+            }
+        );
+        assert_eq!(target(&peers, 1, 0).width, 800);
+        assert_eq!(target(&peers, 1, 1), peers[1].centered);
     }
 
     #[test]
-    fn navigation_exits_at_both_ends_and_preserves_vertical_navigation() {
+    fn navigation_wraps_at_both_ends_and_preserves_vertical_navigation() {
         let mut other = member(9);
         other.area.x = 0;
         let group = Group {
             members: vec![member(1), other, member(2), member(3)],
         };
-        assert_eq!(group.neighbor(1, Action::FocusLeft), None);
+        assert_eq!(group.neighbor(1, Action::FocusLeft), Some(3));
         assert_eq!(group.neighbor(1, Action::FocusRight), Some(2));
-        assert_eq!(group.neighbor(3, Action::FocusRight), None);
+        assert_eq!(group.neighbor(3, Action::FocusRight), Some(1));
         assert_eq!(group.neighbor(9, Action::FocusLeft), None);
         assert_eq!(group.neighbor(1, Action::FocusDown), None);
         assert_eq!(group.neighbor(1, Action::FocusUp), None);
