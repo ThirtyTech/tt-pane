@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <radialGradient id="glow"><stop stop-color="#233e40"/><stop offset="1" stop-color="#101216"/></radialGradient>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#adb3bf" opacity=".12"/></pattern>
+  </defs>
+  <rect width="1200" height="630" fill="#101216"/>
+  <ellipse cx="955" cy="305" rx="430" ry="370" fill="url(#glow)"/>
+  <rect x="660" y="60" width="480" height="500" fill="url(#grid)"/>
+  <g transform="translate(64 58) scale(.25)">
+    <rect x="8" y="8" width="240" height="240" rx="56" fill="#102333"/>
+    <rect x="40" y="40" width="80" height="176" rx="12" fill="#64e4bd"/>
+    <rect x="136" y="40" width="80" height="80" rx="12" fill="#e6f4f5"/>
+    <rect x="136" y="136" width="80" height="80" rx="12" fill="#398d99"/>
+  </g>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <text x="142" y="104" fill="#f0f1f3" font-size="40" font-weight="700" letter-spacing="-2">tt-pane</text>
+    <text x="68" y="185" fill="#64e4bd" font-size="13" font-weight="700" letter-spacing="3">YOUR DESKTOP, IN POSITION</text>
+    <text x="64" y="279" fill="#f0f1f3" font-size="76" font-weight="650" letter-spacing="-4">Make room</text>
+    <text x="64" y="370" fill="#f0f1f3" font-size="76" font-weight="650" letter-spacing="-4">for <tspan fill="#64e4bd" font-family="Georgia, serif" font-style="italic" font-weight="400">your flow.</tspan></text>
+    <text x="68" y="430" fill="#adb3bf" font-size="23">Snap, grow, and fine-tune your workspace.</text>
+    <text x="68" y="465" fill="#adb3bf" font-size="23">All from your keyboard.</text>
+    <text x="68" y="561" fill="#adb3bf" font-size="16" letter-spacing="1">WINDOWS / macOS / LINUX</text>
+  </g>
+  <!-- Dashed destinations remain visible around the incoming windows. -->
+  <g fill="none" stroke-width="2" stroke-dasharray="7 6" opacity=".65">
+    <rect x="716" y="208" width="178" height="270" rx="9" stroke="#69bfa8"/>
+    <rect x="906" y="208" width="200" height="126" rx="9" stroke="#78a9d5"/>
+    <rect x="906" y="346" width="200" height="132" rx="9" stroke="#b49aca"/>
+  </g>
+  <g transform="translate(690 173) rotate(-7 80 125)">
+    <rect width="166" height="250" rx="9" fill="#1c3330" stroke="#69bfa8" stroke-width="2"/>
+    <path d="M0 29H166" stroke="#69bfa8" opacity=".5"/>
+    <g fill="#69bfa8"><circle cx="14" cy="15" r="2.5"/><circle cx="23" cy="15" r="2.5"/><circle cx="32" cy="15" r="2.5"/></g>
+    <path d="M18 53H117 M18 67H141 M18 81H95" stroke="#69bfa8" stroke-width="4" opacity=".45"/>
+    <rect x="18" y="110" width="130" height="119" rx="4" fill="#69bfa8" opacity=".08"/>
+  </g>
+  <g transform="translate(942 150) rotate(6 90 60)">
+    <rect width="186" height="116" rx="9" fill="#233141" stroke="#78a9d5" stroke-width="2"/>
+    <path d="M0 29H186" stroke="#78a9d5" opacity=".5"/>
+    <g fill="#78a9d5"><circle cx="14" cy="15" r="2.5"/><circle cx="23" cy="15" r="2.5"/><circle cx="32" cy="15" r="2.5"/></g>
+    <path d="M18 53H129 M18 67H155 M18 81H88" stroke="#78a9d5" stroke-width="4" opacity=".45"/>
+  </g>
+  <g transform="translate(906 346)">
+    <rect width="200" height="132" rx="9" fill="#302a3d" stroke="#b49aca" stroke-width="2"/>
+    <path d="M0 29H200" stroke="#b49aca" opacity=".5"/>
+    <g fill="#b49aca"><circle cx="14" cy="15" r="2.5"/><circle cx="23" cy="15" r="2.5"/><circle cx="32" cy="15" r="2.5"/></g>
+    <path d="M18 53H129 M18 67H163 M18 81H88" stroke="#b49aca" stroke-width="4" opacity=".45"/>
+  </g>
+  <rect x="64" y="598" width="1072" height="2" fill="#343943"/>
+</svg>
