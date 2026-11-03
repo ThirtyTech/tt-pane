@@ -95,9 +95,19 @@ Repeated presses keep resizing, with no reset cycle. Expansion stops at the avai
 
 In Position preview, hover a placement first, then Shrink width or Expand width to see how the width changes for that placement. The preview uses the configured width percentage.
 
-### Resize neighboring windows vertically (Windows)
+### Centered window groups (Windows)
 
-**Ctrl+Alt+H/J/K/L** switches focus left/down/up/right on Windows without moving or resizing windows. Each press selects the nearest window by center distance within a 90-degree cone in that direction, including windows on other monitors. For example, moving right from bottom-left visits a nearby center window before the far-right window. Equal-distance ties prefer the topmost window. Hidden, minimized, cloaked (such as windows on other virtual desktops), and utility/no-activate windows are skipped. By default, at least **50% of the window's full frame area** must be on-screen and uncovered by windows above it. Exactly 50% qualifies. Overlapping covering windows count only once; off-screen portions and gaps between monitors do not count as visible. This uses rectangular window frames (transparency and shaped-window holes are not modeled).
+Use **Ctrl+Alt+3** on two or more windows on the same monitor to form a centered group. The focused member occupies its saved centered position. Background members keep their sizes and shift left or right by **25% of the focused window's width**, and down by **25% of its height**. Offsets stop at the work-area edges. Windows remain flat, with no rotation.
+
+**Ctrl+Alt+H/L** cycles backward/forward through the group in the order windows joined, wrapping at either end. With three members, one sits behind each side of the focused window; larger groups share the side positions. Group members remain reachable even when less than 50% visible. **J/K** retains ordinary spatial navigation. Clicking or Alt+Tabbing to a member also brings it to the center while the tray app is running.
+
+Only the Center action enrolls windows; manually placing a window in the middle does not. Manually moving/resizing a member, using another placement or width adjustment, changing its monitor/work area, minimizing, maximizing, closing, or hiding it removes it from the group. Use Center again to rejoin. Repeated Center presses still grow the focused window and update its saved size. Each monitor has its own group.
+
+CLI `apply center` and focus commands share the group state with the tray. Continuous mouse/Alt+Tab observation requires the tray app; standalone CLI processes only update groups when commands run.
+
+### Directional focus (Windows)
+
+Outside centered-group H/L navigation, **Ctrl+Alt+H/J/K/L** switches focus left/down/up/right to the nearest window by center distance within a 90-degree cone, including windows on other monitors. Ungrouped windows keep their positions; a grouped destination moves to its saved center. For example, moving right from bottom-left visits a nearby center window before the far-right window. Equal-distance ties prefer the topmost window. Hidden, minimized, cloaked (such as windows on other virtual desktops), and utility/no-activate windows are skipped. By default, at least **50% of the window's full frame area** must be on-screen and uncovered by windows above it. Exactly 50% qualifies. Overlapping covering windows count only once; off-screen portions and gaps between monitors do not count as visible. This uses rectangular window frames (transparency and shaped-window holes are not modeled).
 
 In **Settings → Window focus**, turn **Include obscured windows** on and save to also navigate to covered or off-screen windows. The toggle defaults to Off, including for existing configurations. Minimized, hidden, cloaked, and utility/no-activate windows remain excluded in either mode. The same setting applies to CLI focus actions:
 
@@ -106,7 +116,7 @@ In **Settings → Window focus**, turn **Include obscured windows** on and save 
 include_obscured = false
 ```
 
-Focus stays put when there is no candidate; there is no wraparound. Saved growth and gap state is preserved.
+Spatial focus stays put when there is no candidate; only centered-group H/L navigation wraps. Saved growth and gap state is preserved.
 
 The focus actions are editable in Settings and available as `tt-pane apply focus-left`, `focus-down`, `focus-up`, and `focus-right` (also with `--window HWND --json`). Existing configurations gain missing focus bindings on load; custom or explicitly disabled focus bindings remain unchanged. If a default key is already assigned to another action, the new focus action stays unbound so you can choose a key in Settings. Other platforms report that directional focus is currently Windows-only.
 

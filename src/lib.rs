@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+#[cfg(windows)]
+pub mod centered;
 pub mod config;
 pub mod positioning;
 pub use tt_pane_platform as platform;

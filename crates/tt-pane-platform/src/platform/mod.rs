@@ -89,6 +89,10 @@ pub fn description() -> &'static str {
 pub use windows::attach_parent_console;
 #[cfg(all(windows, feature = "window-icon"))]
 pub use windows::set_window_icon;
+#[cfg(windows)]
+pub use windows::{
+    WindowSnapshot, focus_snapshot, foreground_handle, move_snapshot, window_snapshot,
+};
 
 /// Move the shared boundary of a window and its vertical neighbor.
 pub fn resize_pair(handle: Option<u64>, up: bool) -> Result<()> {

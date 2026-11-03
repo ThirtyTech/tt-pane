@@ -427,7 +427,7 @@ impl Render for Settings {
                     .child(div().text_sm().child(selected.label()))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Hover a keybinding to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."))
                     .when(selected.adjusts_pair(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Move the shared boundary by 25% of the selected window's current height, with a 50/50 stop when returning toward the middle. Blue shows the neighbor. Windows only; matching left and right edges required.")))
-                    .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Focus the nearest window in this direction without moving or resizing it. H: left, J: down, K: up, L: right. Windows only; stops at the edge.")))
+                    .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("H: left, J: down, K: up, L: right. Centered groups cycle with H/L and bring the focused window forward; other windows use spatial focus. Windows only.")))
                     .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+Shift+8 (*).")))
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Window focus"))
@@ -624,6 +624,8 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             settings.update(cx, |this, cx| this.message(format!("{e:#}"), true, cx));
         }
         cx.spawn(async move |cx| {
+            #[cfg(windows)]
+            let mut group_observed = std::time::Instant::now();
             loop {
                 smol::Timer::after(Duration::from_millis(16)).await;
                 if cx
@@ -642,6 +644,13 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                             }
                         }
                         settings.update(cx, |this, cx| {
+                            #[cfg(windows)]
+                            if group_observed.elapsed() >= Duration::from_millis(100) {
+                                group_observed = std::time::Instant::now();
+                                if let Err(e) = crate::centered::observe(&this.path) {
+                                    this.message(format!("{e:#}"), true, cx);
+                                }
+                            }
                             while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
                                 if event.state != HotKeyState::Pressed || this.recording.is_some() {
                                     continue;

@@ -199,7 +199,7 @@ impl Cycle {
 }
 
 // Fractional scaling and decoration rounding can differ by a pixel across reads.
-fn near(a: Rect, b: Rect) -> bool {
+pub(crate) fn near(a: Rect, b: Rect) -> bool {
     [
         a.x.abs_diff(b.x),
         a.y.abs_diff(b.y),
@@ -210,7 +210,7 @@ fn near(a: Rect, b: Rect) -> bool {
     .all(|difference| difference <= 2)
 }
 
-fn sidecar(config: &Path, suffix: &str) -> PathBuf {
+pub(crate) fn sidecar(config: &Path, suffix: &str) -> PathBuf {
     let mut name = config.as_os_str().to_owned();
     name.push(suffix);
     PathBuf::from(name)
@@ -220,6 +220,7 @@ fn sidecar(config: &Path, suffix: &str) -> PathBuf {
 /// Only successful native requests advance the persisted cycle. Cache loss resets it.
 pub fn apply(config: &Config, path: &Path, action: Action, window: Option<u64>) -> Result<()> {
     config.validate()?;
+    #[cfg(not(windows))]
     if action.focuses() {
         return platform::focus_window_with_visibility(
             window,
@@ -229,6 +230,14 @@ pub fn apply(config: &Config, path: &Path, action: Action, window: Option<u64>) 
     }
     // Resolve symlinks when the config exists so aliases share one cycle.
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    #[cfg(windows)]
+    if action.focuses() && !sidecar(&path, ".centered.json").exists() {
+        return platform::focus_window_with_visibility(
+            window,
+            action,
+            config.focus.include_obscured,
+        );
+    }
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -242,9 +251,40 @@ pub fn apply(config: &Config, path: &Path, action: Action, window: Option<u64>) 
         .open(sidecar(&path, ".cycle.lock"))
         .context("Open positioning cycle lock")?;
     lock.lock().context("Lock positioning cycle")?;
+    #[cfg(windows)]
+    let mut group = crate::centered::Group::load(&path)?;
+    #[cfg(windows)]
+    let group_before = group.clone();
+    #[cfg(windows)]
+    group.prune();
+    #[cfg(windows)]
+    if action.focuses() {
+        let result = (|| -> Result<()> {
+            if !group.focus(window, action)? {
+                platform::focus_window_with_visibility(
+                    window,
+                    action,
+                    config.focus.include_obscured,
+                )?;
+                group.refresh()?;
+            }
+            Ok(())
+        })();
+        if group != group_before {
+            group.save(&path)?;
+        }
+        return result;
+    }
     let state_path = sidecar(&path, ".cycle.json");
     if action.adjusts_pair() {
         platform::resize_pair(window, action == Action::ResizeUp)?;
+        #[cfg(windows)]
+        {
+            group.prune();
+            if group != group_before {
+                group.save(&path)?;
+            }
+        }
         // Both windows changed. Discard stale growth baselines and saved gaps.
         match std::fs::remove_file(&state_path) {
             Ok(()) => {}
@@ -286,6 +326,23 @@ pub fn apply(config: &Config, path: &Path, action: Action, window: Option<u64>) 
         file.persist(&state_path)
             .map_err(|e| e.error)
             .context("Save positioning cycle")?;
+        #[cfg(windows)]
+        {
+            let result = if action == Action::Center {
+                group.register(&cycle.window, actual);
+                match cycle.window.rsplit(':').next().and_then(|s| s.parse().ok()) {
+                    Some(handle) => group.arrange(handle),
+                    None => Ok(()),
+                }
+            } else {
+                group.remove(&cycle.window);
+                group.refresh()
+            };
+            if group != group_before {
+                group.save(&path)?;
+            }
+            result?;
+        }
     }
     Ok(())
 }

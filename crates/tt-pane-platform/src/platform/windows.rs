@@ -12,6 +12,103 @@ use windows::Win32::{
     },
 };
 
+/// A restored application window, identified by both process and native handle.
+#[derive(Debug, Clone)]
+pub struct WindowSnapshot {
+    pub handle: u64,
+    pub id: String,
+    pub area: Rect,
+    pub bounds: Rect,
+}
+
+pub fn foreground_handle() -> Option<u64> {
+    // SAFETY: GetForegroundWindow returns an opaque handle and accepts no pointers.
+    let window = unsafe { GetForegroundWindow() };
+    (!window.is_invalid()).then_some(window.0 as usize as u64)
+}
+
+/// Read without restoring, activating, or repositioning a window. Unavailable
+/// windows are deliberately excluded so group updates cannot resurrect them.
+pub fn window_snapshot(handle: u64) -> Result<Option<WindowSnapshot>> {
+    let window = HWND(usize::try_from(handle)? as *mut _);
+    let _dpi = DpiContext::enter();
+    // SAFETY: Win32 validates the opaque handle; all output buffers are initialized
+    // and correctly sized, and no pointers escape these synchronous calls.
+    unsafe {
+        if !IsWindow(Some(window)).as_bool()
+            || !IsWindowVisible(window).as_bool()
+            || IsIconic(window).as_bool()
+            || IsZoomed(window).as_bool()
+            || window == GetDesktopWindow()
+            || window == GetShellWindow()
+            || (GetWindowLongPtrW(window, GWL_EXSTYLE) as u32
+                & (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0))
+                != 0
+        {
+            return Ok(None);
+        }
+        let mut cloaked = 0u32;
+        DwmGetWindowAttribute(
+            window,
+            windows::Win32::Graphics::Dwm::DWMWA_CLOAKED,
+            &mut cloaked as *mut _ as *mut _,
+            std::mem::size_of::<u32>() as u32,
+        )?;
+        if cloaked != 0 {
+            return Ok(None);
+        }
+        let monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        ensure!(
+            GetMonitorInfoW(monitor, &mut info).as_bool(),
+            "Could not read monitor work area"
+        );
+        let mut pid = 0;
+        GetWindowThreadProcessId(window, Some(&mut pid));
+        Ok(Some(WindowSnapshot {
+            handle,
+            id: format!("win32:{pid}:{}", window.0 as usize),
+            area: from_rect(info.rcWork),
+            bounds: from_rect(read_bounds(window)?.1),
+        }))
+    }
+}
+
+/// Revalidate immediately before a group move. Never restore an unavailable window
+/// or overwrite a manual move since the coordinator's last observation.
+pub fn move_snapshot(expected: &WindowSnapshot, target: Rect) -> Result<Rect> {
+    let live = window_snapshot(expected.handle)?
+        .ok_or_else(|| anyhow::anyhow!("Window is no longer available"))?;
+    ensure!(
+        live.id == expected.id && live.area == expected.area && live.bounds == expected.bounds,
+        "Window changed before the group move"
+    );
+    apply(Some(expected.handle), &mut |id, area, bounds| {
+        ensure!(
+            id == expected.id && area == expected.area && bounds == expected.bounds,
+            "Window changed during the group move"
+        );
+        Ok(target)
+    })
+}
+
+pub fn focus_snapshot(expected: &WindowSnapshot) -> Result<()> {
+    let live = window_snapshot(expected.handle)?
+        .ok_or_else(|| anyhow::anyhow!("Window is no longer available"))?;
+    ensure!(
+        live.id == expected.id && live.area == expected.area && live.bounds == expected.bounds,
+        "Window changed before focus"
+    );
+    let window = HWND(usize::try_from(expected.handle)? as *mut _);
+    // SAFETY: The opaque HWND was just validated; this call retains no Rust data.
+    let focused = unsafe { SetForegroundWindow(window) }.as_bool();
+    ensure!(focused, "Windows refused to focus the grouped window");
+    Ok(())
+}
+
 pub fn apply(
     handle: Option<u64>,
     resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>,

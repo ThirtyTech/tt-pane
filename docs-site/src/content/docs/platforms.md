@@ -12,7 +12,7 @@ description: Platform support, permissions, Wayland integration, and common shor
 | Hyprland | Native IPC; selected window becomes floating | Exported compositor bindings |
 | Other Wayland compositors | Not implemented | Not implemented |
 
-Directional focus and shared-boundary resizing are **Windows-only**. Platform backends compile, but macOS and Linux runtime behavior still needs physical-desktop validation; compilation is not a substitute for that testing.
+Centered window groups, directional focus, and shared-boundary resizing are **Windows-only**. Platform backends compile, but macOS and Linux runtime behavior still needs physical-desktop validation; compilation is not a substitute for that testing.
 
 ## Windows
 
