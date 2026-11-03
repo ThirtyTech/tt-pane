@@ -111,6 +111,13 @@ pub fn focus_window(handle: Option<u64>, action: Action) -> Result<()> {
     focus_window_with_visibility(handle, action, false)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusVisibility {
+    MoreThanPercent(u32),
+    AtLeastHalf,
+    IncludeHidden,
+}
+
 /// Edge-snapped windows qualify regardless of occlusion. Floating middle windows
 /// require at least 50% visible area unless include_obscured is enabled.
 pub fn focus_window_with_visibility(
@@ -129,23 +136,38 @@ pub fn focus_window_outside_group(
     include_obscured: bool,
     group: &[u64],
 ) -> Result<()> {
-    focus_window_filtered(handle, action, include_obscured, group, false)
+    let visibility = if include_obscured {
+        FocusVisibility::IncludeHidden
+    } else {
+        FocusVisibility::AtLeastHalf
+    };
+    focus_window_filtered(handle, action, visibility, group)
 }
 
-/// Restrict hold navigation to snapped windows, skipping centered members.
+/// Filter middle windows by visible area; edge snaps remain reachable.
 pub fn focus_window_filtered(
     handle: Option<u64>,
     action: Action,
-    include_obscured: bool,
+    visibility: FocusVisibility,
     group: &[u64],
-    snapped_only: bool,
 ) -> Result<()> {
     anyhow::ensure!(action.focuses(), "Expected a directional focus action");
     #[cfg(target_os = "windows")]
-    return windows::focus_window(handle, action, include_obscured, group, snapped_only);
+    return windows::focus_window(handle, action, visibility, group);
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (handle, action, include_obscured, group, snapped_only);
+        let _ = (handle, action, visibility, group);
+        anyhow::bail!("Directional window focus currently supports Windows only")
+    }
+}
+
+/// Eligible destinations in live Z-order, also used for centered-group traversal.
+pub fn focus_eligible_handles(handle: u64, visibility: FocusVisibility) -> Result<Vec<u64>> {
+    #[cfg(windows)]
+    return windows::focus_eligible_handles(handle, visibility);
+    #[cfg(not(windows))]
+    {
+        let _ = (handle, visibility);
         anyhow::bail!("Directional window focus currently supports Windows only")
     }
 }

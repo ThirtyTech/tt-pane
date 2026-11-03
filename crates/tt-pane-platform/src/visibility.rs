@@ -1,5 +1,5 @@
 //! Rectangle-based occlusion in desktop coordinates, independent of native APIs.
-use crate::geometry::Rect;
+use crate::{FocusVisibility, geometry::Rect};
 
 #[derive(Clone, Copy)]
 struct Bounds {
@@ -74,13 +74,17 @@ pub(crate) fn focus_eligible(
     work_area: Option<Rect>,
     screens: &[Rect],
     above: &[Rect],
-    include_obscured: bool,
+    visibility: FocusVisibility,
 ) -> bool {
     focus_visible(
         window,
         screens,
         above,
-        include_obscured || is_snapped(window, work_area),
+        if is_snapped(window, work_area) {
+            FocusVisibility::IncludeHidden
+        } else {
+            visibility
+        },
     )
 }
 
@@ -107,11 +111,16 @@ pub(crate) fn is_snapped(window: Rect, work_area: Option<Rect>) -> bool {
     })
 }
 
-fn focus_visible(window: Rect, screens: &[Rect], above: &[Rect], include_obscured: bool) -> bool {
+fn focus_visible(
+    window: Rect,
+    screens: &[Rect],
+    above: &[Rect],
+    visibility: FocusVisibility,
+) -> bool {
     if window.width <= 0 || window.height <= 0 {
         return false;
     }
-    if include_obscured {
+    if visibility == FocusVisibility::IncludeHidden {
         return true;
     }
     let window = Bounds::from_rect(window);
@@ -137,7 +146,14 @@ fn focus_visible(window: Rect, screens: &[Rect], above: &[Rect], include_obscure
         }
         visible = remaining;
     }
-    visible.iter().map(|r| r.area()).sum::<i128>() * 2 >= window.area()
+    let visible_area = visible.iter().map(|r| r.area()).sum::<i128>();
+    match visibility {
+        FocusVisibility::MoreThanPercent(percent) => {
+            visible_area * 100 > window.area() * i128::from(percent)
+        }
+        FocusVisibility::AtLeastHalf => visible_area * 2 >= window.area(),
+        FocusVisibility::IncludeHidden => true,
+    }
 }
 
 #[cfg(test)]
@@ -159,33 +175,77 @@ mod tests {
     };
 
     #[test]
-    fn hold_targets_skip_visible_middle_windows_in_both_directions() {
+    fn taps_use_configured_threshold_and_holds_reach_covered_middle_windows() {
         use crate::geometry::{Action, focus_neighbor};
-        let area = Rect {
-            x: -1600,
-            y: 40,
-            width: 1600,
-            height: 1000,
-        };
+        let area = r(0, 0, 1000, 1000);
+        let middle = Action::Center.target(area, area);
         let left = Action::Left.target(area, area);
         let right = Action::Right.target(area, area);
-        let middle = Action::Center.target(area, area);
-        for (source, direction, destination) in [
-            (left, Action::FocusRight, right),
-            (right, Action::FocusLeft, left),
-        ] {
-            let candidates = [middle, destination];
-            assert_eq!(focus_neighbor(source, &candidates, direction), Some(0));
-            let snaps: Vec<_> = candidates
-                .into_iter()
-                .filter(|r| is_snapped(*r, Some(area)))
-                .collect();
-            assert_eq!(snaps, vec![destination]);
-            assert_eq!(focus_neighbor(source, &snaps, direction), Some(0));
+        for percent in [0, 10, 25, 50, 99] {
+            // At the boundary the middle window is excluded; one pixel more qualifies.
+            for visible_width in [
+                middle.width * percent as i32 / 100,
+                middle.width * percent as i32 / 100 + 1,
+            ] {
+                let cover = r(
+                    middle.x + visible_width,
+                    middle.y,
+                    middle.width - visible_width,
+                    middle.height,
+                );
+                let eligible = focus_eligible(
+                    middle,
+                    Some(area),
+                    &[area],
+                    &[cover],
+                    FocusVisibility::MoreThanPercent(percent),
+                );
+                assert_eq!(
+                    eligible,
+                    visible_width * 100 > middle.width * percent as i32
+                );
+                for (source, action, edge) in [
+                    (left, Action::FocusRight, right),
+                    (right, Action::FocusLeft, left),
+                ] {
+                    let candidates: Vec<_> = [middle, edge]
+                        .into_iter()
+                        .filter(|rect| {
+                            focus_eligible(
+                                *rect,
+                                Some(area),
+                                &[area],
+                                &[cover],
+                                FocusVisibility::MoreThanPercent(percent),
+                            )
+                        })
+                        .collect();
+                    let target = candidates[focus_neighbor(source, &candidates, action).unwrap()];
+                    assert_eq!(target, if eligible { middle } else { edge });
+                }
+            }
+            assert!(!focus_eligible(
+                middle,
+                Some(area),
+                &[area],
+                &[area],
+                FocusVisibility::MoreThanPercent(percent)
+            ));
+            assert!(focus_eligible(
+                middle,
+                Some(area),
+                &[area],
+                &[area],
+                FocusVisibility::IncludeHidden
+            ));
         }
-        assert!(!is_snapped(middle, Some(area)));
-        assert!(!is_snapped(left, None));
-        assert_eq!(focus_neighbor(right, &[left], Action::FocusRight), None);
+        assert!(!focus_eligible(
+            middle,
+            Some(area),
+            &[],
+            &[],
+            FocusVisibility::MoreThanPercent(10)
+        ));
     }
 
     #[test]
@@ -195,7 +255,13 @@ mod tests {
         for action in Action::POSITIONS {
             let window = action.target(area, area);
             assert_eq!(
-                focus_eligible(window, Some(area), &[area], &[area], false),
+                focus_eligible(
+                    window,
+                    Some(area),
+                    &[area],
+                    &[area],
+                    FocusVisibility::AtLeastHalf
+                ),
                 action != Action::Center,
                 "{action:?}"
             );
@@ -206,23 +272,35 @@ mod tests {
             Some(area),
             &[area],
             &[r(middle.x, middle.y, middle.width / 2, middle.height)],
-            false
+            FocusVisibility::AtLeastHalf
         ));
         assert!(!focus_eligible(
             middle,
             Some(area),
             &[area],
             &[r(middle.x, middle.y, middle.width / 2 + 1, middle.height)],
-            false
+            FocusVisibility::AtLeastHalf
         ));
-        assert!(focus_eligible(middle, Some(area), &[area], &[area], true));
+        assert!(focus_eligible(
+            middle,
+            Some(area),
+            &[area],
+            &[area],
+            FocusVisibility::IncludeHidden
+        ));
     }
 
     #[test]
     fn resized_edge_tiles_qualify_until_moved_into_the_middle() {
         let area = r(-1600, 40, 1600, 1000);
         let edge = r(-1600, 140, 333, 400);
-        assert!(focus_eligible(edge, Some(area), &[area], &[area], false));
+        assert!(focus_eligible(
+            edge,
+            Some(area),
+            &[area],
+            &[area],
+            FocusVisibility::AtLeastHalf
+        ));
         assert!(focus_eligible(
             Rect {
                 x: edge.x + 2,
@@ -231,7 +309,7 @@ mod tests {
             Some(area),
             &[area],
             &[area],
-            false
+            FocusVisibility::AtLeastHalf
         ));
         assert!(!focus_eligible(
             Rect {
@@ -241,7 +319,7 @@ mod tests {
             Some(area),
             &[area],
             &[area],
-            false
+            FocusVisibility::AtLeastHalf
         ));
         assert!(!focus_eligible(
             Rect {
@@ -251,15 +329,21 @@ mod tests {
             Some(area),
             &[area],
             &[area],
-            false
+            FocusVisibility::AtLeastHalf
         ));
-        assert!(!focus_eligible(edge, None, &[area], &[area], false));
+        assert!(!focus_eligible(
+            edge,
+            None,
+            &[area],
+            &[area],
+            FocusVisibility::AtLeastHalf
+        ));
         assert!(!focus_eligible(
             Rect { width: 0, ..edge },
             Some(area),
             &[area],
             &[],
-            false
+            FocusVisibility::AtLeastHalf
         ));
     }
 
@@ -267,7 +351,12 @@ mod tests {
     fn exact_half_is_included_but_less_is_not() {
         for (covered, expected) in [(0, true), (49, true), (50, true), (51, false), (100, false)] {
             assert_eq!(
-                focus_visible(WINDOW, &[WINDOW], &[r(0, 0, covered, 100)], false),
+                focus_visible(
+                    WINDOW,
+                    &[WINDOW],
+                    &[r(0, 0, covered, 100)],
+                    FocusVisibility::AtLeastHalf
+                ),
                 expected
             );
         }
@@ -276,38 +365,73 @@ mod tests {
     #[test]
     fn overlapping_covers_are_not_counted_twice() {
         let covers = [r(0, 0, 30, 100), r(20, 0, 30, 100)];
-        assert!(focus_visible(WINDOW, &[WINDOW], &covers, false));
+        assert!(focus_visible(
+            WINDOW,
+            &[WINDOW],
+            &covers,
+            FocusVisibility::AtLeastHalf
+        ));
         assert!(!focus_visible(
             WINDOW,
             &[WINDOW],
             &[covers[0], r(30, 0, 21, 100)],
-            false
+            FocusVisibility::AtLeastHalf
         ));
     }
 
     #[test]
     fn offscreen_area_and_monitor_gaps_are_not_visible() {
-        assert!(focus_visible(WINDOW, &[r(0, 0, 50, 100)], &[], false));
-        assert!(!focus_visible(WINDOW, &[r(0, 0, 49, 100)], &[], false));
+        assert!(focus_visible(
+            WINDOW,
+            &[r(0, 0, 50, 100)],
+            &[],
+            FocusVisibility::AtLeastHalf
+        ));
+        assert!(!focus_visible(
+            WINDOW,
+            &[r(0, 0, 49, 100)],
+            &[],
+            FocusVisibility::AtLeastHalf
+        ));
         assert!(!focus_visible(
             WINDOW,
             &[r(0, 0, 25, 100), r(75, 0, 25, 100)],
             &[r(0, 0, 1, 100)],
-            false
+            FocusVisibility::AtLeastHalf
         ));
-        assert!(!focus_visible(WINDOW, &[r(0, 0, 40, 100); 2], &[], false));
+        assert!(!focus_visible(
+            WINDOW,
+            &[r(0, 0, 40, 100); 2],
+            &[],
+            FocusVisibility::AtLeastHalf
+        ));
         assert!(focus_visible(
             r(-100, -100, 200, 100),
             &[r(-100, -100, 100, 100), r(0, -100, 100, 100)],
             &[],
-            false
+            FocusVisibility::AtLeastHalf
         ));
     }
 
     #[test]
     fn toggle_bypasses_occlusion_and_offscreen_filter() {
-        assert!(focus_visible(WINDOW, &[WINDOW], &[WINDOW], true));
-        assert!(focus_visible(WINDOW, &[], &[], true));
-        assert!(!focus_visible(r(0, 0, 0, 100), &[WINDOW], &[], true));
+        assert!(focus_visible(
+            WINDOW,
+            &[WINDOW],
+            &[WINDOW],
+            FocusVisibility::IncludeHidden
+        ));
+        assert!(focus_visible(
+            WINDOW,
+            &[],
+            &[],
+            FocusVisibility::IncludeHidden
+        ));
+        assert!(!focus_visible(
+            r(0, 0, 0, 100),
+            &[WINDOW],
+            &[],
+            FocusVisibility::IncludeHidden
+        ));
     }
 }

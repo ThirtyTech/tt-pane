@@ -487,13 +487,11 @@ pub fn set_window_icon(window: &impl raw_window_handle::HasWindowHandle) -> anyh
 }
 
 /// Enumerate in Z-order, excluding hidden/minimized/cloaked and utility windows.
-pub fn focus_window(
+fn focus_candidates(
     handle: Option<u64>,
-    action: crate::geometry::Action,
-    include_obscured: bool,
+    visibility: super::FocusVisibility,
     group: &[u64],
-    snapped_only: bool,
-) -> Result<()> {
+) -> Result<(Rect, Vec<HWND>, Vec<Rect>)> {
     use windows::Win32::Foundation::LPARAM;
     use windows::core::BOOL;
     unsafe extern "system" fn collect(window: HWND, data: LPARAM) -> BOOL {
@@ -538,7 +536,7 @@ pub fn focus_window(
         let mut windows = Vec::<HWND>::new();
         EnumWindows(Some(collect), LPARAM(&mut windows as *mut _ as isize))?;
         let mut screens = Vec::<Rect>::new();
-        if !include_obscured {
+        if visibility != super::FocusVisibility::IncludeHidden {
             ensure!(
                 windows::Win32::Graphics::Gdi::EnumDisplayMonitors(
                     None,
@@ -579,7 +577,7 @@ pub fn focus_window(
             };
             let rect = from_rect(rect);
             let selectable = window != selected
-                && ((!snapped_only && group.is_empty())
+                && ((group.is_empty())
                     || (!group.contains(&(window.0 as usize as u64))
                         && MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST)
                             == MonitorFromWindow(selected, MONITOR_DEFAULTTONEAREST)))
@@ -591,7 +589,7 @@ pub fn focus_window(
                 ..Default::default()
             };
             let work_area = (selectable
-                && (snapped_only || !include_obscured)
+                && visibility != super::FocusVisibility::IncludeHidden
                 && GetMonitorInfoW(
                     MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST),
                     &mut info,
@@ -599,34 +597,45 @@ pub fn focus_window(
                 .as_bool())
             .then(|| from_rect(info.rcWork));
             if selectable
-                && (!snapped_only || crate::visibility::is_snapped(rect, work_area))
-                && crate::visibility::focus_eligible(
-                    rect,
-                    work_area,
-                    &screens,
-                    &above,
-                    include_obscured,
-                )
+                && crate::visibility::focus_eligible(rect, work_area, &screens, &above, visibility)
             {
                 candidates.push(window);
                 bounds.push(rect);
             }
             // Even the selected window, utilities, and rejected candidates cover
             // windows beneath them. EnumWindows visits topmost windows first.
-            if !include_obscured {
+            if visibility != super::FocusVisibility::IncludeHidden {
                 above.push(rect);
             }
         }
-        let neighbor = if group.is_empty() {
-            crate::geometry::focus_neighbor(current, &bounds, action)
-        } else {
-            crate::geometry::focus_group_exit(current, &bounds, action)
-        };
-        if let Some(index) = neighbor {
-            activate_window(candidates[index])?;
-        }
-        Ok(())
+        Ok((current, candidates, bounds))
     }
+}
+
+pub fn focus_eligible_handles(handle: u64, visibility: super::FocusVisibility) -> Result<Vec<u64>> {
+    let (_, candidates, _) = focus_candidates(Some(handle), visibility, &[])?;
+    Ok(candidates
+        .into_iter()
+        .map(|window| window.0 as usize as u64)
+        .collect())
+}
+
+pub fn focus_window(
+    handle: Option<u64>,
+    action: crate::geometry::Action,
+    visibility: super::FocusVisibility,
+    group: &[u64],
+) -> Result<()> {
+    let (current, candidates, bounds) = focus_candidates(handle, visibility, group)?;
+    let neighbor = if group.is_empty() {
+        crate::geometry::focus_neighbor(current, &bounds, action)
+    } else {
+        crate::geometry::focus_group_exit(current, &bounds, action)
+    };
+    if let Some(index) = neighbor {
+        activate_window(candidates[index])?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -42,17 +42,43 @@ pub struct WidthResize {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(from = "FocusInput")]
 pub struct Focus {
-    pub include_obscured: bool,
+    pub minimum_visible_percent: u32,
     pub glow_enabled: bool,
     pub glow_color: String,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+struct FocusInput {
+    minimum_visible_percent: Option<u32>,
+    include_obscured: Option<bool>,
+    glow_enabled: Option<bool>,
+    glow_color: Option<String>,
+}
+
+impl From<FocusInput> for Focus {
+    fn from(input: FocusInput) -> Self {
+        let defaults = Self::default();
+        Self {
+            minimum_visible_percent: input.minimum_visible_percent.unwrap_or_else(|| {
+                if input.include_obscured == Some(false) {
+                    50
+                } else {
+                    10
+                }
+            }),
+            glow_enabled: input.glow_enabled.unwrap_or(defaults.glow_enabled),
+            glow_color: input.glow_color.unwrap_or(defaults.glow_color),
+        }
+    }
 }
 
 impl Default for Focus {
     fn default() -> Self {
         Self {
-            include_obscured: false,
+            minimum_visible_percent: 10,
             glow_enabled: true,
             glow_color: "#F2F0E8".into(),
         }
@@ -183,6 +209,10 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.focus.minimum_visible_percent <= 99,
+            "Focus visibility percentage must be between 0 and 99"
+        );
         ensure!(
             self.focus.glow_rgb().is_some(),
             "Focus glow color must be #RRGGBB"
@@ -476,17 +506,41 @@ mod focus_visibility_tests {
         }
     }
     #[test]
-    fn visibility_defaults_off_and_roundtrips_both_values() {
+    fn visibility_percentage_defaults_migrates_validates_and_roundtrips() {
         let old: Config = toml::from_str("version = 1\nbindings = []").unwrap();
-        assert!(!old.focus.include_obscured);
-        assert!(!Config::default().focus.include_obscured);
+        assert_eq!(old.focus.minimum_visible_percent, 10);
+        assert_eq!(Config::default().focus.minimum_visible_percent, 10);
+        for (settings, expected) in [
+            ("glow_enabled = false", 10),
+            ("include_obscured = true", 10),
+            ("include_obscured = false", 50),
+            ("include_obscured = false\nminimum_visible_percent = 25", 25),
+        ] {
+            let config: Config =
+                toml::from_str(&format!("version = 1\nbindings = []\n[focus]\n{settings}"))
+                    .unwrap();
+            assert_eq!(config.focus.minimum_visible_percent, expected);
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        for value in [true, false] {
+        for value in [0, 10, 25, 50, 99] {
             let mut config = old.clone();
-            config.focus.include_obscured = value;
+            config.focus.minimum_visible_percent = value;
             config.save(&path).unwrap();
-            assert_eq!(Config::load(&path).unwrap().focus.include_obscured, value);
+            assert_eq!(
+                Config::load(&path).unwrap().focus.minimum_visible_percent,
+                value
+            );
+            assert!(
+                !std::fs::read_to_string(&path)
+                    .unwrap()
+                    .contains("include_obscured")
+            );
+        }
+        for value in [100, u32::MAX] {
+            let mut config = old.clone();
+            config.focus.minimum_visible_percent = value;
+            assert!(config.validate().is_err());
         }
     }
 }

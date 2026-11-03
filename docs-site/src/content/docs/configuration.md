@@ -34,7 +34,7 @@ steps = 2
 percent = 25
 
 [focus]
-include_obscured = false
+minimum_visible_percent = 10
 glow_enabled = true
 glow_color = "#F2F0E8"
 
@@ -46,6 +46,10 @@ shortcut = "Ctrl+Alt+1"
 action = "right"
 shortcut = "Ctrl+Alt+2"
 ```
+
+**Settings → Advanced** starts collapsed and contains the visibility percentage, width adjustment, and repeat-growth controls. **Minimum middle-window visibility** defaults to 10% and accepts 0–99%. Regular focus presses and CLI focus require strictly more than this percentage of a middle window's full frame to be on-screen and uncovered. Centered-group traversal uses the same threshold. Long H/L presses bypass it to reach covered windows. Edge-snapped windows remain reachable regardless of coverage.
+
+Old `include_obscured = false` settings migrate to 50%, and `true` or an omitted value migrates to 10%. An explicit `minimum_visible_percent` wins if both keys exist. Saving writes only the new percentage key.
 
 ## Command line
 

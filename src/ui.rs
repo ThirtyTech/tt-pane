@@ -137,6 +137,7 @@ struct Settings {
     status: String,
     error: bool,
     preview: PositionPreview,
+    advanced_expanded: bool,
     window: Option<WindowHandle<Settings>>,
     _tray: tray_icon::TrayIcon,
 }
@@ -159,7 +160,7 @@ impl Settings {
             &self.path,
             invocation.action,
             invocation.window,
-            invocation.snapped_only,
+            invocation.include_hidden,
         ) {
             Ok(()) => self.message(
                 format!("Positioned: {}", invocation.action.label()),
@@ -444,7 +445,7 @@ impl Render for Settings {
                     .child(div().text_sm().child(selected.label()))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Hover a keybinding to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."))
                     .when(selected.adjusts_pair(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Move the shared boundary by 25% of the selected window's current height, with a 50/50 stop when returning toward the middle. Blue shows the neighbor. Windows only; matching left and right edges required.")))
-                    .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("H: left, J: down, K: up, L: right. Centered groups cycle with H/L and bring the focused window forward; other windows use spatial focus. Windows only.")))
+                    .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("H: left, J: down, K: up, L: right. Tap H/L to navigate visible windows; hold for 400 ms to include covered middle windows. Centered groups follow the same visibility rules. Windows only.")))
                     .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+Shift+8 (*).")))
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Window focus"))
@@ -467,13 +468,24 @@ impl Render for Settings {
                                     let _ = (this, cx);
                                 }))))
                         .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Briefly highlight the target after moving a window or using H/J/K/L. Default: neutral off-white.")))
-                    .child(div().text_sm().child("Include obscured windows"))
-                    .child(button("include-obscured", if self.draft.focus.include_obscured { "On" } else { "Off" })
+                    .child(button("advanced-toggle", if self.advanced_expanded { "Advanced ▾" } else { "Advanced ▸" })
                         .on_click(cx.listener(|this, _, _, cx| {
-                            this.draft.focus.include_obscured = !this.draft.focus.include_obscured;
+                            this.advanced_expanded = !this.advanced_expanded;
+                            cx.notify();
+                        })))
+                    .when(self.advanced_expanded, |el| el
+                    .child(div().text_sm().child("Minimum middle-window visibility"))
+                    .child(div().flex().items_center().justify_between()
+                        .child(button("visibility-less", "−").on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.focus.minimum_visible_percent = this.draft.focus.minimum_visible_percent.saturating_sub(1);
                             this.message("Window focus updated. Save to activate.", false, cx);
                         })))
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Snapped windows are always considered. Off: middle/floating windows need 50% visibility. On: also include covered middle windows. Minimized windows and other virtual desktops stay excluded."))
+                        .child(format!("{}%", self.draft.focus.minimum_visible_percent))
+                        .child(button("visibility-more", "+").on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.focus.minimum_visible_percent = (this.draft.focus.minimum_visible_percent + 1).min(99);
+                            this.message("Window focus updated. Save to activate.", false, cx);
+                        }))))
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Regular focus requires more than this percentage of a middle window to be visible (default: 10%). Hold H/L for 400 ms to include covered middle windows. Edge-snapped windows stay reachable. Minimized windows and other virtual desktops stay excluded."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Width adjustment"))
                     .child(div().text_sm().child("Width change per press"))
                     .child(div().flex().items_center().justify_between()
@@ -512,7 +524,7 @@ impl Render for Settings {
                             this.draft.growth.steps = (this.draft.growth.steps + 1).min(20);
                             this.message("Growth updated. Save to activate.", false, cx);
                         }))))
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("First press places the window. Repeats multiply its size, keeping the corner or edge anchored. Center starts at 50% width and height, then grows equally in every direction. Growth stops at the work area; 0 steps turns it off."))
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("First press places the window. Repeats multiply its size, keeping the corner or edge anchored. Center starts at 50% width and height, then grows equally in every direction. Growth stops at the work area; 0 steps turns it off.")))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child(if platform::is_wayland() {
                         "Wayland: save, export shortcuts, then include the file in your compositor config. Sway and Hyprland are supported."
                     } else { "Closing settings keeps tt-pane running in the tray. Use the tray menu to quit." }))
@@ -640,6 +652,7 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             status,
             error,
             preview: PositionPreview::new(Action::Left),
+            advanced_expanded: false,
             window: None,
             _tray: tray,
         });

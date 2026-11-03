@@ -94,12 +94,25 @@ impl Group {
 
     /// Stable bounded order keeps covered peers reachable and lets navigation
     /// leave the group at either end.
+    #[cfg(test)]
     fn neighbor(&self, handle: u64, action: Action) -> Option<u64> {
+        self.neighbor_filtered(handle, action, None)
+    }
+
+    fn neighbor_filtered(
+        &self,
+        handle: u64,
+        action: Action,
+        eligible: Option<&[u64]>,
+    ) -> Option<u64> {
         let selected = self.members.iter().find(|m| m.handle == handle)?;
         let peers: Vec<_> = self
             .members
             .iter()
             .filter(|m| m.area == selected.area)
+            .filter(|m| {
+                m.handle == handle || eligible.is_none_or(|handles| handles.contains(&m.handle))
+            })
             .collect();
         if peers.len() < 2 {
             return None;
@@ -113,11 +126,26 @@ impl Group {
         peers.get(next).map(|m| m.handle)
     }
 
-    pub fn focus(&mut self, handle: Option<u64>, action: Action) -> Result<bool> {
+    pub fn focus(
+        &mut self,
+        handle: Option<u64>,
+        action: Action,
+        visibility: platform::FocusVisibility,
+    ) -> Result<bool> {
         let Some(handle) = handle.or_else(platform::foreground_handle) else {
             return Ok(false);
         };
-        let Some(next) = self.neighbor(handle, action) else {
+        if !matches!(action, Action::FocusLeft | Action::FocusRight)
+            || !self.members.iter().any(|m| m.handle == handle)
+        {
+            return Ok(false);
+        }
+        let eligible = if visibility == platform::FocusVisibility::IncludeHidden {
+            None
+        } else {
+            Some(platform::focus_eligible_handles(handle, visibility)?)
+        };
+        let Some(next) = self.neighbor_filtered(handle, action, eligible.as_deref()) else {
             return Ok(false);
         };
         let Some(live) = platform::window_snapshot(next)? else {
@@ -132,10 +160,6 @@ impl Group {
         platform::focus_snapshot(&live)?;
         self.arrange(next)?;
         Ok(true)
-    }
-
-    pub fn handles(&self) -> Vec<u64> {
-        self.members.iter().map(|m| m.handle).collect()
     }
 
     pub fn exit_members(&self, handle: Option<u64>, action: Action) -> Vec<u64> {
@@ -282,7 +306,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires interactive Windows desktop; briefly focuses disposable windows"]
-    fn native_hold_skips_middle_windows_for_snapped_edges() {
+    fn native_taps_filter_middle_visibility_and_holds_reach_covered_windows() {
         platform::test_support::with_group_windows(|handles| {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("config.toml");
@@ -296,20 +320,57 @@ mod tests {
             ] {
                 crate::positioning::apply(&config, &path, action, Some(handle)).unwrap();
             }
-            for include_obscured in [false, true] {
-                config.focus.include_obscured = include_obscured;
-                for (source, action, destination) in [
-                    (left, Action::FocusRight, right),
-                    (right, Action::FocusLeft, left),
-                    (middle, Action::FocusRight, right),
-                    (middle, Action::FocusLeft, left),
-                ] {
-                    platform::focus_snapshot(&platform::window_snapshot(source).unwrap().unwrap())
-                        .unwrap();
-                    crate::positioning::apply_gesture(&config, &path, action, Some(source), true)
-                        .unwrap();
-                    assert_eq!(platform::foreground_handle(), Some(destination));
-                }
+            let focus = |handle| {
+                platform::focus_snapshot(&platform::window_snapshot(handle).unwrap().unwrap())
+                    .unwrap();
+            };
+            // The left window covers half of the middle window. Taps should
+            // visit it at 10%, but skip it at a higher configured threshold.
+            for (percent, expected) in [(10, middle), (75, right)] {
+                focus(middle);
+                focus(left);
+                config.focus.minimum_visible_percent = percent;
+                crate::positioning::apply(&config, &path, Action::FocusRight, Some(left)).unwrap();
+                assert_eq!(platform::foreground_handle(), Some(expected));
+            }
+            // Both halves above the middle cover it completely. Only a hold
+            // can now reach it, even with the normal threshold at 0%.
+            focus(middle);
+            focus(right);
+            focus(left);
+            config.focus.minimum_visible_percent = 0;
+            crate::positioning::apply(&config, &path, Action::FocusRight, Some(left)).unwrap();
+            assert_eq!(platform::foreground_handle(), Some(right));
+            for percent in [10, 50] {
+                config.focus.minimum_visible_percent = percent;
+                focus(middle);
+                focus(right);
+                focus(left);
+                let visible = platform::focus_eligible_handles(
+                    left,
+                    platform::FocusVisibility::MoreThanPercent(percent),
+                )
+                .unwrap();
+                let all = platform::focus_eligible_handles(
+                    left,
+                    platform::FocusVisibility::IncludeHidden,
+                )
+                .unwrap();
+                assert!(!visible.contains(&middle));
+                assert!(all.contains(&middle));
+                crate::positioning::apply_gesture(
+                    &config,
+                    &path,
+                    Action::FocusRight,
+                    Some(left),
+                    true,
+                )
+                .unwrap();
+                let target = platform::foreground_handle().unwrap();
+                // Other covered applications on the desktop can be nearer than
+                // our fixture. The hold must reveal a threshold-excluded target.
+                assert!(all.contains(&target));
+                assert!(!visible.contains(&target));
             }
         });
     }
@@ -340,11 +401,24 @@ mod tests {
                     .bounds,
                 group.members[0].centered
             );
-            // Hidden-by-overlap peers remain reachable with the default visibility setting.
-            crate::positioning::apply(&config, &path, Action::FocusRight, Some(handles[0]))
-                .unwrap();
+            // Holds keep hidden-by-overlap peers reachable.
+            crate::positioning::apply_gesture(
+                &config,
+                &path,
+                Action::FocusRight,
+                Some(handles[0]),
+                true,
+            )
+            .unwrap();
             assert_eq!(platform::foreground_handle(), Some(handles[1]));
-            crate::positioning::apply(&config, &path, Action::FocusLeft, Some(handles[1])).unwrap();
+            crate::positioning::apply_gesture(
+                &config,
+                &path,
+                Action::FocusLeft,
+                Some(handles[1]),
+                true,
+            )
+            .unwrap();
             assert_eq!(platform::foreground_handle(), Some(handles[0]));
             assert_eq!(
                 std::fs::read(crate::positioning::sidecar(&path, ".cycle.json")).unwrap(),
@@ -574,6 +648,30 @@ mod tests {
         assert_eq!(group.neighbor(3, Action::FocusLeft), Some(2));
         assert_eq!(group.neighbor(2, Action::FocusLeft), Some(1));
         assert!(group.exit_members(Some(99), Action::FocusDown).is_empty());
+    }
+
+    #[test]
+    fn group_navigation_skips_ineligible_peers_but_hold_keeps_them() {
+        let group = Group {
+            members: (1..=4).map(member).collect(),
+        };
+        assert_eq!(
+            group.neighbor_filtered(1, Action::FocusRight, Some(&[3, 4])),
+            Some(3)
+        );
+        assert_eq!(
+            group.neighbor_filtered(4, Action::FocusLeft, Some(&[1, 2])),
+            Some(2)
+        );
+        assert_eq!(
+            group.neighbor_filtered(1, Action::FocusRight, Some(&[])),
+            None
+        );
+        assert_eq!(
+            group.neighbor_filtered(1, Action::FocusRight, None),
+            Some(2)
+        );
+        assert_eq!(group.neighbor_filtered(4, Action::FocusLeft, None), Some(3));
     }
 
     #[test]

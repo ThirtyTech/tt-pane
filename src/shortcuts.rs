@@ -38,7 +38,7 @@ const HOLD_DURATION: std::time::Duration = std::time::Duration::from_millis(400)
 pub struct Invocation {
     pub action: Action,
     pub window: Option<u64>,
-    pub snapped_only: bool,
+    pub include_hidden: bool,
 }
 
 struct HeldFocus {
@@ -66,7 +66,7 @@ impl FocusGesture {
             if self.held.as_ref().is_some_and(|held| held.id == id) {
                 let held = self.held.take().unwrap();
                 return (!held.fired).then_some(Invocation {
-                    snapped_only: now.duration_since(held.started) >= HOLD_DURATION,
+                    include_hidden: now.duration_since(held.started) >= HOLD_DURATION,
                     ..held.invocation
                 });
             }
@@ -77,7 +77,7 @@ impl FocusGesture {
             return Some(Invocation {
                 action,
                 window,
-                snapped_only: false,
+                include_hidden: false,
             });
         }
         // Ignore native repeat presses without restarting the hold timer.
@@ -88,7 +88,7 @@ impl FocusGesture {
                 invocation: Invocation {
                     action,
                     window,
-                    snapped_only: false,
+                    include_hidden: false,
                 },
                 fired: false,
             });
@@ -103,7 +103,7 @@ impl FocusGesture {
         }
         held.fired = true;
         Some(Invocation {
-            snapped_only: true,
+            include_hidden: true,
             ..held.invocation
         })
     }
@@ -150,7 +150,7 @@ impl Shortcuts {
             (state == HotKeyState::Pressed).then_some(Invocation {
                 action,
                 window: None,
-                snapped_only: false,
+                include_hidden: false,
             })
         }
     }
@@ -347,7 +347,7 @@ mod tests {
                 Some(Invocation {
                     action,
                     window: Some(42),
-                    snapped_only: false
+                    include_hidden: false
                 })
             );
             assert_eq!(gesture.poll(start + HOLD_DURATION), None);
@@ -364,7 +364,7 @@ mod tests {
                 Some(Invocation {
                     action,
                     window: Some(42),
-                    snapped_only: true
+                    include_hidden: true
                 })
             );
             assert_eq!(gesture.poll(start + HOLD_DURATION * 2), None);
@@ -390,7 +390,7 @@ mod tests {
                         None
                     )
                     .unwrap()
-                    .snapped_only
+                    .include_hidden
             );
         }
     }
@@ -405,7 +405,7 @@ mod tests {
             Some(Invocation {
                 action: Action::FocusDown,
                 window: Some(42),
-                snapped_only: false
+                include_hidden: false
             })
         );
         assert_eq!(gesture.poll(start + HOLD_DURATION), None);
