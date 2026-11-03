@@ -1,14 +1,19 @@
-use crate::geometry::{Rect, monitor_for};
+use crate::geometry::{Action, Rect, monitor_for};
 use anyhow::{Context, Result, ensure};
 use core_foundation::{
+    array::CFArray,
     base::{CFType, CFTypeID, CFTypeRef, TCFType},
     boolean::CFBoolean,
     dictionary::{CFDictionary, CFDictionaryRef},
+    number::CFNumber,
     string::{CFString, CFStringRef},
 };
 use core_graphics::geometry::{CGPoint, CGSize};
 use objc2::MainThreadMarker;
-use objc2_app_kit::{NSAlert, NSApplication, NSScreen, NSWorkspace};
+use objc2_app_kit::{
+    NSAlert, NSApplication, NSApplicationActivationOptions, NSRunningApplication, NSScreen,
+    NSWorkspace,
+};
 use objc2_foundation::NSString;
 use std::ffi::c_void;
 
@@ -30,6 +35,7 @@ unsafe extern "C" {
     -> i32;
     fn AXValueCreate(kind: u32, value: *const c_void) -> CFTypeRef;
     fn AXValueGetValue(value: CFTypeRef, kind: u32, output: *mut c_void) -> u8;
+    fn AXUIElementPerformAction(element: CFTypeRef, action: CFStringRef) -> i32;
 }
 
 fn attribute(element: &CFType, key: &str) -> Result<CFType> {
@@ -176,6 +182,249 @@ pub fn show_alert(title: &str, message: &str) {
     alert.setMessageText(&NSString::from_str(title));
     alert.setInformativeText(&NSString::from_str(message));
     alert.runModal();
+}
+
+fn read_rect(window: &CFType) -> Result<Rect> {
+    let point = read_position(&attribute(window, "AXPosition")?)?;
+    let size = read_size(&attribute(window, "AXSize")?)?;
+    Ok(Rect {
+        x: point.x.round() as i32,
+        y: point.y.round() as i32,
+        width: size.width.round() as i32,
+        height: size.height.round() as i32,
+    })
+}
+
+fn application_element(pid: i32) -> Result<CFType> {
+    // SAFETY: AX validates the PID; this returns an owned reference, with no
+    // Rust pointers retained.
+    let raw = unsafe { AXUIElementCreateApplication(pid) };
+    ensure!(!raw.is_null(), "Could not access application {pid}");
+    // SAFETY: Create returned a non-null owned (+1) CF object, adopted once.
+    Ok(unsafe { CFType::wrap_under_create_rule(raw) })
+}
+
+fn flag(element: &CFType, key: &str) -> bool {
+    attribute(element, key)
+        .ok()
+        .and_then(|value| value.downcast::<CFBoolean>())
+        .is_some_and(bool::from)
+}
+
+/// Standard, non-minimized Accessibility windows of an application.
+fn application_windows(pid: i32) -> Vec<(CFType, Rect)> {
+    let Ok(app) = application_element(pid) else {
+        return Vec::new();
+    };
+    let Some(windows) = attribute(&app, "AXWindows")
+        .ok()
+        .and_then(|value| value.downcast::<CFArray>())
+    else {
+        return Vec::new();
+    };
+    windows
+        .iter()
+        .filter_map(|item| {
+            // SAFETY: AXWindows holds live CF objects retained by the array.
+            let window = unsafe { CFType::wrap_under_get_rule(*item) };
+            let standard = attribute(&window, "AXSubrole")
+                .ok()
+                .and_then(|value| value.downcast::<CFString>())
+                .is_some_and(|role| role == "AXStandardWindow");
+            if !standard || flag(&window, "AXMinimized") {
+                return None;
+            }
+            let rect = read_rect(&window).ok()?;
+            Some((window, rect))
+        })
+        .collect()
+}
+
+struct ScreenInfo {
+    frames: Vec<Rect>,
+    work_areas: Vec<Rect>,
+}
+
+impl ScreenInfo {
+    fn read(mtm: MainThreadMarker) -> Result<Self> {
+        let screens = NSScreen::screens(mtm);
+        let primary = screens.firstObject().context("No screens found")?;
+        let frame = primary.frame();
+        let primary_top = frame.origin.y + frame.size.height;
+        // Cocoa uses bottom-left origins; Accessibility uses the primary screen's top-left.
+        let convert = |r: objc2_foundation::NSRect| Rect {
+            x: r.origin.x.round() as i32,
+            y: (primary_top - r.origin.y - r.size.height).round() as i32,
+            width: r.size.width.round() as i32,
+            height: r.size.height.round() as i32,
+        };
+        Ok(Self {
+            frames: screens.iter().map(|s| convert(s.frame())).collect(),
+            work_areas: screens.iter().map(|s| convert(s.visibleFrame())).collect(),
+        })
+    }
+
+    fn work_area(&self, window: Rect) -> Option<Rect> {
+        monitor_for(window, &self.frames).map(|index| self.work_areas[index])
+    }
+}
+
+// CoreGraphics and Accessibility bounds can differ by rounding.
+fn near(a: Rect, b: Rect) -> bool {
+    [a.x - b.x, a.y - b.y, a.width - b.width, a.height - b.height]
+        .into_iter()
+        .all(|d| d.abs() <= 2)
+}
+
+struct ListedWindow {
+    pid: i32,
+    layer: i64,
+    rect: Rect,
+}
+
+fn number(dict: &CFDictionary<CFString, CFType>, key: &str) -> Option<f64> {
+    dict.find(CFString::new(key))?
+        .downcast::<CFNumber>()?
+        .to_f64()
+}
+
+/// On-screen windows on the current Space, front to back, in Accessibility coordinates.
+fn listed_windows() -> Result<Vec<ListedWindow>> {
+    use core_graphics::window::{
+        copy_window_info, kCGNullWindowID, kCGWindowListExcludeDesktopElements,
+        kCGWindowListOptionOnScreenOnly,
+    };
+    let list = copy_window_info(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        kCGNullWindowID,
+    )
+    .context("Could not list on-screen windows")?;
+    Ok(list
+        .iter()
+        .filter_map(|item| {
+            // SAFETY: The window list holds live CFDictionaries retained by the array.
+            let info: CFDictionary<CFString, CFType> =
+                unsafe { CFDictionary::wrap_under_get_rule((*item).cast()) };
+            let bounds = info
+                .find(CFString::new("kCGWindowBounds"))?
+                .downcast::<CFDictionary>()?;
+            // SAFETY: kCGWindowBounds is a CFDictionary of CFString keys to CFNumbers.
+            let bounds: CFDictionary<CFString, CFType> =
+                unsafe { CFDictionary::wrap_under_get_rule(bounds.as_concrete_TypeRef()) };
+            if number(&info, "kCGWindowAlpha").is_some_and(|alpha| alpha <= 0.0) {
+                return None;
+            }
+            Some(ListedWindow {
+                pid: number(&info, "kCGWindowOwnerPID")? as i32,
+                layer: number(&info, "kCGWindowLayer")? as i64,
+                rect: Rect {
+                    x: number(&bounds, "X")?.round() as i32,
+                    y: number(&bounds, "Y")?.round() as i32,
+                    width: number(&bounds, "Width")?.round() as i32,
+                    height: number(&bounds, "Height")?.round() as i32,
+                },
+            })
+        })
+        .collect())
+}
+
+/// Focus a spatial neighbor of the frontmost application's focused window.
+pub fn focus_window(action: Action, visibility: super::FocusVisibility) -> Result<()> {
+    use super::FocusVisibility;
+    ensure!(
+        accessibility_trusted(false),
+        "Grant tt-pane Accessibility access in System Settings → Privacy & Security → Accessibility"
+    );
+    let mtm =
+        MainThreadMarker::new().context("Window control must run on the macOS main thread")?;
+    let front = NSWorkspace::sharedWorkspace()
+        .frontmostApplication()
+        .context("No frontmost application")?;
+    let front_pid = front.processIdentifier();
+    let selected = attribute(&application_element(front_pid)?, "AXFocusedWindow")
+        .context("Select an application window to change focus")?;
+    let current = read_rect(&selected)?;
+    let screens = ScreenInfo::read(mtm)?;
+    // Hold enters middle windows from an edge, or exits a middle window to the edges.
+    let hold = visibility == FocusVisibility::Hold;
+    let snapped_only =
+        hold && !crate::visibility::is_snapped(current, screens.work_area(current));
+    let middle_only = hold && !snapped_only;
+    let visibility = if hold {
+        FocusVisibility::IncludeHidden
+    } else {
+        visibility
+    };
+    let own_pid = std::process::id() as i32;
+    let mut selected_seen = false;
+    let mut ax_windows = std::collections::HashMap::<i32, Vec<(CFType, Rect)>>::new();
+    let mut above = Vec::new();
+    let mut candidates = Vec::new();
+    let mut bounds = Vec::new();
+    // Windows at or above the Dock layer (menu bar, Dock, overlays) are not app windows.
+    for listed in listed_windows()?.into_iter().filter(|w| (0..20).contains(&w.layer)) {
+        let is_selected = !selected_seen
+            && listed.pid == front_pid
+            && near(listed.rect, current);
+        selected_seen |= is_selected;
+        if !is_selected && listed.layer == 0 && listed.pid != own_pid {
+            let work_area = screens.work_area(listed.rect);
+            let snapped = crate::visibility::is_snapped(listed.rect, work_area);
+            let element = ax_windows
+                .entry(listed.pid)
+                .or_insert_with(|| application_windows(listed.pid))
+                .iter()
+                .position(|(_, rect)| near(*rect, listed.rect));
+            if let Some(element) = element
+                && (!snapped_only || snapped)
+                && (!middle_only || !snapped)
+                && crate::visibility::focus_eligible(
+                    listed.rect,
+                    work_area,
+                    &screens.frames,
+                    &above,
+                    visibility,
+                )
+            {
+                let (window, _) = ax_windows.get_mut(&listed.pid).unwrap().swap_remove(element);
+                candidates.push((listed.pid, window));
+                bounds.push(listed.rect);
+            }
+        }
+        // Every window, including the selected one, covers the windows beneath it.
+        if visibility != FocusVisibility::IncludeHidden {
+            above.push(listed.rect);
+        }
+    }
+    let Some(index) = crate::geometry::focus_neighbor(current, &bounds, action) else {
+        return Ok(());
+    };
+    let (pid, window) = &candidates[index];
+    activate_window(*pid, window)
+}
+
+fn activate_window(pid: i32, window: &CFType) -> Result<()> {
+    // SAFETY: window is a live AXUIElement and the action string outlives the call.
+    let result = unsafe {
+        AXUIElementPerformAction(
+            window.as_CFTypeRef(),
+            CFString::from_static_string("AXRaise").as_concrete_TypeRef(),
+        )
+    };
+    ensure!(result == 0, "Cannot raise the window (Accessibility error {result})");
+    let _ = set_attribute(window, "AXMain", &CFBoolean::true_value().as_CFType());
+    // Accessibility can bring a background application forward where cooperative
+    // NSRunningApplication activation is refused; fall back to it otherwise.
+    let app = application_element(pid)?;
+    if set_attribute(&app, "AXFrontmost", &CFBoolean::true_value().as_CFType()).is_err() {
+        let running = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+            .context("The window's application has quit")?;
+        ensure!(
+            running.activateWithOptions(NSApplicationActivationOptions::empty()),
+            "macOS refused to activate the window's application"
+        );
+    }
+    Ok(())
 }
 
 pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>) -> Result<Rect> {

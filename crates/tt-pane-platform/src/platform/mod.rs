@@ -170,10 +170,20 @@ pub fn focus_window_with_members(
     anyhow::ensure!(action.focuses(), "Expected a directional focus action");
     #[cfg(target_os = "windows")]
     return windows::focus_window(handle, action, visibility, group, middle_members);
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        anyhow::ensure!(
+            handle.is_none(),
+            "Explicit --window targeting currently supports Windows HWNDs only"
+        );
+        // Centered groups are Windows-only, so no group or members reach macOS.
+        let _ = (group, middle_members);
+        macos::focus_window(action, visibility)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = (handle, action, visibility, group, middle_members);
-        anyhow::bail!("Directional window focus currently supports Windows only")
+        anyhow::bail!("Directional window focus currently supports Windows and macOS only")
     }
 }
 

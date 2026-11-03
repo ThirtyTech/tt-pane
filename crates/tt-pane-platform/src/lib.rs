@@ -5,7 +5,7 @@
 
 pub mod geometry;
 mod platform;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 mod visibility;
 pub use platform::*;
 
