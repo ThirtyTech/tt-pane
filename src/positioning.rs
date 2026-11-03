@@ -280,10 +280,11 @@ fn apply_inner(config: &Config, path: &Path, action: Action, window: Option<u64>
     if action.focuses() {
         let result = (|| -> Result<()> {
             if !group.focus(window, action)? {
-                platform::focus_window_with_visibility(
+                platform::focus_window_outside_group(
                     window,
                     action,
                     config.focus.include_obscured,
+                    &group.exit_members(window, action),
                 )?;
                 group.refresh()?;
             }

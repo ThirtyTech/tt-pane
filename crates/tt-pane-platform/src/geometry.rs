@@ -464,6 +464,32 @@ pub fn monitor_for(window: Rect, monitors: &[Rect]) -> Option<usize> {
         .map(|(index, _)| index)
 }
 
+/// Leave a centered group spatially; vertical exits prefer the leftmost column.
+/// Candidates have already been filtered to non-members on the same monitor.
+pub fn focus_group_exit(current: Rect, candidates: &[Rect], action: Action) -> Option<usize> {
+    if matches!(action, Action::FocusLeft | Action::FocusRight) {
+        return focus_neighbor(current, candidates, action);
+    }
+    let cy = 2 * i64::from(current.y) + i64::from(current.height);
+    candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(index, rect)| {
+            if rect.width <= 0 || rect.height <= 0 {
+                return None;
+            }
+            let dy = 2 * i64::from(rect.y) + i64::from(rect.height) - cy;
+            let forward = match action {
+                Action::FocusUp => -dy,
+                Action::FocusDown => dy,
+                _ => return None,
+            };
+            (forward > 0).then_some((index, rect.x, forward))
+        })
+        .min_by_key(|&(index, x, forward)| (x, forward, index))
+        .map(|(index, _, _)| index)
+}
+
 /// Rank windows by center distance in a 90-degree directional cone. This permits
 /// diagonal steps through a center window without jumping past it to a far edge.
 /// Equal scores retain native Z-order (the topmost candidate wins).
@@ -507,6 +533,51 @@ pub fn focus_neighbor(current: Rect, candidates: &[Rect], action: Action) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn centered_vertical_exit_reaches_wide_screen_corners_left_first() {
+        let area = Rect {
+            x: -3440,
+            y: 40,
+            width: 3440,
+            height: 1440,
+        };
+        let center = Action::Center.target(area, area);
+        let corners = [
+            Action::TopRight,
+            Action::BottomRight,
+            Action::TopLeft,
+            Action::BottomLeft,
+        ]
+        .map(|action| action.target(area, area));
+        assert_eq!(focus_neighbor(center, &corners, Action::FocusDown), None);
+        assert_eq!(focus_neighbor(center, &corners, Action::FocusUp), None);
+        assert_eq!(
+            focus_group_exit(center, &corners, Action::FocusDown),
+            Some(3)
+        );
+        assert_eq!(focus_group_exit(center, &corners, Action::FocusUp), Some(2));
+        assert_eq!(
+            focus_group_exit(center, &corners[..2], Action::FocusDown),
+            Some(1)
+        );
+        assert_eq!(
+            focus_group_exit(center, &corners[..1], Action::FocusDown),
+            None
+        );
+        assert_eq!(focus_group_exit(center, &[], Action::FocusUp), None);
+        assert_eq!(
+            focus_group_exit(center, &corners, Action::FocusLeft),
+            Some(2)
+        );
+        assert_eq!(
+            focus_group_exit(center, &corners, Action::FocusRight),
+            Some(0)
+        );
+        assert_eq!(
+            focus_group_exit(center, &corners[..2], Action::FocusLeft),
+            None
+        );
+    }
     #[test]
     fn freed_gap_covers_only_the_reduced_part_of_the_original_position() {
         let area = Rect {

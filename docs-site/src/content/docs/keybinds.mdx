@@ -58,9 +58,9 @@ Snapped windows are considered even when covered. Their current frame must fit w
 
 Press **Ctrl + Alt + 3** on each window you want in a group. Windows must be on the same monitor and placed using Center; dragging them to the middle does not enroll them.
 
-The focused window returns to its saved centered position. Other members keep their size and move **25% of the focused window's width left or right**, and **25% of its height down**, clamped to the monitor work area. There is no rotation. Three windows show one background window on each side; larger groups share the side positions.
+The focused window returns to its saved centered position. Other members keep their size and stagger left or right and down in successive steps of up to **25% of the focused window's width and height**. Spacing shrinks independently on each side as needed to fit every window inside the monitor work area. There is no rotation. Earlier members sit to the left and later members to the right in enrollment order; members farther away in that order receive larger offsets.
 
-**Ctrl + Alt + H/L** cycles through members in enrollment order, wrapping around and including covered peers regardless of the visibility toggle. **J/K** keeps spatial navigation. Clicking or Alt+Tabbing to a member also centers it while tt-pane runs in the tray.
+**Ctrl + Alt + H/L** steps through members in enrollment order, including covered peers regardless of the visibility toggle. As you press L, visited members shift left. At either end, the next H/L press reaches a background window in that direction on the same monitor, skipping group members. If there is no candidate, focus stays put. **J/K** leaves the group for background windows on the same monitor: J selects below and K above, preferring the leftmost column (bottom-left/top-left in a quarter layout), even on wide screens. Other group members are skipped. Clicking or Alt+Tabbing to a member also centers it while tt-pane runs in the tray.
 
 Moving or resizing a member manually, another placement/width shortcut, changing monitors/work areas, minimizing, maximizing, hiding, or closing removes membership. Center explicitly rejoins the window. Repeated Center presses still grow the focused window and update its saved centered size. Groups are independent per monitor.
 

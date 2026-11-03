@@ -491,6 +491,7 @@ pub fn focus_window(
     handle: Option<u64>,
     action: crate::geometry::Action,
     include_obscured: bool,
+    group: &[u64],
 ) -> Result<()> {
     use windows::Win32::Foundation::LPARAM;
     use windows::core::BOOL;
@@ -577,6 +578,10 @@ pub fn focus_window(
             };
             let rect = from_rect(rect);
             let selectable = window != selected
+                && (group.is_empty()
+                    || (!group.contains(&(window.0 as usize as u64))
+                        && MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST)
+                            == MonitorFromWindow(selected, MONITOR_DEFAULTTONEAREST)))
                 && (GetWindowLongPtrW(window, GWL_EXSTYLE) as u32
                     & (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0))
                     == 0;
@@ -610,7 +615,12 @@ pub fn focus_window(
                 above.push(rect);
             }
         }
-        if let Some(index) = crate::geometry::focus_neighbor(current, &bounds, action) {
+        let neighbor = if group.is_empty() {
+            crate::geometry::focus_neighbor(current, &bounds, action)
+        } else {
+            crate::geometry::focus_group_exit(current, &bounds, action)
+        };
+        if let Some(index) = neighbor {
             activate_window(candidates[index])?;
         }
         Ok(())
