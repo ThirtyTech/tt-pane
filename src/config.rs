@@ -41,10 +41,31 @@ pub struct WidthResize {
     pub percent: u32,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Focus {
     pub include_obscured: bool,
+    pub glow_enabled: bool,
+    pub glow_color: String,
+}
+
+impl Default for Focus {
+    fn default() -> Self {
+        Self {
+            include_obscured: false,
+            glow_enabled: true,
+            glow_color: "#F2F0E8".into(),
+        }
+    }
+}
+
+impl Focus {
+    pub fn glow_rgb(&self) -> Option<u32> {
+        let hex = self.glow_color.strip_prefix('#')?;
+        (hex.len() == 6 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+            .then(|| u32::from_str_radix(hex, 16).ok())
+            .flatten()
+    }
 }
 
 impl Default for WidthResize {
@@ -162,6 +183,10 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.focus.glow_rgb().is_some(),
+            "Focus glow color must be #RRGGBB"
+        );
         ensure!(
             (1..=99).contains(&self.width_resize.percent),
             "Width adjustment percentage must be between 1 and 99"
@@ -433,6 +458,23 @@ mod focus_binding_tests {
 #[cfg(test)]
 mod focus_visibility_tests {
     use super::*;
+    #[test]
+    fn glow_migrates_roundtrips_and_rejects_invalid_colors() {
+        let mut config: Config =
+            toml::from_str("version = 1\nbindings = []\n[focus]\ninclude_obscured = true").unwrap();
+        assert!(config.focus.glow_enabled);
+        assert_eq!(config.focus.glow_rgb(), Some(0xf2f0e8));
+        config.focus.glow_enabled = false;
+        config.focus.glow_color = "#12aBcD".into();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        config.save(&path).unwrap();
+        assert_eq!(Config::load(&path).unwrap().focus, config.focus);
+        for invalid in ["red", "123456", "#fff", "#1234567", "#gg0000", "#é0000"] {
+            config.focus.glow_color = invalid.into();
+            assert!(config.validate().is_err(), "{invalid}");
+        }
+    }
     #[test]
     fn visibility_defaults_off_and_roundtrips_both_values() {
         let old: Config = toml::from_str("version = 1\nbindings = []").unwrap();

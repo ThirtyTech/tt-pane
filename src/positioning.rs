@@ -219,6 +219,25 @@ pub(crate) fn sidecar(config: &Path, suffix: &str) -> PathBuf {
 /// Serialize concurrent tray/plugin/CLI requests using a separate lock file.
 /// Only successful native requests advance the persisted cycle. Cache loss resets it.
 pub fn apply(config: &Config, path: &Path, action: Action, window: Option<u64>) -> Result<()> {
+    // Capture the source before placement; focus actions resolve their destination afterward.
+    #[cfg(windows)]
+    let source = window.or_else(platform::foreground_handle);
+    let result = apply_inner(config, path, action, window);
+    #[cfg(windows)]
+    if result.is_ok() && config.focus.glow_enabled {
+        let target = if action.focuses() {
+            platform::foreground_handle()
+        } else {
+            source
+        };
+        if let (Some(target), Some(color)) = (target, config.focus.glow_rgb()) {
+            platform::show_focus_glow(target, color);
+        }
+    }
+    result
+}
+
+fn apply_inner(config: &Config, path: &Path, action: Action, window: Option<u64>) -> Result<()> {
     config.validate()?;
     #[cfg(not(windows))]
     if action.focuses() {

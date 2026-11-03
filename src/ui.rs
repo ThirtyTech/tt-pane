@@ -431,6 +431,25 @@ impl Render for Settings {
                     .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+Shift+8 (*).")))
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Window focus"))
+                    .when(cfg!(windows), |el| el
+                        .child(div().text_sm().child("Focus glow"))
+                        .child(button("focus-glow", if self.draft.focus.glow_enabled { "On" } else { "Off" })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.draft.focus.glow_enabled = !this.draft.focus.glow_enabled;
+                                this.message("Focus glow updated. Save to activate.", false, cx);
+                            })))
+                        .child(div().flex().items_center().gap_2()
+                            .child(div().size(px(18.)).rounded_sm().bg(rgb(self.draft.focus.glow_rgb().unwrap_or(0xf2f0e8))))
+                            .child(button("glow-color", &format!("Color: {}", self.draft.focus.glow_color))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    #[cfg(windows)]
+                                    if let Some(color) = platform::choose_glow_color(this.draft.focus.glow_rgb().unwrap_or(0xf2f0e8)) {
+                                        this.draft.focus.glow_color = format!("#{color:06X}");
+                                        this.message("Glow color updated. Save to activate.", false, cx);
+                                    }
+                                    let _ = (this, cx);
+                                }))))
+                        .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Briefly highlight the target after moving a window or using H/J/K/L. Default: neutral off-white.")))
                     .child(div().text_sm().child("Include obscured windows"))
                     .child(button("include-obscured", if self.draft.focus.include_obscured { "On" } else { "Off" })
                         .on_click(cx.listener(|this, _, _, cx| {

@@ -91,7 +91,8 @@ pub use windows::attach_parent_console;
 pub use windows::set_window_icon;
 #[cfg(windows)]
 pub use windows::{
-    WindowSnapshot, focus_snapshot, foreground_handle, move_snapshot, window_snapshot,
+    WindowSnapshot, choose_glow_color, focus_snapshot, foreground_handle, move_snapshot,
+    show_focus_glow, wait_for_focus_glow, window_snapshot,
 };
 
 /// Move the shared boundary of a window and its vertical neighbor.

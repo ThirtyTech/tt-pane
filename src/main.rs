@@ -58,6 +58,8 @@ fn run(cli: Cli) -> Result<()> {
                 let config = Config::load(&path)?;
                 tt_pane::positioning::apply(&config, &path, action, window)
             })();
+            #[cfg(windows)]
+            tt_pane::platform::wait_for_focus_glow();
             if json {
                 println!(
                     "{}",

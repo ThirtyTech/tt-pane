@@ -1,5 +1,7 @@
 use crate::geometry::Rect;
+mod glow;
 use anyhow::{Result, ensure};
+pub use glow::{choose_glow_color, show_focus_glow, wait_for_focus_glow};
 use windows::Win32::{
     Foundation::{HWND, RECT},
     Graphics::{
@@ -103,10 +105,34 @@ pub fn focus_snapshot(expected: &WindowSnapshot) -> Result<()> {
         "Window changed before focus"
     );
     let window = HWND(usize::try_from(expected.handle)? as *mut _);
-    // SAFETY: The opaque HWND was just validated; this call retains no Rust data.
-    let focused = unsafe { SetForegroundWindow(window) }.as_bool();
-    ensure!(focused, "Windows refused to focus the grouped window");
-    Ok(())
+    activate_window(window)
+}
+
+/// Cross-input-queue activation can still be pending after SetForegroundWindow
+/// succeeds. Confirm it before callers sample foreground or arrange a group.
+fn activate_window(window: HWND) -> Result<()> {
+    // SAFETY: Win32 validates the opaque HWND; these calls retain no Rust data.
+    unsafe {
+        ensure!(
+            SetForegroundWindow(window).as_bool(),
+            "Windows refused to focus the window"
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        loop {
+            if GetForegroundWindow() == window {
+                return Ok(());
+            }
+            ensure!(
+                IsWindow(Some(window)).as_bool(),
+                "Window closed before activation completed"
+            );
+            ensure!(
+                std::time::Instant::now() < deadline,
+                "Window activation did not complete within 500 ms"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
 }
 
 pub fn apply(
@@ -526,7 +552,8 @@ pub fn focus_window(
         let mut candidates = Vec::new();
         let mut bounds = Vec::new();
         for window in windows {
-            if window == GetDesktopWindow()
+            if glow::is_glow(window)
+                || window == GetDesktopWindow()
                 || window == GetShellWindow()
                 || !IsWindowVisible(window).as_bool()
                 || IsIconic(window).as_bool()
@@ -584,10 +611,7 @@ pub fn focus_window(
             }
         }
         if let Some(index) = crate::geometry::focus_neighbor(current, &bounds, action) {
-            ensure!(
-                SetForegroundWindow(candidates[index]).as_bool(),
-                "Windows refused to focus the neighboring window"
-            );
+            activate_window(candidates[index])?;
         }
         Ok(())
     }

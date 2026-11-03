@@ -35,6 +35,8 @@ percent = 25
 
 [focus]
 include_obscured = false
+glow_enabled = true
+glow_color = "#F2F0E8"
 
 [[bindings]]
 action = "left"
@@ -46,6 +48,8 @@ shortcut = "Ctrl+Alt+2"
 ```
 
 ## Command line
+
+On Windows, **Settings → Window focus → Focus glow** enables a soft, click-through gradient cue after moves/resizes and Vim-style focus navigation. It fades in and out over 480 ms. Click **Color** to open the color picker, then save. The default is enabled with neutral off-white (`#F2F0E8`); `glow_color` accepts `#RRGGBB`. Existing configurations inherit these defaults. CLI actions use the same cue and wait for it before exiting. Other platforms do not render the glow.
 
 Use the installed executable’s full path if it is not on PATH. On Windows, the installer does not add it automatically.
 

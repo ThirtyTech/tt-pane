@@ -118,6 +118,12 @@ include_obscured = false
 
 Spatial focus stays put when there is no candidate; only centered-group H/L navigation wraps. Saved growth and gap state is preserved.
 
+### Focus glow (Windows)
+
+Moving/resizing a window or using Vim-style focus navigation briefly highlights the target with a soft gradient glow. The cue fades in and out over 480 ms without taking focus or intercepting clicks. Repeated tray shortcuts replace the previous cue. In **Settings â†’ Window focus**, toggle **Focus glow** or click **Color** to choose any color, then **Save changes**. It defaults to On with neutral off-white (`#F2F0E8`), including existing configurations.
+
+The `[focus]` section also accepts `glow_enabled = true` and `glow_color = "#F2F0E8"` (six hex digits). CLI actions use the same settings and wait for the brief animation before exiting. The cue ends early if focus changes, the target moves again, or it becomes hidden/minimized. Other platforms retain these settings but do not render the glow.
+
 The focus actions are editable in Settings and available as `tt-pane apply focus-left`, `focus-down`, `focus-up`, and `focus-right` (also with `--window HWND --json`). Existing configurations gain missing focus bindings on load; custom or explicitly disabled focus bindings remain unchanged. If a default key is already assigned to another action, the new focus action stays unbound so you can choose a key in Settings. Other platforms report that directional focus is currently Windows-only.
 
 **Ctrl+Alt+Up/Down** moves the shared horizontal boundary by **25% of the selected window's current height**. With the bottom-left window selected, Up grows it upward and shrinks the window above: a 50/50 split becomes 62.5/37.5. Down shrinks the bottom window and grows the top window by the same pixel amount. There is a **50/50 stop** in the middle: 400 pixels grows to 500, then Down returns it to 400; shrinking to 300 then pressing Up also returns to 400. When moving toward equal heights, tt-pane snaps there if the boundary is within one normal step from equal (25% of half the combined height), or if the current step would cross it. Another press continues past equal. Elsewhere, each press uses the selected window's current height. Odd combined heights give the bottom window the extra pixel. With the top window selected, Up shrinks it and grows the window below. Widths and the pair's outside edges stay fixed; any existing gap is preserved.
