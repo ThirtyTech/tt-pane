@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod autostart;
 #[cfg(windows)]
 pub mod centered;
 pub mod config;

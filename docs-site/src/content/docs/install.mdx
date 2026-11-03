@@ -55,7 +55,7 @@ Set these environment variables before the command, such as `curl -fsSL … | TT
 | --- | --- | --- |
 | `TTPANE_VERSION` | All | Install a specific release, such as `v0.2.0`, instead of the latest. |
 | `TTPANE_PREFIX` | macOS, Linux | Install under another prefix instead of `~/.local`. For every user, use `/usr/local` and run the script with `sudo`. |
-| `TTPANE_TASKS` | Windows | Optional shortcuts, comma-separated: `desktopicon` (desktop shortcut), `startup` (start at sign-in). Unset, a new install has neither and an upgrade keeps your earlier choices; `''` turns both off. |
+| `TTPANE_TASKS` | Windows | Optional shortcuts: `desktopicon` (desktop shortcut). Unset, a new install has none and an upgrade keeps your earlier choice; `''` turns it off. The former `startup` task is ignored; see launch at login below. |
 | `TTPANE_NO_LAUNCH` | Windows | Set to `1` to not start tt-pane after installing. |
 
 ## Download tt-pane
@@ -124,7 +124,7 @@ Your configuration is kept when you upgrade or uninstall.
   </TabItem>
 </Tabs>
 
-Automatic sign-in startup is an installer option on Windows (`TTPANE_TASKS=startup` with the script); other platforms require manual setup.
+tt-pane starts at sign-in on Windows, macOS and Linux once you have opened it. Turn this off in **Settings → General → Launch at login**; see [configuration](/tt-pane/configuration/#launch-at-login).
 
 ## Build from source
 

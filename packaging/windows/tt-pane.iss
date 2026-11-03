@@ -48,7 +48,6 @@ FinishedLabel=Setup has installed tt-pane on your computer.%n%nFind tt-pane in y
 
 [Tasks]
 Name: desktopicon; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "Shortcuts:"; Flags: unchecked
-Name: startup; Description: "Start tt-pane when I sign in to Windows"; GroupDescription: "Startup:"; Flags: unchecked
 
 [Files]
 Source: "{#StageDir}\tt-pane.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -57,7 +56,6 @@ Source: "{#StageDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 [Icons]
 Name: "{group}\{#ShortcutName}"; Filename: "{app}\tt-pane.exe"; Comment: "Keyboard-first window positioning"
 Name: "{userdesktop}\{#ShortcutName}"; Filename: "{app}\tt-pane.exe"; Tasks: desktopicon
-Name: "{userstartup}\{#ShortcutName}"; Filename: "{app}\tt-pane.exe"; Tasks: startup
 
 ; Remove shortcuts when their task is deselected during an upgrade.
 [InstallDelete]
@@ -70,9 +68,22 @@ Type: files; Name: "{userdesktop}\sTile.lnk"
 Type: files; Name: "{userstartup}\sTile.lnk"
 #endif
 Type: files; Name: "{userdesktop}\{#ShortcutName}.lnk"; Tasks: not desktopicon
-Type: files; Name: "{userstartup}\{#ShortcutName}.lnk"; Tasks: not startup
+; tt-pane now registers its own sign-in entry (Settings → Launch at login);
+; remove the shortcut earlier installers created so it doesn't start twice.
+Type: files; Name: "{userstartup}\{#ShortcutName}.lnk"
 
 [Run]
 Filename: "{app}\tt-pane.exe"; Description: "Launch tt-pane in the system tray"; Flags: nowait postinstall skipifsilent unchecked
 
 ; Deliberately no UninstallDelete: configuration and cycle state belong to users.
+
+[Code]
+// Remove the sign-in entry tt-pane registers for Launch at login.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'tt-pane');
+    RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run', 'tt-pane');
+  end;
+end;

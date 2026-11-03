@@ -12,10 +12,10 @@
 #
 # Environment:
 #   TTPANE_VERSION    tag to install, such as v0.2.0 (default: latest release)
-#   TTPANE_TASKS      setup's optional tasks, comma-separated: desktopicon
-#                     (desktop shortcut) and startup (start at sign-in). Unset,
-#                     a new install has neither and an upgrade keeps the ones
-#                     chosen before; '' turns both off.
+#   TTPANE_TASKS      setup's optional tasks: desktopicon (desktop shortcut).
+#                     Unset, a new install has none and an upgrade keeps the
+#                     choice made before; '' turns it off. tt-pane starts at
+#                     sign-in by default; turn it off in Settings.
 #   TTPANE_NO_LAUNCH  set to 1 to not start tt-pane after installing
 #   TTPANE_UNINSTALL  set to 1 to uninstall instead (or pass -Uninstall)
 
@@ -124,7 +124,12 @@ function Install-TtPane {
         $arguments = $silent + "/LOG=`"$log`""
         # Without /TASKS, setup uses its defaults on a new install and the
         # previous choices on an upgrade.
-        if ($null -ne $env:TTPANE_TASKS) { $arguments += "/TASKS=`"$($env:TTPANE_TASKS)`"" }
+        # "startup" was a setup task before tt-pane managed launch at login
+        # itself; drop it so older scripts keep working.
+        if ($null -ne $env:TTPANE_TASKS) {
+            $tasks = ($env:TTPANE_TASKS -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -ne 'startup' }) -join ','
+            $arguments += "/TASKS=`"$tasks`""
+        }
 
         Write-Host "Installing tt-pane $version"
         $process = Start-Process -FilePath $setup -ArgumentList $arguments -PassThru -Wait

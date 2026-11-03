@@ -62,6 +62,13 @@ if [ "$uninstall" = 1 ]; then
             removed=1
         fi
     done
+    # Remove the sign-in entry tt-pane registers when launch at login is on.
+    if [ "$os" = macos ]; then
+        autostart="$HOME/Library/LaunchAgents/net.thirtytech.tt-pane.plist"
+    else
+        autostart="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/tt-pane.desktop"
+    fi
+    rm -f "$autostart"
     [ "$removed" = 1 ] || err "tt-pane isn't installed in $prefix"
     [ "$os" = linux ] && refresh
     echo "Removed tt-pane from $prefix. Your configuration is kept."

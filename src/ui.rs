@@ -305,6 +305,10 @@ impl Settings {
             return;
         }
         self.active = self.draft.clone();
+        if let Err(error) = crate::autostart::apply(self.active.launch_at_login) {
+            self.message(format!("Saved, but {error:#}"), true, cx);
+            return;
+        }
         self.message(
             if platform::is_wayland() {
                 "Saved. Export shortcuts and reload your compositor to activate them."
@@ -448,6 +452,14 @@ impl Render for Settings {
                     .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("H: left, J: down, K: up, L: right. Tap H/J/K/L to navigate background windows by default. Inside a centered group, H/L rotate continuously. Hold for 400 ms to enter covered middle windows from an edge, or exit a middle window to a background edge window. Windows only.")))
                     .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+Shift+8 (*).")))
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap."))
+                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("General"))
+                    .child(div().text_sm().child("Launch at login"))
+                    .child(button("launch-at-login", if self.draft.launch_at_login { "On" } else { "Off" })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.launch_at_login = !this.draft.launch_at_login;
+                            this.message("Launch at login updated. Save to activate.", false, cx);
+                        })))
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Start tt-pane in the tray when you sign in."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Window focus"))
                     .when(cfg!(windows), |el| el
                         .child(div().text_sm().child("Focus glow"))
@@ -661,6 +673,15 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
         }
         let mut status = format!("Configuration: {}", path.display());
         let mut error = false;
+        // Keep the sign-in entry in step with the setting and the current
+        // executable. Debug builds skip registering so `cargo run` never
+        // installs a login item pointing into target/.
+        if !(config.launch_at_login && cfg!(debug_assertions))
+            && let Err(e) = crate::autostart::apply(config.launch_at_login)
+        {
+            status = format!("{e:#}");
+            error = true;
+        }
         let shortcuts = match Shortcuts::new() {
             Ok(mut shortcuts) => {
                 if let Err(e) = shortcuts.replace(&config) {

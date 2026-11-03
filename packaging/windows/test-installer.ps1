@@ -45,12 +45,17 @@ function Invoke-Setup([string] $Tasks, [string] $LogName) {
     if ($process.ExitCode -ne 0) { throw "Setup failed with $($process.ExitCode); see $testRoot" }
 }
 try {
-    Invoke-Setup 'desktopicon,startup' 'install'
-    foreach ($path in $uninstall, $desktop, $startup, $menu, $key) {
+    # A startup shortcut from an older installer must be removed: tt-pane now
+    # registers its own sign-in entry.
+    New-Item -ItemType Directory -Force -Path (Split-Path $startup) | Out-Null
+    Set-Content -LiteralPath $startup -Value ''
+    Invoke-Setup 'desktopicon' 'install'
+    if (Test-Path -LiteralPath $startup) { throw 'Install kept the legacy startup shortcut' }
+    foreach ($path in $uninstall, $desktop, $menu, $key) {
         if (-not (Test-Path -LiteralPath $path)) { throw "Missing installed item: $path" }
     }
     $shell = New-Object -ComObject WScript.Shell
-    foreach ($link in $desktop, $startup, $menu) {
+    foreach ($link in $desktop, $menu) {
         if ($shell.CreateShortcut($link).TargetPath -ne (Join-Path $install 'tt-pane.exe')) { throw "Wrong shortcut target: $link" }
     }
     $actual = & "$install/tt-pane.exe" --version | Out-String
@@ -61,7 +66,7 @@ try {
     $sentinel = Join-Path $install 'user-owned.txt'
     Set-Content -LiteralPath $sentinel -Value 'keep me' -NoNewline
     Invoke-Setup '' 'upgrade'
-    if ((Test-Path -LiteralPath $desktop) -or (Test-Path -LiteralPath $startup)) { throw 'Upgrade retained deselected shortcuts' }
+    if (Test-Path -LiteralPath $desktop) { throw 'Upgrade retained deselected shortcuts' }
     if ((Get-ItemProperty -LiteralPath $key).DisplayVersion -ne $version) { throw 'Wrong registered version' }
     $process = Start-Process -FilePath $uninstall -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -WindowStyle Hidden -PassThru -Wait
     if ($process.ExitCode -ne 0) { throw "Uninstall failed: $($process.ExitCode)" }

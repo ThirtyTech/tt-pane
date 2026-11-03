@@ -19,6 +19,9 @@ pub struct Binding {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub version: u32,
+    /// Start tt-pane when the user signs in. On by default.
+    #[serde(default = "enabled")]
+    pub launch_at_login: bool,
     #[serde(default)]
     pub growth: Growth,
     #[serde(default)]
@@ -26,6 +29,10 @@ pub struct Config {
     #[serde(default)]
     pub focus: Focus,
     pub bindings: Vec<Binding>,
+}
+
+fn enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,6 +149,7 @@ impl Default for Config {
         ];
         Self {
             version: 1,
+            launch_at_login: true,
             growth: Growth::default(),
             width_resize: WidthResize::default(),
             focus: Focus::default(),
@@ -620,5 +628,24 @@ mod middle_navigation_tests {
             toml::from_str::<Focus>(&toml::to_string(&enabled).unwrap()).unwrap(),
             enabled
         );
+    }
+}
+
+#[cfg(test)]
+mod launch_at_login_tests {
+    use super::*;
+    #[test]
+    fn launch_at_login_defaults_on_and_roundtrips_opt_out() {
+        assert!(Config::default().launch_at_login);
+        let old: Config = toml::from_str("version = 1\nbindings = []").unwrap();
+        assert!(old.launch_at_login);
+        let config = Config {
+            launch_at_login: false,
+            ..Config::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        config.save(&path).unwrap();
+        assert!(!Config::load(&path).unwrap().launch_at_login);
     }
 }

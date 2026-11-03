@@ -20,7 +20,7 @@ See [CHANGELOG.md](CHANGELOG.md) for changes by release.
 
 Download packages from [GitHub Releases](https://github.com/thirtytech/tt-pane/releases). Release packages become available after a matching version tag is published.
 
-- **Windows x64:** in PowerShell, run the install script. It downloads the setup, verifies its checksum, installs silently with the defaults (no desktop or sign-in shortcut), closes a running tt-pane for an upgrade and starts tt-pane afterwards. Set `TTPANE_TASKS` to `desktopicon`, `startup` or both (comma-separated) to choose shortcuts; upgrades otherwise keep your earlier choices. `TTPANE_VERSION` picks a release and `TTPANE_NO_LAUNCH=1` skips starting it.
+- **Windows x64:** in PowerShell, run the install script. It downloads the setup, verifies its checksum, installs silently with the defaults (no desktop or sign-in shortcut), closes a running tt-pane for an upgrade and starts tt-pane afterwards. Set `TTPANE_TASKS` to `desktopicon` for a desktop shortcut; upgrades otherwise keep your earlier choice. `TTPANE_VERSION` picks a release and `TTPANE_NO_LAUNCH=1` skips starting it.
 
   ```powershell
   powershell -ExecutionPolicy Bypass -c "irm https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.ps1 | iex"
@@ -38,7 +38,7 @@ Download packages from [GitHub Releases](https://github.com/thirtytech/tt-pane/r
 
 Windows and Linux packages are unsigned; the macOS app is signed and notarized when the release has signing credentials, and signed ad hoc otherwise. Each release includes `SHA256SUMS.txt`; compare your download with `Get-FileHash -Algorithm SHA256` (Windows), `sha256sum` (Linux), or `shasum -a 256` (macOS).
 
-Quit the existing tray instance before upgrading. On macOS, quit from the menu-bar icon and drag the new tt-pane onto Applications, replacing the old one; an ad-hoc-signed update may need Accessibility turned off and on again. On Windows, rerun the installer; deselecting a previously selected shortcut removes it. Uninstall through **Settings → Apps → Installed apps → tt-pane**. From PowerShell: `$env:TTPANE_UNINSTALL = '1'; irm https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.ps1 | iex`. Your configuration in `%APPDATA%\tt-pane\config` is preserved. The installer does not change PATH; use the installed executable's full path for CLI commands. Login startup is available through the Windows installer; other platforms still require manual setup. To remove a script install: `curl -fsSL https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.sh | sh -s -- --uninstall`.
+Quit the existing tray instance before upgrading. On macOS, quit from the menu-bar icon and drag the new tt-pane onto Applications, replacing the old one; an ad-hoc-signed update may need Accessibility turned off and on again. On Windows, rerun the installer; deselecting a previously selected shortcut removes it. Uninstall through **Settings → Apps → Installed apps → tt-pane**. From PowerShell: `$env:TTPANE_UNINSTALL = '1'; irm https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.ps1 | iex`. Your configuration in `%APPDATA%\tt-pane\config` is preserved. The installer does not change PATH; use the installed executable's full path for CLI commands. tt-pane starts at sign-in by default on every platform; turn it off in **Settings → General → Launch at login**. Uninstalling removes the sign-in entry. To remove a script install: `curl -fsSL https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.sh | sh -s -- --uninstall`.
 
 For local packaging, release workflow details, and installer artwork, see [packaging/README.md](packaging/README.md).
 
@@ -58,7 +58,7 @@ Hover over a keybinding row to animate **Position preview** to that action's ini
 
 Windows GUI builds do not allocate a console. When launched from a terminal (including `cargo run`), they attach to that terminal so **Ctrl+C terminates tt-pane**. Launching from Explorer or a shortcut remains console-free; piped CLI output is preserved. macOS uses an accessory app with a menu-bar icon and no Dock icon. Linux uses the StatusNotifierItem D-Bus protocol; enable a tray host such as KDE, a Waybar tray module, or the GNOME AppIndicator extension. No GTK tray event loop is required.
 
-Launch-at-login installation outside Windows, and automatic configuration-file watching remain future work.
+Automatic configuration-file watching remains future work.
 
 ### Build prerequisites
 

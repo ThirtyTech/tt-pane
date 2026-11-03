@@ -25,6 +25,7 @@ This is a **partial example**, not the complete default binding list. Omitted ac
 
 ```toml
 version = 1
+launch_at_login = true
 
 [growth]
 percent = 15
@@ -58,6 +59,18 @@ Tap **Ctrl+Alt+H/L** (release before **400 ms**) for regular navigation. Hold fo
 Saved growth settings are preserved on upgrade. New configurations and files without growth settings default to 15% and three steps; reset defaults and save to adopt these values in an existing configuration. Width and growth controls are under **Advanced**, which starts collapsed.
 
 Old `include_obscured = false` settings migrate to 50%, and `true` or an omitted value migrates to 10%. An explicit `minimum_visible_percent` wins if both keys exist. Saving writes only the new percentage key.
+
+## Launch at login
+
+**Settings → General → Launch at login** starts tt-pane in the tray when you sign in. It is on by default, including for existing configurations; turn it off and save to opt out (`launch_at_login = false`). Each tray launch refreshes the entry so it follows the app if you move it:
+
+| Platform | Sign-in entry |
+| --- | --- |
+| Windows | `tt-pane` value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` |
+| macOS | `~/Library/LaunchAgents/net.thirtytech.tt-pane.plist` |
+| Linux | `${XDG_CONFIG_HOME:-~/.config}/autostart/tt-pane.desktop` |
+
+The entry is written the first time the tray starts, so install and open tt-pane once. Debug builds (`cargo run` without `--release`) do not add the entry on launch. Uninstalling removes it.
 
 ## Focus glow — Windows
 
