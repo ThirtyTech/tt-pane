@@ -9,13 +9,44 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
     <p>From desktop chaos to everything in place. See how a few keys can change your flow.</p>
     <a href="https://www.youtube.com/watch?v=eov7tVFdQfA" target="_blank" rel="noopener noreferrer">Watch on YouTube <span aria-hidden="true">↗</span><span class="sr-only"> (opens in a new tab)</span></a>
   </div>
+  <div class="promo-player">
   <video controls playsinline preload="none" poster={`${base}/media/tt-pane-promo-thumbnail.png`} aria-label="tt-pane promo: Workspace, evolved">
     <source src="https://thirtytech-my.sharepoint.com/:v:/g/personal/jsheely_thirtytech_net/IQC0yxRKfde-TbFlqNtFvbLkASndhWPRJjthWaNDysnAyis?e=ksWshD&amp;download=1" type="video/mp4" />
     <p><a href="https://www.youtube.com/watch?v=eov7tVFdQfA">Watch the tt-pane promo on YouTube.</a></p>
   </video>
+  <button class="promo-play" type="button" aria-label="Play tt-pane promo: Workspace, evolved" hidden>
+    <span class="promo-play-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+    </span>
+  </button>
+  </div>
 </section>
 
+<script>
+  document.querySelectorAll<HTMLDivElement>('.promo-player').forEach((player) => {
+    const video = player.querySelector('video')!;
+    const button = player.querySelector<HTMLButtonElement>('.promo-play')!;
+    button.hidden = false;
+    video.controls = false;
 
+    video.addEventListener('playing', () => {
+      button.hidden = true;
+      video.controls = true;
+      if (document.activeElement === button) video.focus();
+    });
+
+    button.addEventListener('click', async () => {
+      try {
+        await video.play();
+      } catch {
+        // Keep native controls available if the media cannot start.
+        button.hidden = true;
+        video.controls = true;
+        if (document.activeElement === button) video.focus();
+      }
+    });
+  });
+</script>
 
 <style>
   .promo { display: grid; grid-template-columns: .7fr 1.3fr; align-items: center; gap: 2.5rem; padding: 2rem; margin-bottom: 3rem; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
@@ -25,7 +56,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
   .promo-copy > p:not(.promo-label) { margin: 1rem 0 1.5rem; color: var(--muted); line-height: 1.7; }
   .promo-copy > a { display: inline-flex; align-items: center; gap: .7rem; min-height: 44px; color: var(--secondary); font-weight: 600; text-underline-offset: 4px; }
   video { display: block; width: 100%; min-width: 0; aspect-ratio: 16 / 9; border-radius: 8px; background: #06121e; }
-  a:focus-visible, video:focus-visible { outline: 2px solid var(--mint); outline-offset: 4px; }
+  .promo-player { position: relative; min-width: 0; }
+  .promo-play { position: absolute; inset: 0; display: grid; place-items: center; width: 100%; height: 100%; padding: 0; border: 0; border-radius: 8px; background: transparent; color: white; cursor: pointer; }
+  .promo-play[hidden] { display: none; }
+  .promo-play-icon { display: grid; place-items: center; width: 72px; height: 72px; border: 1px solid rgb(255 255 255 / 35%); border-radius: 50%; background: rgb(6 18 30 / 45%); backdrop-filter: blur(4px); }
+  .promo-play:hover .promo-play-icon, .promo-play:focus-visible .promo-play-icon { background: rgb(6 18 30 / 70%); }
+  a:focus-visible, video:focus-visible, .promo-play:focus-visible { outline: 2px solid var(--mint); outline-offset: 4px; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   @media (max-width: 50rem) { .promo { grid-template-columns: 1fr; gap: 1.5rem; padding: 1.25rem; } }
 </style>
