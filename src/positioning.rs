@@ -262,8 +262,10 @@ fn apply_inner(
     config.validate()?;
     let visibility = if include_hidden {
         platform::FocusVisibility::Hold
-    } else {
+    } else if config.focus.visibility_filter_enabled {
         platform::FocusVisibility::MoreThanPercent(config.focus.minimum_visible_percent)
+    } else {
+        platform::FocusVisibility::IncludeHidden
     };
     #[cfg(not(windows))]
     if action.focuses() {

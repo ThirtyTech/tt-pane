@@ -44,6 +44,7 @@ pub struct WidthResize {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "FocusInput")]
 pub struct Focus {
+    pub visibility_filter_enabled: bool,
     pub minimum_visible_percent: u32,
     pub glow_enabled: bool,
     pub glow_color: String,
@@ -52,6 +53,7 @@ pub struct Focus {
 #[derive(Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 struct FocusInput {
+    visibility_filter_enabled: Option<bool>,
     minimum_visible_percent: Option<u32>,
     include_obscured: Option<bool>,
     glow_enabled: Option<bool>,
@@ -62,6 +64,7 @@ impl From<FocusInput> for Focus {
     fn from(input: FocusInput) -> Self {
         let defaults = Self::default();
         Self {
+            visibility_filter_enabled: input.visibility_filter_enabled.unwrap_or(false),
             minimum_visible_percent: input.minimum_visible_percent.unwrap_or_else(|| {
                 if input.include_obscured == Some(false) {
                     50
@@ -78,6 +81,7 @@ impl From<FocusInput> for Focus {
 impl Default for Focus {
     fn default() -> Self {
         Self {
+            visibility_filter_enabled: false,
             minimum_visible_percent: 10,
             glow_enabled: true,
             glow_color: "#F2F0E8".into(),
@@ -509,6 +513,8 @@ mod focus_visibility_tests {
     fn visibility_percentage_defaults_migrates_validates_and_roundtrips() {
         let old: Config = toml::from_str("version = 1\nbindings = []").unwrap();
         assert_eq!(old.focus.minimum_visible_percent, 10);
+        assert!(!old.focus.visibility_filter_enabled);
+        assert!(!Config::default().focus.visibility_filter_enabled);
         assert_eq!(Config::default().focus.minimum_visible_percent, 10);
         for (settings, expected) in [
             ("glow_enabled = false", 10),
@@ -520,6 +526,7 @@ mod focus_visibility_tests {
                 toml::from_str(&format!("version = 1\nbindings = []\n[focus]\n{settings}"))
                     .unwrap();
             assert_eq!(config.focus.minimum_visible_percent, expected);
+            assert!(!config.focus.visibility_filter_enabled);
         }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
@@ -536,6 +543,13 @@ mod focus_visibility_tests {
                     .unwrap()
                     .contains("include_obscured")
             );
+        }
+        for enabled in [true, false] {
+            let mut config = old.clone();
+            config.focus.visibility_filter_enabled = enabled;
+            config.focus.minimum_visible_percent = 35;
+            config.save(&path).unwrap();
+            assert_eq!(Config::load(&path).unwrap().focus, config.focus);
         }
         for value in [100, u32::MAX] {
             let mut config = old.clone();

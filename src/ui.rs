@@ -474,6 +474,12 @@ impl Render for Settings {
                             cx.notify();
                         })))
                     .when(self.advanced_expanded, |el| el
+                    .child(div().text_sm().child("Filter middle windows by visibility"))
+                    .child(button("visibility-filter", if self.draft.focus.visibility_filter_enabled { "On" } else { "Off" })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.focus.visibility_filter_enabled = !this.draft.focus.visibility_filter_enabled;
+                            this.message("Window focus updated. Save to activate.", false, cx);
+                        })))
                     .child(div().text_sm().child("Minimum middle-window visibility"))
                     .child(div().flex().items_center().justify_between()
                         .child(button("visibility-less", "−").on_click(cx.listener(|this, _, _, cx| {
@@ -485,7 +491,7 @@ impl Render for Settings {
                             this.draft.focus.minimum_visible_percent = (this.draft.focus.minimum_visible_percent + 1).min(99);
                             this.message("Window focus updated. Save to activate.", false, cx);
                         }))))
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Regular focus requires more than this percentage of a middle window to be visible (default: 10%). Hold H/L for 400 ms to enter covered middle windows from an edge, or return from a middle window to the background. Edge-snapped windows stay reachable. Minimized windows and other virtual desktops stay excluded."))
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Filter Off (default): include covered middle windows. On: regular focus requires more than the percentage above (default: 10%) to be visible. Hold H/L for 400 ms to enter covered middle windows from an edge, or return from a middle window to the background. Minimized windows and other virtual desktops stay excluded."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Width adjustment"))
                     .child(div().text_sm().child("Width change per press"))
                     .child(div().flex().items_center().justify_between()

@@ -312,6 +312,7 @@ mod tests {
             let path = dir.path().join("config.toml");
             let mut config = crate::config::Config::default();
             config.focus.glow_enabled = false;
+            config.focus.visibility_filter_enabled = true;
             let [left, middle, right] = handles;
             for (handle, action) in [
                 (left, Action::Left),
@@ -371,6 +372,17 @@ mod tests {
                 // our fixture. The hold must reveal a threshold-excluded target.
                 assert!(all.contains(&target));
                 assert!(!visible.contains(&target));
+                // Disabling the filter also makes covered candidates reachable
+                // with an ordinary press, without changing the saved percentage.
+                config.focus.visibility_filter_enabled = false;
+                focus(middle);
+                focus(right);
+                focus(left);
+                crate::positioning::apply(&config, &path, Action::FocusRight, Some(left)).unwrap();
+                let target = platform::foreground_handle().unwrap();
+                assert!(all.contains(&target));
+                assert!(!visible.contains(&target));
+                config.focus.visibility_filter_enabled = true;
             }
         });
     }
