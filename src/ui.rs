@@ -539,8 +539,7 @@ impl Render for Settings {
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("First press places the window. Repeats multiply its size, keeping the corner or edge anchored. Center starts at 50% width and height, then grows equally in every direction. Growth stops at the work area; 0 steps turns it off.")))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child(if platform::is_wayland() {
                         "Wayland: save, export shortcuts, then include the file in your compositor config. Sway and Hyprland are supported."
-                    } else { "Closing settings keeps tt-pane running in the tray. Use the tray menu to quit." }))
-                    .child(button("close", "Close settings").on_click(|_, window, _| window.remove_window()))))
+                    } else { "Closing settings keeps tt-pane running in the tray. Use the tray menu to quit." }))))
             .child(div().text_sm().text_color(rgb(if self.error { 0xffa59b } else { 0x91a4bb })).child(self.status.clone()))
             .child(div().flex().items_center().justify_between().gap_3()
                 .child(button("reset", "Reset defaults").on_click(cx.listener(|this, _, _, cx| {
