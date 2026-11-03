@@ -20,12 +20,24 @@ See [CHANGELOG.md](CHANGELOG.md) for changes by release.
 
 Download packages from [GitHub Releases](https://github.com/thirtytech/tt-pane/releases). Release packages become available after a matching version tag is published.
 
-- **Windows x64:** run `tt-pane-vVERSION-windows-x64-setup.exe`. It installs for your account without administrator rights, adds a Start menu shortcut, and offers optional desktop and sign-in shortcuts. Launch tt-pane from Start, then open Settings from its tray menu. The portable ZIP can be unpacked anywhere instead.
-- **Linux x64 / macOS Apple Silicon:** extract the matching `.tar.gz` and run `./tt-pane`. These are standalone executables, not system packages or a macOS app bundle. See the platform prerequisites below; macOS requires Accessibility permission and Linux requires its native libraries and a tray host.
+- **Windows x64:** in PowerShell, run the install script. It downloads the setup, verifies its checksum, installs silently with the defaults (no desktop or sign-in shortcut), closes a running tt-pane for an upgrade and starts tt-pane afterwards. Set `TTPANE_TASKS` to `desktopicon`, `startup` or both (comma-separated) to choose shortcuts; upgrades otherwise keep your earlier choices. `TTPANE_VERSION` picks a release and `TTPANE_NO_LAUNCH=1` skips starting it.
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -c "irm https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.ps1 | iex"
+  ```
+
+  Or run `tt-pane-vVERSION-windows-x64-setup.exe` yourself. It installs for your account without administrator rights, adds a Start menu shortcut, and offers optional desktop and sign-in shortcuts. Launch tt-pane from Start, then open Settings from its tray menu. The portable ZIP can be unpacked anywhere instead.
+- **Linux x64 / macOS Apple Silicon:** run the install script. It verifies the download's checksum and installs `tt-pane` into `~/.local/bin`; on Linux it also adds an app launcher and icon under `~/.local/share`. Set `TTPANE_VERSION` (such as `v0.2.0`) for a specific release, or `TTPANE_PREFIX` for another location (`/usr/local` with `sudo` for every user). Rerun it to upgrade; pass `--uninstall` to remove it.
+
+  ```sh
+  curl -fsSL https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.sh | sh
+  ```
+
+  Or extract the matching `.tar.gz` and run `./tt-pane`. These are standalone executables, not system packages or a macOS app bundle. See the platform prerequisites below; macOS requires Accessibility permission and Linux requires its native libraries and a tray host.
 
 Packages are unsigned. Each release includes `SHA256SUMS.txt`; compare your download with `Get-FileHash -Algorithm SHA256` (Windows), `sha256sum` (Linux), or `shasum -a 256` (macOS).
 
-Quit the existing tray instance before upgrading. On Windows, rerun the installer; deselecting a previously selected shortcut removes it. Uninstall through **Settings → Apps → Installed apps → tt-pane**. Your configuration in `%APPDATA%\tt-pane\config` is preserved. The installer does not change PATH; use the installed executable's full path for CLI commands. Login startup is available through the Windows installer; other platforms still require manual setup.
+Quit the existing tray instance before upgrading. On Windows, rerun the installer; deselecting a previously selected shortcut removes it. Uninstall through **Settings → Apps → Installed apps → tt-pane**. From PowerShell: `$env:TTPANE_UNINSTALL = '1'; irm https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.ps1 | iex`. Your configuration in `%APPDATA%\tt-pane\config` is preserved. The installer does not change PATH; use the installed executable's full path for CLI commands. Login startup is available through the Windows installer; other platforms still require manual setup. To remove a script install: `curl -fsSL https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.sh | sh -s -- --uninstall`.
 
 For local packaging, release workflow details, and installer artwork, see [packaging/README.md](packaging/README.md).
 

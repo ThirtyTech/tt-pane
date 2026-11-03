@@ -80,6 +80,8 @@ jobs:
           name="tt-pane-$RELEASE_TAG-${{ matrix.platform }}"
           mkdir -p "dist/$name"
           cp "target/${{ matrix.target }}/release/tt-pane" README.md "dist/$name/"
+          # install.sh adds an app launcher with this icon on Linux.
+          if [[ "${{ runner.os }}" == Linux ]]; then cp assets/tt-pane.png "dist/$name/"; fi
           tar -czf "dist/$name.tar.gz" -C dist "$name"
           rm -r "dist/$name"
       - uses: actions/upload-artifact@v7
@@ -107,6 +109,8 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: sha256sum tt-pane-* > SHA256SUMS.txt
+      - name: Add install script
+        run: cp install.sh install.ps1 dist/
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -115,11 +119,24 @@ jobs:
         run: |
           prerelease=()
           [[ "$GITHUB_REF_NAME" == *-* ]] && prerelease=(--prerelease)
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/install.sh"
           {
             echo '## Install tt-pane'
             echo
-            echo 'Windows x64: download the setup.exe for a per-user install, or unpack the portable ZIP.'
-            echo 'Linux x64 / macOS Apple Silicon: unpack the tar.gz and run tt-pane. See README.md in the archive for runtime dependencies and macOS Accessibility access.'
+            echo 'Linux x64 and macOS Apple Silicon, into `~/.local`:'
+            echo
+            echo '```sh'
+            echo "curl -fsSL $url | TTPANE_VERSION=$GITHUB_REF_NAME sh"
+            echo '```'
+            echo
+            echo 'Or unpack the tar.gz and run tt-pane. See README.md in the archive for runtime dependencies and macOS Accessibility access.'
+            echo 'Windows x64, in PowerShell (runs the setup silently, for your account only):'
+            echo
+            echo '```powershell'
+            echo "\$env:TTPANE_VERSION = '$GITHUB_REF_NAME'; irm ${url%.sh}.ps1 | iex"
+            echo '```'
+            echo
+            echo 'Or download the setup.exe for a per-user install, or unpack the portable ZIP.'
             echo 'tt-pane starts in the system tray. Quit an existing instance before upgrading.'
             echo 'These packages are unsigned. SHA256SUMS.txt contains the SHA-256 checksum of each download.'
           } > notes.md

@@ -2,7 +2,7 @@
 
 `.github/workflows/release.yml` follows [tt-git's release workflow](https://github.com/ThirtyTech/tt-git/blob/main/.github/workflows/release.yml): version tags must match Cargo, each platform builds natively, and all successful builds are published together with SHA-256 checksums. Unlike tt-git's separate TUI/GUI jobs, tt-pane has one executable, so every platform must succeed before publication.
 
-The initial matrix is Windows x64, Linux x64 (Ubuntu 22.04), and macOS Apple Silicon. Linux and macOS ship standalone archives; Windows also ships a native installer. Intel macOS, native Windows ARM64, Linux ARM64, signing, notarization, and Linux/macOS system installers are not included.
+The initial matrix is Windows x64, Linux x64 (Ubuntu 22.04), and macOS Apple Silicon. Linux and macOS ship standalone archives, which the root `install.sh` downloads, verifies and installs (adding a desktop launcher on Linux, from the `tt-pane.png` the Linux archive carries); Windows also ships a native installer, which the root `install.ps1` downloads, verifies and runs silently. Intel macOS, native Windows ARM64, Linux ARM64, signing, notarization, and Linux/macOS system installers are not included.
 
 ## Build locally on Windows
 
@@ -35,7 +35,7 @@ Silent install: `setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=""`. 
 
 Run **Actions → Release → Run workflow** for downloadable artifacts without publishing. To publish, update the application and platform crate versions, Herdr plugin version, and lockfile, then push a matching `vMAJOR.MINOR.PATCH` tag. Tags such as `v0.2.0-rc.1` create prereleases. The version guard rejects mismatched tags. Only the publication job has `contents: write`; builds use read-only permissions. Windows installation smoke tests run before uploading artifacts.
 
-The release includes the three platform archives, Windows setup executable, generated release notes, and `SHA256SUMS.txt`. Manual builds are identified by the Actions run/commit, while their filenames and binary versions retain the Cargo version. No workflow run, tag, or release is created by local packaging.
+The release includes the three platform archives, Windows setup executable, `install.sh`, `install.ps1`, generated release notes, and `SHA256SUMS.txt`. Manual builds are identified by the Actions run/commit, while their filenames and binary versions retain the Cargo version. No workflow run, tag, or release is created by local packaging.
 
 ## Installer artwork
 
