@@ -153,11 +153,11 @@ fn extension_running() -> bool {
         })
 }
 
-/// Actions the GNOME adapter supports. Directional focus and paired resizing
-/// aren't implemented on Linux yet, and Ctrl+Alt+Up/Down would shadow GNOME's
-/// workspace switching for nothing.
+/// Actions the GNOME adapter supports. Paired resizing isn't implemented on
+/// Linux yet, and Ctrl+Alt+Up/Down would shadow GNOME's workspace switching
+/// for nothing.
 fn supported(action: Action) -> bool {
-    !action.focuses() && !action.adjusts_pair()
+    !action.adjusts_pair()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -384,12 +384,13 @@ mod tests {
                 ),
             ]
         );
-        assert!(
-            entries
-                .iter()
-                .all(|e| !e.binding.contains("Up") && !e.binding.ends_with('h'))
-        );
-        assert!(skipped.contains(&Action::FocusLeft) && skipped.contains(&Action::ResizeUp));
+        assert!(entries.iter().all(|e| !e.binding.contains("Up")));
+        let right = entries
+            .iter()
+            .find(|e| e.command.ends_with(" apply focus-right"))
+            .unwrap();
+        assert_eq!(right.binding, "<Control><Alt>l");
+        assert_eq!(skipped, [Action::ResizeUp, Action::ResizeDown]);
         let paths: std::collections::HashSet<_> = entries.iter().map(|e| &e.path).collect();
         assert_eq!(paths.len(), entries.len(), "paths must be unique");
     }

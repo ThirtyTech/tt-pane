@@ -99,6 +99,11 @@ pub fn description() -> &'static str {
     }
 }
 
+/// Centered groups on Linux: implemented for GNOME on Wayland, inert elsewhere.
+#[cfg(target_os = "linux")]
+pub use linux::{
+    WindowSnapshot, focus_snapshot, foreground_handle, move_snapshot, window_snapshot,
+};
 #[cfg(target_os = "macos")]
 pub use macos::{accessibility_trusted, show_alert};
 #[cfg(windows)]
@@ -190,14 +195,16 @@ pub fn focus_window_with_members(
             handle.is_none(),
             "Explicit --window targeting currently supports Windows HWNDs only"
         );
-        // Centered groups are Windows-only, so no group or members reach macOS.
+        // Centered groups are Windows and GNOME only, so no group or members reach macOS.
         let _ = (group, middle_members);
         macos::focus_window(action, visibility)
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    return linux::focus_window(handle, action, visibility, group, middle_members);
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         let _ = (handle, action, visibility, group, middle_members);
-        anyhow::bail!("Directional window focus currently supports Windows and macOS only")
+        anyhow::bail!("Directional window focus currently supports Windows, macOS and GNOME only")
     }
 }
 
@@ -205,9 +212,11 @@ pub fn focus_window_with_members(
 pub fn focus_eligible_handles(handle: u64, visibility: FocusVisibility) -> Result<Vec<u64>> {
     #[cfg(windows)]
     return windows::focus_eligible_handles(handle, visibility);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return linux::focus_eligible_handles(handle, visibility);
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (handle, visibility);
-        anyhow::bail!("Directional window focus currently supports Windows only")
+        anyhow::bail!("Directional window focus currently supports Windows and GNOME only")
     }
 }

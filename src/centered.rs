@@ -339,6 +339,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(windows)]
     #[ignore = "requires interactive Windows desktop; briefly focuses disposable windows"]
     fn native_taps_filter_middle_visibility_and_holds_reach_covered_windows() {
         platform::test_support::with_group_windows(|handles| {
@@ -431,6 +432,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     #[ignore = "requires interactive Windows desktop; briefly focuses disposable windows"]
     fn native_hold_exits_middle_group_in_both_directions() {
         platform::test_support::with_focus_windows(|[left, first, second, right]| {
@@ -478,6 +480,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     #[ignore = "requires an interactive Windows desktop and briefly focuses disposable windows"]
     fn native_center_group_promotes_members_and_releases_manually_moved_windows() {
         platform::test_support::with_group_windows(|handles| {

@@ -473,7 +473,7 @@ impl Render for Settings {
                     .child(div().text_sm().child(selected.label()))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Hover a keybinding to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."))
                     .when(selected.adjusts_pair(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Move the shared boundary by 25% of the selected window's current height, with a 50/50 stop when returning toward the middle. Blue shows the neighbor. Windows only; matching left and right edges required.")))
-                    .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("H: left, J: down, K: up, L: right. Tap H/J/K/L to navigate background windows by default. Inside a centered group, H/L rotate continuously. Hold for 400 ms to enter covered middle windows from an edge, or exit a middle window to a background edge window. Windows only.")))
+                    .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("H: left, J: down, K: up, L: right. Tap H/J/K/L to navigate background windows by default. Inside a centered group, H/L rotate continuously. Hold for 400 ms to enter covered middle windows from an edge, or exit a middle window to a background edge window. Holds are Windows only; centered groups rotate on Windows and GNOME on Wayland.")))
                     .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+Shift+8 (*).")))
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("General"))
@@ -784,8 +784,12 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             settings.update(cx, |this, cx| this.message(format!("{e:#}"), true, cx));
         }
         cx.spawn(async move |cx| {
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             let mut group_observed = std::time::Instant::now();
+            // Centered groups need window inspection: native on Windows, the
+            // Shell extension on GNOME. Other Linux sessions have none.
+            #[cfg(any(windows, target_os = "linux"))]
+            let observe_groups = cfg!(windows) || platform::is_gnome_wayland();
             loop {
                 smol::Timer::after(Duration::from_millis(16)).await;
                 if cx
@@ -804,8 +808,10 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                             }
                         }
                         settings.update(cx, |this, cx| {
-                            #[cfg(windows)]
-                            if group_observed.elapsed() >= Duration::from_millis(100) {
+                            #[cfg(any(windows, target_os = "linux"))]
+                            if observe_groups
+                                && group_observed.elapsed() >= Duration::from_millis(100)
+                            {
                                 group_observed = std::time::Instant::now();
                                 if let Err(e) = crate::centered::observe(&this.path) {
                                     this.message(format!("{e:#}"), true, cx);

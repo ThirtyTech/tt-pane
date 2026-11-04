@@ -12,7 +12,7 @@ description: Platform support, permissions, Wayland integration, and common shor
 | Hyprland | Native IPC; selected window becomes floating | Exported compositor bindings |
 | Other Wayland compositors | Not implemented | Not implemented |
 
-Centered window groups and shared-boundary resizing are **Windows-only**. Directional focus works on Windows and macOS. Platform backends compile, but macOS and Linux runtime behavior still needs physical-desktop validation; compilation is not a substitute for that testing.
+Shared-boundary resizing is **Windows-only**. Centered window groups work on Windows and GNOME on Wayland. Directional focus works on Windows, macOS and GNOME on Wayland. Platform backends compile, but macOS and Linux runtime behavior still needs physical-desktop validation; compilation is not a substitute for that testing.
 
 ## Windows
 
@@ -32,7 +32,7 @@ Enable a StatusNotifierItem tray host: KDE, Waybar’s tray module, or GNOME’s
 
 ## Wayland shortcuts
 
-Wayland has no universal API for repositioning other applications. tt-pane explicitly supports Sway and Hyprland. Native Wayland windows cannot be managed through the X11 backend. GNOME Shell and KWin integrations are not implemented.
+Wayland has no universal API for repositioning other applications. tt-pane explicitly supports Sway, Hyprland and GNOME (through a bundled Shell extension). Native Wayland windows cannot be managed through the X11 backend. A KWin integration is not implemented.
 
 Save Settings, click **Export shortcuts**, and include the generated file in your compositor config. Or use the installed executable:
 

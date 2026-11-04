@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Keyboard shortcuts and window positioning now work on GNOME Wayland. tt-pane installs a bundled GNOME Shell extension and registers its bindings as GNOME custom shortcuts (**Set up GNOME** in Settings, or `tt-pane gnome setup`); log out and back in once after the first setup. Directional focus remains unavailable on Linux.
+- Keyboard shortcuts and window positioning now work on GNOME Wayland. tt-pane installs a bundled GNOME Shell extension and registers its bindings as GNOME custom shortcuts (**Set up GNOME** in Settings, or `tt-pane gnome setup`); log out and back in once after the first setup.
+- Directional focus (Ctrl+Alt+H/J/K/L) and centered window groups now work on GNOME Wayland: H/L rotates through windows you centered, as on Windows. The extension gains window listing and focus methods, so run **Set up GNOME** again and log out and back in once. Holding a focus key isn't available on GNOME, because GNOME shortcuts only report presses. Paired vertical resizing is still Windows only.
 - tt-pane starts at sign-in on Windows, macOS and Linux, on by default. Turn it off in **Settings → General → Launch at login** (`launch_at_login` in the configuration). It uses the per-user Run registry value, a LaunchAgent, or an XDG autostart entry. The Windows installer no longer has a startup-shortcut task and removes the one earlier versions created.
 - macOS ships as `tt-pane.app` in a designed drag-to-Applications `.dmg`, like tt-git. It runs from Finder, Launchpad, or Spotlight as a menu-bar app with no terminal; the bare `.tar.gz` remains for scripted use.
 - On macOS, tt-pane asks for Accessibility access at launch with the system dialog and opens Settings to explain it until access is granted. Opening the app again while it runs shows Settings, and startup errors appear in an alert.

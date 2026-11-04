@@ -2,17 +2,18 @@
 //
 // GNOME on Wayland gives ordinary clients no way to move another application's
 // window, so tt-pane asks the shell over the session bus. This extension only
-// reads the focused window and moves the window tt-pane names; all placement
-// logic stays in tt-pane.
+// reports windows, and moves or focuses the window tt-pane names; all placement
+// and navigation logic stays in tt-pane.
 
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import Meta from 'gi://Meta';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 const BUS_NAME = 'net.thirtytech.TtPane';
 const OBJECT_PATH = '/net/thirtytech/TtPane';
-const API_VERSION = 1;
+const API_VERSION = 2;
 
 const INTERFACE = `<node>
   <interface name="net.thirtytech.TtPane">
@@ -28,6 +29,22 @@ const INTERFACE = `<node>
       <arg type="i" direction="in" name="y"/>
       <arg type="i" direction="in" name="width"/>
       <arg type="i" direction="in" name="height"/>
+    </method>
+    <method name="GetFocusedId">
+      <arg type="t" direction="out" name="id"/>
+    </method>
+    <method name="GetWindow">
+      <arg type="t" direction="in" name="id"/>
+      <arg type="b" direction="out" name="available"/>
+      <arg type="(iiii)" direction="out" name="frame"/>
+      <arg type="(iiii)" direction="out" name="work_area"/>
+    </method>
+    <method name="ListWindows">
+      <arg type="a(t(iiii)(iiii)ib)" direction="out" name="windows"/>
+      <arg type="a(iiii)" direction="out" name="monitors"/>
+    </method>
+    <method name="Activate">
+      <arg type="t" direction="in" name="id"/>
     </method>
     <property name="Version" type="u" access="read"/>
   </interface>
@@ -51,6 +68,29 @@ function findWindow(id) {
             return window;
     }
     return null;
+}
+
+// GNOME 49 replaced get_maximized() with is_maximized().
+function isMaximized(window) {
+    if (typeof window.get_maximized === 'function')
+        return window.get_maximized() !== 0;
+    return window.is_maximized();
+}
+
+function isApplication(window) {
+    return MOVABLE_TYPES.includes(window.get_window_type()) && !window.is_skip_taskbar();
+}
+
+// Visible on the active workspace, not minimized: what a user could focus by sight.
+function isShowing(window) {
+    const workspace = global.workspace_manager.get_active_workspace();
+    return !window.minimized && window.located_on_workspace(workspace);
+}
+
+// A restored application window tt-pane may move or focus without restoring it.
+function isAvailable(window) {
+    return isApplication(window) && isShowing(window) &&
+        !window.is_fullscreen() && !isMaximized(window);
 }
 
 // GNOME 49 replaced get_maximized()/unmaximize(flags) with is_maximized()/unmaximize().
@@ -98,6 +138,48 @@ class Service {
                 return GLib.SOURCE_REMOVE;
             });
         }
+    }
+
+    GetFocusedId() {
+        const window = global.display.get_focus_window();
+        return window && isApplication(window) ? window.get_id() : 0;
+    }
+
+    GetWindow(id) {
+        const window = findWindow(id);
+        if (!window || !isAvailable(window))
+            return [false, [0, 0, 0, 0], [0, 0, 0, 0]];
+        return [
+            true,
+            rect(window.get_frame_rect()),
+            rect(window.get_work_area_current_monitor()),
+        ];
+    }
+
+    // Showing windows on the active workspace, topmost first, flagged when they
+    // are application windows tt-pane may focus. Others still cover what is below.
+    ListWindows() {
+        const windows = global.get_window_actors()
+            .map(actor => actor.get_meta_window())
+            .filter(window => window && isShowing(window));
+        const stacked = global.display.sort_windows_by_stacking(windows).reverse();
+        return [
+            stacked.map(window => [
+                window.get_id(),
+                rect(window.get_frame_rect()),
+                rect(window.get_work_area_current_monitor()),
+                window.get_monitor(),
+                isApplication(window),
+            ]),
+            Main.layoutManager.monitors.map(m => [m.x, m.y, m.width, m.height]),
+        ];
+    }
+
+    Activate(id) {
+        const window = findWindow(id);
+        if (!window || !isShowing(window))
+            throw new Error('The window closed before it could be focused');
+        Main.activateWindow(window);
     }
 
     get Version() {

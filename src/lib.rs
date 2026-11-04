@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod autostart;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub mod centered;
 pub mod config;
 #[cfg(target_os = "linux")]

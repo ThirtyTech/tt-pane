@@ -1,8 +1,8 @@
 {
   "uuid": "tt-pane@thirtytech.net",
   "name": "tt-pane",
-  "description": "Lets tt-pane position the focused window on GNOME Wayland. tt-pane keyboard shortcuts run tt-pane, which asks this extension over D-Bus to read and move the focused window.",
+  "description": "Lets tt-pane position and focus windows on GNOME Wayland. tt-pane keyboard shortcuts run tt-pane, which asks this extension over D-Bus to read, move and focus windows.",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
   "url": "https://github.com/ThirtyTech/tt-pane",
-  "version": 1
+  "version": 2
 }
