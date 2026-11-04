@@ -1,5 +1,5 @@
 use crate::{
-    config::{Binding, CenterLayout, Config},
+    config::{Binding, CenterLayout, Config, TrayIconStyle},
     geometry::Action,
     platform,
     shortcuts::Shortcuts,
@@ -274,6 +274,11 @@ impl Settings {
     fn message(&mut self, text: impl Into<String>, error: bool, cx: &mut Context<Self>) {
         self.status = text.into();
         self.error = error;
+        // With Settings closed the status line is invisible; a terminal launch
+        // should still see what went wrong.
+        if error {
+            eprintln!("tt-pane: {}", self.status);
+        }
         let _ = self._tray.icon.set_tooltip(Some(if error {
             "tt-pane — action failed; open Settings for details"
         } else {
@@ -432,7 +437,18 @@ impl Settings {
             );
             return;
         }
+        let tray_changed = self.active.tray_icon != self.draft.tray_icon;
         self.active = self.draft.clone();
+        if tray_changed
+            && let Err(error) = crate::tray::set_style(&self._tray.icon, self.active.tray_icon)
+        {
+            self.message(
+                format!("Saved, but could not change the tray icon: {error:#}"),
+                true,
+                cx,
+            );
+            return;
+        }
         if let Err(error) = crate::autostart::apply(self.active.launch_at_login) {
             self.message(format!("Saved, but {error:#}"), true, cx);
             return;
@@ -559,8 +575,8 @@ impl Render for Settings {
                     )
             })
             .collect::<Vec<_>>();
-        div().track_focus(&self.focus).on_key_down(cx.listener(Self::key_down))
-            .size_full().bg(rgb(0x0e1724)).text_color(rgb(0xe8eef7)).font_family("Segoe UI")
+        let content = div().track_focus(&self.focus).on_key_down(cx.listener(Self::key_down))
+            .flex_1().min_h_0().w_full().bg(rgb(0x0e1724)).text_color(rgb(0xe8eef7)).font_family("Segoe UI")
             .flex().flex_col().p_6().gap_4()
             .child(div().flex().items_center().justify_between()
                 .child(div().flex().flex_col().gap_1().child(div().text_3xl().font_weight(FontWeight::BOLD).child("tt-pane"))
@@ -603,6 +619,24 @@ impl Render for Settings {
                         this.message("Center layout updated. Save to activate.", false, cx);
                     })))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Offset (default) spreads background center windows out. Stack keeps them centered; H/L brings the next window forward. Sizing stays the same."))
+                    .when(cfg!(any(target_os = "macos", target_os = "linux")), |el| el
+                        .child(div().text_sm().child(if cfg!(target_os = "macos") { "Menu bar icon" } else { "Tray icon" }))
+                        .child(button("tray-icon", match self.draft.tray_icon {
+                            TrayIconStyle::Color => "Color",
+                            TrayIconStyle::Monochrome => "Monochrome",
+                        })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.draft.tray_icon = match this.draft.tray_icon {
+                                    TrayIconStyle::Color => TrayIconStyle::Monochrome,
+                                    TrayIconStyle::Monochrome => TrayIconStyle::Color,
+                                };
+                                this.message("Tray icon updated. Save to activate.", false, cx);
+                            })))
+                        .child(div().text_xs().text_color(rgb(0x91a4bb)).child(if cfg!(target_os = "macos") {
+                            "Monochrome follows the menu bar's light or dark appearance. Color shows the full app icon."
+                        } else {
+                            "Monochrome draws a white silhouette for dark panels. Color shows the full app icon."
+                        })))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Window focus"))
                     .when(cfg!(windows), |el| el
                         .child(div().text_sm().child("Focus glow"))
@@ -754,9 +788,208 @@ impl Render for Settings {
                 })))
                 .child(div().flex().gap_3()
                     .when(platform::is_gnome_wayland(), |el| el.child(button("setup-gnome", "Set up GNOME").on_click(cx.listener(|this, _, _, cx| this.setup_gnome(cx)))))
-                    .child(button("save", "Save changes").bg(rgb(0x217b68)).on_click(cx.listener(|this, _, _, cx| this.save(cx))))))
-            .into_any_element()
+                    .child(button("save", "Save changes").bg(rgb(0x217b68)).on_click(cx.listener(|this, _, _, cx| this.save(cx))))));
+        window_frame(content, window)
     }
+}
+
+const WINDOW_TITLE: &str = "tt-pane — Keyboard shortcuts";
+/// Width of the transparent band around a client-decorated window that holds
+/// its shadow and resize handles.
+const FRAME_INSET: Pixels = px(10.);
+const FRAME_RADIUS: Pixels = px(10.);
+
+/// Wrap `content` in a title bar, border, shadow and resize edges when the
+/// compositor leaves decorations to the app (GNOME on Wayland has no
+/// server-side decorations). Elsewhere the system draws the frame.
+fn window_frame(content: Div, window: &mut Window) -> AnyElement {
+    let Decorations::Client { tiling } = window.window_decorations() else {
+        return div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(content)
+            .into_any_element();
+    };
+    let inset = if tiling.is_tiled() {
+        px(0.)
+    } else {
+        FRAME_INSET
+    };
+    window.set_client_inset(inset);
+    let controls = window.window_controls();
+    let control = |id: &'static str, label: &'static str| {
+        div()
+            .id(id)
+            .size(px(28.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .text_color(rgb(0xc5d1e0))
+            .cursor_pointer()
+            .hover(|style| style.bg(rgb(0x263549)))
+            // Keep the press from starting a window move in the title bar.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(label)
+    };
+    let title_bar = div()
+        .id("title-bar")
+        .flex_shrink_0()
+        .h(px(40.))
+        .pl_4()
+        .pr_2()
+        .flex()
+        .items_center()
+        .justify_between()
+        .bg(rgb(0x0b131e))
+        .border_b_1()
+        .border_color(rgb(0x1b2838))
+        .on_mouse_down(MouseButton::Left, |event, window, _| {
+            if event.click_count == 2 {
+                window.zoom_window();
+            } else {
+                window.start_window_move();
+            }
+        })
+        .on_mouse_down(MouseButton::Right, |event, window, _| {
+            window.show_window_menu(event.position)
+        })
+        .child(
+            div()
+                .text_sm()
+                .text_color(rgb(0x91a4bb))
+                .child(WINDOW_TITLE),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_1()
+                .when(controls.minimize, |el| {
+                    el.child(
+                        control("window-minimize", "–")
+                            .on_click(|_, window, _| window.minimize_window()),
+                    )
+                })
+                .when(controls.maximize, |el| {
+                    el.child(
+                        control("window-maximize", if tiling.is_tiled() { "❐" } else { "□" })
+                            .on_click(|_, window, _| window.zoom_window()),
+                    )
+                })
+                .child(
+                    control("window-close", "✕")
+                        .hover(|style| style.bg(rgb(0x8a2f2a)))
+                        .on_click(|_, window, _| window.remove_window()),
+                ),
+        );
+    div()
+        .id("window-backdrop")
+        .size_full()
+        .bg(transparent_black())
+        .when(!tiling.top, |el| el.pt(inset))
+        .when(!tiling.bottom, |el| el.pb(inset))
+        .when(!tiling.left, |el| el.pl(inset))
+        .when(!tiling.right, |el| el.pr(inset))
+        .child(
+            canvas(
+                |_, window, _| {
+                    window.insert_hitbox(
+                        Bounds::new(
+                            point(px(0.), px(0.)),
+                            window.window_bounds().get_bounds().size,
+                        ),
+                        HitboxBehavior::Normal,
+                    )
+                },
+                move |_, hitbox, window, _| {
+                    let size = window.window_bounds().get_bounds().size;
+                    if let Some(edge) = resize_edge(window.mouse_position(), inset, size) {
+                        window.set_cursor_style(
+                            match edge {
+                                ResizeEdge::Top | ResizeEdge::Bottom => CursorStyle::ResizeUpDown,
+                                ResizeEdge::Left | ResizeEdge::Right => {
+                                    CursorStyle::ResizeLeftRight
+                                }
+                                ResizeEdge::TopLeft | ResizeEdge::BottomRight => {
+                                    CursorStyle::ResizeUpLeftDownRight
+                                }
+                                ResizeEdge::TopRight | ResizeEdge::BottomLeft => {
+                                    CursorStyle::ResizeUpRightDownLeft
+                                }
+                            },
+                            &hitbox,
+                        );
+                    }
+                },
+            )
+            .size_full()
+            .absolute(),
+        )
+        .on_mouse_move(|_, window, _| window.refresh())
+        .on_mouse_down(MouseButton::Left, move |event, window, _| {
+            let size = window.window_bounds().get_bounds().size;
+            if let Some(edge) = resize_edge(event.position, inset, size) {
+                window.start_window_resize(edge);
+            }
+        })
+        .child(
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .overflow_hidden()
+                .cursor(CursorStyle::Arrow)
+                .bg(rgb(0x0e1724))
+                .border_color(rgb(0x354961))
+                .when(!tiling.top, |el| el.border_t_1())
+                .when(!tiling.bottom, |el| el.border_b_1())
+                .when(!tiling.left, |el| el.border_l_1())
+                .when(!tiling.right, |el| el.border_r_1())
+                .when(!(tiling.top || tiling.left), |el| {
+                    el.rounded_tl(FRAME_RADIUS)
+                })
+                .when(!(tiling.top || tiling.right), |el| {
+                    el.rounded_tr(FRAME_RADIUS)
+                })
+                .when(!(tiling.bottom || tiling.left), |el| {
+                    el.rounded_bl(FRAME_RADIUS)
+                })
+                .when(!(tiling.bottom || tiling.right), |el| {
+                    el.rounded_br(FRAME_RADIUS)
+                })
+                .when(!tiling.is_tiled(), |el| {
+                    el.shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.4),
+                        blur_radius: FRAME_INSET / 2.,
+                        spread_radius: px(0.),
+                        offset: point(px(0.), px(0.)),
+                    }])
+                })
+                .on_mouse_move(|_, _, cx| cx.stop_propagation())
+                .child(title_bar)
+                .child(content),
+        )
+        .into_any_element()
+}
+
+/// The edge or corner under `pos` within the frame's `inset` band.
+fn resize_edge(pos: Point<Pixels>, inset: Pixels, size: Size<Pixels>) -> Option<ResizeEdge> {
+    let top = pos.y < inset;
+    let bottom = pos.y > size.height - inset;
+    let left = pos.x < inset;
+    let right = pos.x > size.width - inset;
+    Some(match (top, bottom, left, right) {
+        (true, _, true, _) => ResizeEdge::TopLeft,
+        (true, _, _, true) => ResizeEdge::TopRight,
+        (_, true, true, _) => ResizeEdge::BottomLeft,
+        (_, true, _, true) => ResizeEdge::BottomRight,
+        (true, ..) => ResizeEdge::Top,
+        (_, true, ..) => ResizeEdge::Bottom,
+        (_, _, true, _) => ResizeEdge::Left,
+        (_, _, _, true) => ResizeEdge::Right,
+        _ => return None,
+    })
 }
 
 fn show_settings(settings: &Entity<Settings>, cx: &mut App) -> anyhow::Result<()> {
@@ -773,12 +1006,17 @@ fn show_settings(settings: &Entity<Settings>, cx: &mut App) -> anyhow::Result<()
     let window = cx.open_window(
         WindowOptions {
             titlebar: Some(TitlebarOptions {
-                title: Some("tt-pane — Keyboard shortcuts".into()),
+                title: Some(WINDOW_TITLE.into()),
                 ..Default::default()
             }),
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(760.), px(600.))),
             app_id: Some("dev.ttpane.TtPane".into()),
+            // GPUI defaults to asking for server-side decorations and treats the
+            // window as framed even when the compositor can't draw them (GNOME
+            // has no xdg-decoration), leaving it without a title bar. On
+            // Wayland draw our own frame instead; see `window_frame`.
+            window_decorations: platform::is_wayland().then_some(WindowDecorations::Client),
             ..Default::default()
         },
         move |window, cx| {
@@ -811,6 +1049,17 @@ fn show_settings(settings: &Entity<Settings>, cx: &mut App) -> anyhow::Result<()
 }
 
 pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Result<()> {
+    // Without a display GPUI runs headless: the tray (D-Bus) still appears,
+    // but Settings can never open, so refuse to start instead.
+    #[cfg(target_os = "linux")]
+    anyhow::ensure!(
+        ["WAYLAND_DISPLAY", "DISPLAY"]
+            .iter()
+            .any(|var| std::env::var_os(var).is_some_and(|v| !v.is_empty())),
+        "No graphical session: neither WAYLAND_DISPLAY nor DISPLAY is set. Start tt-pane from \
+         the desktop, or set WAYLAND_DISPLAY=wayland-0 (or DISPLAY=:0) when launching it from \
+         a terminal such as SSH or tmux."
+    );
     // A persistent entity owns the shortcuts and tray independently of any window.
     let failure = std::rc::Rc::new(std::cell::RefCell::new(None));
     let result = failure.clone();
@@ -836,7 +1085,7 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             NSApplication::sharedApplication(mtm)
                 .setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         }
-        let tray = match crate::tray::create() {
+        let tray = match crate::tray::create(config.tray_icon) {
             Ok(tray) => tray,
             Err(e) => {
                 *failure.borrow_mut() = Some(e);
@@ -854,6 +1103,12 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
         }
         let mut status = format!("Configuration: {}", path.display());
         let mut error = false;
+        // Wayland desktops find a window's icon through its desktop entry.
+        #[cfg(target_os = "linux")]
+        if let Err(e) = crate::launcher::ensure() {
+            status = format!("{e:#}");
+            error = true;
+        }
         // Keep the sign-in entry in step with the setting and the current
         // executable. Debug builds skip registering so `cargo run` never
         // installs a login item pointing into target/.

@@ -24,6 +24,9 @@ pub struct Config {
     /// Start tt-pane when the user signs in. On by default.
     #[serde(default = "enabled")]
     pub launch_at_login: bool,
+    /// Tray / menu-bar icon style (macOS and Linux; Windows always uses color).
+    #[serde(default)]
+    pub tray_icon: TrayIconStyle,
     #[serde(default)]
     pub center_layout: CenterLayout,
     #[serde(default)]
@@ -45,6 +48,28 @@ pub enum CenterLayout {
     #[default]
     Offset,
     Stack,
+}
+
+/// How the tray (Linux) or menu-bar (macOS) icon is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrayIconStyle {
+    /// The full-color app icon.
+    Color,
+    /// A single-color silhouette: a template image macOS tints to match the
+    /// menu bar, and a white one on Linux for dark panels such as GNOME's.
+    Monochrome,
+}
+
+impl Default for TrayIconStyle {
+    /// Monochrome matches the macOS menu bar; Linux keeps the color icon.
+    fn default() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Monochrome
+        } else {
+            Self::Color
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,6 +189,7 @@ impl Default for Config {
             gaps: crate::geometry::SnapGaps::default(),
             launch_at_login: true,
             center_layout: CenterLayout::default(),
+            tray_icon: TrayIconStyle::default(),
             growth: Growth::default(),
             width_resize: WidthResize::default(),
             focus: Focus::default(),
@@ -747,5 +773,32 @@ mod gap_tests {
                 .is_err()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tray_icon_tests {
+    use super::*;
+    #[test]
+    fn tray_icon_defaults_per_platform_and_roundtrips() {
+        let old: Config = toml::from_str("version = 1\nbindings = []").unwrap();
+        assert_eq!(old.tray_icon, TrayIconStyle::default());
+        assert_eq!(
+            TrayIconStyle::default() == TrayIconStyle::Monochrome,
+            cfg!(target_os = "macos")
+        );
+        let parsed: Config =
+            toml::from_str("version = 1\ntray_icon = \"monochrome\"\nbindings = []").unwrap();
+        assert_eq!(parsed.tray_icon, TrayIconStyle::Monochrome);
+        let text = toml::to_string(&Config {
+            tray_icon: TrayIconStyle::Color,
+            ..Config::default()
+        })
+        .unwrap();
+        assert!(text.contains("tray_icon = \"color\""));
+        assert!(
+            toml::from_str::<Config>("version = 1\ntray_icon = \"rainbow\"\nbindings = []")
+                .is_err()
+        );
     }
 }

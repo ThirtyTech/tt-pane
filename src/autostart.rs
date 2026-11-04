@@ -18,7 +18,7 @@ pub fn apply(enabled: bool) -> Result<()> {
 }
 
 /// The program that sign-in should start.
-fn launch_target() -> Result<std::path::PathBuf> {
+pub(crate) fn launch_target() -> Result<std::path::PathBuf> {
     // An AppImage runs from a temporary mount; start the image itself.
     #[cfg(target_os = "linux")]
     if let Some(image) = std::env::var_os("APPIMAGE").filter(|p| !p.is_empty()) {
@@ -144,7 +144,17 @@ fn xml_escape(text: &str) -> String {
 /// An XDG autostart entry, honored by GNOME, KDE and most desktop sessions.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn entry(exe: &Path) -> String {
-    // Desktop Entry Exec quoting: wrap in quotes, escape `"`, `` ` ``, `$` and `\`.
+    let quoted = exec_quote(exe);
+    format!(
+        "[Desktop Entry]\nType=Application\nName=tt-pane\nComment=Keyboard-first window positioning\n\
+         Exec={quoted}\nIcon=tt-pane\nTerminal=false\nX-GNOME-Autostart-enabled=true\n"
+    )
+}
+
+/// Desktop Entry `Exec` quoting: wrap in quotes, escape `"`, `` ` ``, `$` and
+/// `\`, and double `%`.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub(crate) fn exec_quote(exe: &Path) -> String {
     let mut quoted = String::from("\"");
     for c in exe.to_string_lossy().chars() {
         if matches!(c, '"' | '`' | '$' | '\\') {
@@ -156,10 +166,7 @@ fn entry(exe: &Path) -> String {
         quoted.push(c);
     }
     quoted.push('"');
-    format!(
-        "[Desktop Entry]\nType=Application\nName=tt-pane\nComment=Keyboard-first window positioning\n\
-         Exec={quoted}\nIcon=tt-pane\nTerminal=false\nX-GNOME-Autostart-enabled=true\n"
-    )
+    quoted
 }
 
 #[cfg(all(test, not(windows)))]

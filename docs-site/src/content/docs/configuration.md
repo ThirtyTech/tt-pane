@@ -27,6 +27,7 @@ This is a **partial example**, not the complete default binding list. Omitted ac
 version = 1
 launch_at_login = true
 center_layout = "offset" # or "stack"
+tray_icon = "monochrome" # macOS default; Linux defaults to "color"
 
 [gaps]
 inner = 5
@@ -88,6 +89,17 @@ Changes apply on the next placement; existing windows are not rearranged when sa
 | Linux | `${XDG_CONFIG_HOME:-~/.config}/autostart/tt-pane.desktop` |
 
 The entry is written the first time the tray starts, so install and open tt-pane once. Debug builds (`cargo run` without `--release`) do not add the entry on launch. Uninstalling removes it.
+
+## Tray icon — macOS and Linux
+
+**Settings → General → Tray icon** (**Menu bar icon** on macOS) switches between the full-color app icon and a monochrome silhouette (`tray_icon = "color"` or `"monochrome"`). The change applies when you save.
+
+| Platform | Default | Monochrome |
+| --- | --- | --- |
+| macOS | `monochrome` | A template image the menu bar tints for light and dark appearance |
+| Linux | `color` | A white silhouette, for dark panels such as GNOME's top bar |
+
+Windows always uses the color icon and ignores the setting.
 
 ## Focus glow — Windows
 

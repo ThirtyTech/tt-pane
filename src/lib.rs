@@ -6,6 +6,8 @@ pub mod centered;
 pub mod config;
 #[cfg(target_os = "linux")]
 pub mod gnome;
+#[cfg(all(target_os = "linux", feature = "gui"))]
+mod launcher;
 pub mod positioning;
 pub use tt_pane_platform as platform;
 pub use tt_pane_platform::geometry;

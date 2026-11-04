@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Windows: check for the latest stable release automatically at startup and every eight hours, or from the tray or Settings, then choose update and restart. Installer and portable copies verify downloads before exiting and preserve configuration; failures report an error and allow retry.
+- Choose a color or monochrome tray icon on macOS and Linux in **Settings → General** (`tray_icon = "color"` or `"monochrome"`). macOS defaults to monochrome, which follows the menu bar's appearance; Linux defaults to color, and its monochrome icon is white for dark panels.
+- On GNOME Wayland the Settings window has its own title bar, border and resize edges, so it can be moved, resized, minimized, maximized and closed. GNOME draws no window frame for apps.
+- On Linux tt-pane installs its icon and a `dev.ttpane.TtPane.desktop` entry in `~/.local/share` when none exists, so the dock and app switcher show its icon for the Settings window however tt-pane was started. Entries written by `install.sh` or a package are left alone.
 
 ## 0.2.1 — 2026-11-03
 
