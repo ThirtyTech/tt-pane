@@ -2,7 +2,7 @@ use crate::{
     config::{Binding, Config},
     geometry::Action,
     platform,
-    shortcuts::{Shortcuts, wayland_bindings},
+    shortcuts::Shortcuts,
 };
 use global_hotkey::GlobalHotKeyEvent;
 use gpui::{prelude::*, *};
@@ -323,7 +323,7 @@ impl Settings {
         }
         self.message(
             if platform::is_wayland() {
-                "Saved. Export shortcuts and reload your compositor to activate them."
+                "Saved. This Wayland compositor isn't supported yet: tt-pane runs on GNOME (Wayland) and in X11 sessions."
             } else {
                 "Saved. Your shortcuts are active across all applications."
             },
@@ -332,7 +332,10 @@ impl Settings {
         );
     }
 
-    fn export(&mut self, cx: &mut Context<Self>) {
+    /// Install the GNOME Shell extension and register GNOME shortcuts.
+    fn setup_gnome(&mut self, cx: &mut Context<Self>) {
+        #[cfg(not(target_os = "linux"))]
+        let _ = cx;
         #[cfg(target_os = "linux")]
         if platform::is_gnome_wayland() {
             let result = std::env::current_exe()
@@ -343,39 +346,6 @@ impl Settings {
                 Ok(setup) => self.message(setup.summary(), false, cx),
                 Err(error) => self.message(format!("{error:#}"), true, cx),
             }
-            return;
-        }
-        let result = (|| -> anyhow::Result<PathBuf> {
-            let compositor = if std::env::var_os("SWAYSOCK").is_some() {
-                "sway"
-            } else if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
-                "hyprland"
-            } else {
-                anyhow::bail!("Start tt-pane inside Sway or Hyprland, or use the export command")
-            };
-            let text = wayland_bindings(
-                &self.active,
-                compositor,
-                &std::env::current_exe()?,
-                Some(&std::path::absolute(&self.path)?),
-            )?;
-            let path = self
-                .path
-                .with_file_name(format!("tt-pane-{compositor}.conf"));
-            std::fs::create_dir_all(path.parent().unwrap())?;
-            std::fs::write(&path, text)?;
-            Ok(path)
-        })();
-        match result {
-            Ok(path) => self.message(
-                format!(
-                    "Exported {}. Include it in your compositor config and reload.",
-                    path.display()
-                ),
-                false,
-                cx,
-            ),
-            Err(error) => self.message(format!("{error:#}"), true, cx),
         }
     }
 }
@@ -585,9 +555,9 @@ impl Render for Settings {
                         }))))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("First press places the window. Repeats multiply its size, keeping the corner or edge anchored. Center starts at 50% width and height, then grows equally in every direction. Growth stops at the work area; 0 steps turns it off.")))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child(if platform::is_gnome_wayland() {
-                        "GNOME: saving registers these as GNOME keyboard shortcuts. The first time, log out and back in so GNOME loads the tt-pane extension. Directional focus isn't available on Linux yet."
+                        "GNOME: saving registers these as GNOME keyboard shortcuts. The first time, log out and back in so GNOME loads the tt-pane extension."
                     } else if platform::is_wayland() {
-                        "Wayland: save, export shortcuts, then include the file in your compositor config. Sway and Hyprland are supported."
+                        "This Wayland compositor isn't supported yet. tt-pane runs on GNOME (Wayland) and in X11 sessions."
                     } else { "Closing settings keeps tt-pane running in the tray. Use the tray menu to quit." }))))
             .child(div().text_sm().text_color(rgb(if self.error { 0xffa59b } else { 0x91a4bb })).child(self.status.clone()))
             .child(div().flex().items_center().justify_between().gap_3()
@@ -599,7 +569,7 @@ impl Render for Settings {
                     this.message(result.err().map(|e| format!("{e:#}")).unwrap_or_else(|| "Defaults restored. Save to activate.".into()), false, cx);
                 })))
                 .child(div().flex().gap_3()
-                    .when(platform::is_wayland(), |el| el.child(button("export", if platform::is_gnome_wayland() { "Set up GNOME" } else { "Export shortcuts" }).on_click(cx.listener(|this, _, _, cx| this.export(cx)))))
+                    .when(platform::is_gnome_wayland(), |el| el.child(button("setup-gnome", "Set up GNOME").on_click(cx.listener(|this, _, _, cx| this.setup_gnome(cx)))))
                     .child(button("save", "Save changes").bg(rgb(0x217b68)).on_click(cx.listener(|this, _, _, cx| this.save(cx))))))
     }
 }

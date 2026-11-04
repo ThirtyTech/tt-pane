@@ -39,11 +39,6 @@ enum Command {
     Settings,
     /// Print validated configuration (defaults if no file exists).
     Config,
-    /// Export native Wayland compositor shortcuts to stdout.
-    Export {
-        #[arg(value_parser = ["sway", "hyprland"])]
-        compositor: String,
-    },
     /// GNOME Wayland: install the tt-pane Shell extension and register shortcuts.
     #[cfg(target_os = "linux")]
     Gnome {
@@ -101,15 +96,6 @@ fn run(cli: Cli) -> Result<()> {
     let config = Config::load(&path)?;
     match cli.command {
         Some(Command::Config) => print!("{}", toml::to_string_pretty(&config)?),
-        Some(Command::Export { compositor }) => print!(
-            "{}",
-            tt_pane::shortcuts::wayland_bindings(
-                &config,
-                &compositor,
-                &std::env::current_exe()?,
-                Some(&std::path::absolute(&path)?)
-            )?
-        ),
         #[cfg(target_os = "linux")]
         Some(Command::Gnome {
             command: GnomeCommand::Setup,

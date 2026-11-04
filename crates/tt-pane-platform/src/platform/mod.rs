@@ -85,11 +85,7 @@ pub fn description() -> &'static str {
     } else if cfg!(target_os = "macos") {
         "macOS · Accessibility"
     } else if is_wayland() {
-        if std::env::var_os("SWAYSOCK").is_some() {
-            "Wayland · Sway IPC"
-        } else if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
-            "Wayland · Hyprland IPC"
-        } else if is_gnome() {
+        if is_gnome() {
             "Wayland · GNOME Shell extension"
         } else {
             "Wayland · compositor not yet supported"

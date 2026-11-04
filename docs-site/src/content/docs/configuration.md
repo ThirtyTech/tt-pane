@@ -96,6 +96,6 @@ Focus and paired resize commands require Windows. On Windows, `--window HWND` ca
 
 ## Shared positioning state
 
-Tray shortcuts, CLI actions, Herdr actions, and exported Wayland shortcuts share growth state for a configuration file. It is stored in `<config-path>.cycle.json`; a separate `.cycle.lock` serializes concurrent invocations. Deleting the state file resets the cycle. Failed native requests do not advance it.
+Tray shortcuts, CLI actions, Herdr actions, and GNOME shortcuts share growth state for a configuration file. It is stored in `<config-path>.cycle.json`; a separate `.cycle.lock` serializes concurrent invocations. Deleting the state file resets the cycle. Failed native requests do not advance it.
 
 Windows and macOS store observed bounds. X11 and Wayland store requested bounds because placement is asynchronous; compositor-imposed bounds can restart a cycle.
