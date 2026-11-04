@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 — 2026-11-03
+
+- Fixed centered windows shrinking to the default Center size when selecting an unrelated window, including a snapped window behind them or a window on another monitor. Each monitor keeps its centered layout; the main window shrinks only when another centered member on the same monitor takes over. Applies to centered groups on Windows and GNOME Wayland.
+- Added regression coverage for unrelated focus changes and independent monitor groups, and updated the centered-group documentation.
+
 ## 0.2.0 — 2026-11-03
 
 Changes since 0.1.0:

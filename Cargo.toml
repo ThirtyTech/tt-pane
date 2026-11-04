@@ -8,7 +8,7 @@ unsafe_code = "forbid"
 
 [package]
 name = "tt-pane"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Keyboard-first native window positioning"
 license = "MIT"

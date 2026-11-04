@@ -11,8 +11,8 @@ Install Rust, Visual Studio C++ Build Tools, and [Inno Setup 6 or newer](https:/
 ```powershell
 $env:RUSTFLAGS = '-C target-feature=+crt-static'
 cargo build --release --locked --target x86_64-pc-windows-msvc
-./packaging/windows/package.ps1 -BinDir target/x86_64-pc-windows-msvc/release -Tag v0.2.0
-./packaging/windows/test-installer.ps1 -BinDir target/x86_64-pc-windows-msvc/release -Tag v0.2.0
+./packaging/windows/package.ps1 -BinDir target/x86_64-pc-windows-msvc/release -Tag v0.2.1
+./packaging/windows/test-installer.ps1 -BinDir target/x86_64-pc-windows-msvc/release -Tag v0.2.1
 ```
 
 Use the current Cargo version for `-Tag`. Static CRT linking avoids requiring a separate Visual C++ runtime installation. `package.ps1` checks the PE architecture, the executable's reported version, and Windows file/product versions. CLI and Windows metadata derive from the application Cargo version; the installer version derives from the matching tag. It requires the compiler rather than silently omitting the installer. Set `ISCC` or pass `-Iscc` for a nonstandard compiler location. `-OutputDir` defaults to ignored `dist/`.
@@ -37,7 +37,7 @@ Install Rust, Xcode with the Metal Toolchain, and Python 3. From the repository 
 
 ```sh
 cargo build --release --locked
-packaging/macos/package.sh target/release v0.2.0
+packaging/macos/package.sh target/release v0.2.1
 ```
 
 Use the current Cargo version for the tag. `package.sh` checks the binary's reported version, builds `tt-pane.app` (Info.plist from `packaging/macos/Info.plist`, `.icns` from the committed `packaging/macos/icons/`), signs it, and builds the disk image with a pinned [dmgbuild](https://dmgbuild.readthedocs.io) installed by hash into a throwaway venv (pip needs network access). The output is `dist/tt-pane-vVERSION-macos-arm64.dmg`; pass a platform name and output directory as the third and fourth arguments to change it. This follows tt-git's `crates/tt-git-gui/packaging/macos/`, including its macOS 26 Finder background workaround in `dmg.py`.
@@ -54,7 +54,7 @@ Signing uses the same environment as tt-git: `MACOS_CERT_P12` (base64 Developer 
 
 ## GitHub Actions
 
-Run **Actions → Release → Run workflow** for downloadable artifacts without publishing. To publish, update the application and platform crate versions, Herdr plugin version, and lockfile, then push a matching `vMAJOR.MINOR.PATCH` tag. Tags such as `v0.2.0-rc.1` create prereleases. The version guard rejects mismatched tags. Only the publication job has `contents: write`; builds use read-only permissions. Windows installation smoke tests run before uploading artifacts.
+Run **Actions → Release → Run workflow** for downloadable artifacts without publishing. To publish, update the application and platform crate versions, Herdr plugin version, and lockfile, then push a matching `vMAJOR.MINOR.PATCH` tag. Tags such as `v0.2.1-rc.1` create prereleases. The version guard rejects mismatched tags. Only the publication job has `contents: write`; builds use read-only permissions. Windows installation smoke tests run before uploading artifacts.
 
 The release includes the three platform archives, Windows setup executable, macOS disk image, `install.sh`, `install.ps1`, generated release notes, and `SHA256SUMS.txt`. Manual builds are identified by the Actions run/commit, while their filenames and binary versions retain the Cargo version. No workflow run, tag, or release is created by local packaging.
 

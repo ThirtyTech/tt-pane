@@ -1,6 +1,6 @@
 [package]
 name = "tt-pane-platform"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 license = "MIT"
 description = "Safe native window-control interfaces for tt-pane"
