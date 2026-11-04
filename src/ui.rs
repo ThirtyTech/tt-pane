@@ -139,14 +139,142 @@ struct Settings {
     preview: PositionPreview,
     advanced_expanded: bool,
     window: Option<WindowHandle<Settings>>,
-    _tray: tray_icon::TrayIcon,
+    _tray: crate::tray::Tray,
+    #[cfg(windows)]
+    update: UpdateState,
+}
+
+#[cfg(windows)]
+#[derive(Default)]
+struct UpdateState {
+    schedule: crate::update::CheckSchedule,
+    installing: bool,
+    pending: Option<std::sync::mpsc::Receiver<anyhow::Result<UpdateResult>>>,
+    release: Option<crate::update::Release>,
+    message: String,
+}
+
+#[cfg(windows)]
+enum UpdateResult {
+    Checked(Option<crate::update::Release>),
+    Restart,
 }
 
 impl Settings {
+    #[cfg(windows)]
+    fn check_update(&mut self, cx: &mut Context<Self>) {
+        if self.update.pending.is_some() {
+            return;
+        }
+        self.update.schedule.started(Instant::now());
+        self.update.message = "Checking for updates…".into();
+        self._tray.update.set_enabled(false);
+        self._tray.update.set_text("Checking for updates…");
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.update.pending = Some(receiver);
+        std::thread::spawn(move || {
+            let _ = sender.send(crate::update::check().map(UpdateResult::Checked));
+        });
+        cx.notify();
+    }
+
+    #[cfg(windows)]
+    fn install_update(&mut self, cx: &mut Context<Self>) {
+        if self.update.pending.is_some() {
+            return;
+        }
+        let Some(release) = self.update.release.clone() else {
+            return;
+        };
+        if serde_json::to_value(&self.draft).ok() != serde_json::to_value(&self.active).ok() {
+            self.update.message =
+                "Save your settings changes before updating and restarting.".into();
+            cx.notify();
+            return;
+        }
+        if self.recording.take().is_some()
+            && let Err(error) = self.resume()
+        {
+            self.update.message = format!("Could not resume shortcuts before updating: {error:#}");
+            cx.notify();
+            return;
+        }
+        self.update.message = format!(
+            "Downloading and verifying {}. tt-pane will restart when ready…",
+            release.tag
+        );
+        self.update.installing = true;
+        self._tray.update.set_enabled(false);
+        self._tray.update.set_text("Updating…");
+        let config = self.path.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.update.pending = Some(receiver);
+        std::thread::spawn(move || {
+            let result = crate::update::prepare(&release, &config)
+                .and_then(|prepared| prepared.launch())
+                .map(|()| UpdateResult::Restart);
+            let _ = sender.send(result);
+        });
+        cx.notify();
+    }
+
+    #[cfg(windows)]
+    fn poll_update(&mut self, cx: &mut Context<Self>) {
+        use std::sync::mpsc::TryRecvError;
+        if self
+            .update
+            .schedule
+            .due(Instant::now(), self.update.pending.is_some())
+        {
+            self.check_update(cx);
+        }
+        let Some(receiver) = &self.update.pending else {
+            return;
+        };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                Err(anyhow::anyhow!("Update worker stopped unexpectedly"))
+            }
+        };
+        self.update.pending = None;
+        self.update.installing = false;
+        match result {
+            Ok(UpdateResult::Restart) => {
+                cx.quit();
+                return;
+            }
+            Ok(UpdateResult::Checked(Some(release))) => {
+                self.update.message = format!(
+                    "{} is available (current: {}). Choose Update and restart to install it.",
+                    release.tag,
+                    env!("CARGO_PKG_VERSION")
+                );
+                self.update.release = Some(release);
+            }
+            Ok(UpdateResult::Checked(None)) => {
+                self.update.release = None;
+                self.update.message =
+                    format!("tt-pane {} is up to date.", env!("CARGO_PKG_VERSION"));
+            }
+            Err(error) => self.update.message = format!("Update failed: {error:#}"),
+        }
+        self._tray.update.set_enabled(true);
+        self._tray
+            .update
+            .set_text(if self.update.release.is_some() {
+                "Update and restart…"
+            } else {
+                "Check for updates…"
+            });
+        cx.notify();
+    }
+
     fn message(&mut self, text: impl Into<String>, error: bool, cx: &mut Context<Self>) {
         self.status = text.into();
         self.error = error;
-        let _ = self._tray.set_tooltip(Some(if error {
+        let _ = self._tray.icon.set_tooltip(Some(if error {
             "tt-pane — action failed; open Settings for details"
         } else {
             "tt-pane — window shortcuts"
@@ -365,6 +493,15 @@ fn button(id: impl Into<ElementId>, text: &str) -> Stateful<Div> {
 
 impl Render for Settings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(windows)]
+        if self.update.installing {
+            return div().size_full().bg(rgb(0x0e1724)).text_color(rgb(0xe8eef7))
+                .flex().flex_col().p_6().gap_4()
+                .child(div().text_2xl().child("Updating tt-pane"))
+                .child(self.update.message.clone())
+                .child("Your saved settings will be kept. Window shortcuts remain available while downloading.")
+                .into_any_element();
+        }
         let selected = self.preview.action;
         let ([preview_x, preview_y, preview_width, preview_height], animating) =
             self.preview.sample(Instant::now());
@@ -595,6 +732,17 @@ impl Render for Settings {
                     } else if platform::is_wayland() {
                         "This Wayland compositor isn't supported yet. tt-pane runs on GNOME (Wayland) and in X11 sessions."
                     } else { "Closing settings keeps tt-pane running in the tray. Use the tray menu to quit." }))))
+            .children({
+                #[cfg(windows)]
+                { Some(div().flex().flex_col().gap_2()
+                    .child(div().text_sm().child(format!("Updates · Version {}", env!("CARGO_PKG_VERSION"))))
+                    .child(div().text_xs().child(self.update.message.clone()))
+                    .child(div().flex().gap_3()
+                        .when(self.update.pending.is_none(), |el| el.child(button("check-update", "Check for updates").on_click(cx.listener(|this, _, _, cx| this.check_update(cx)))))
+                        .when(self.update.pending.is_none() && self.update.release.is_some(), |el| el.child(button("install-update", "Update and restart").on_click(cx.listener(|this, _, _, cx| this.install_update(cx))))))) }
+                #[cfg(not(windows))]
+                { None::<Div> }
+            })
             .child(div().text_sm().text_color(rgb(if self.error { 0xffa59b } else { 0x91a4bb })).child(self.status.clone()))
             .child(div().flex().items_center().justify_between().gap_3()
                 .child(button("reset", "Reset defaults").on_click(cx.listener(|this, _, _, cx| {
@@ -607,6 +755,7 @@ impl Render for Settings {
                 .child(div().flex().gap_3()
                     .when(platform::is_gnome_wayland(), |el| el.child(button("setup-gnome", "Set up GNOME").on_click(cx.listener(|this, _, _, cx| this.setup_gnome(cx)))))
                     .child(button("save", "Save changes").bg(rgb(0x217b68)).on_click(cx.listener(|this, _, _, cx| this.save(cx))))))
+            .into_any_element()
     }
 }
 
@@ -756,7 +905,7 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             open_settings
         };
         if error {
-            let _ = tray.set_tooltip(Some(format!("tt-pane — {status}")));
+            let _ = tray.icon.set_tooltip(Some(format!("tt-pane — {status}")));
         }
         let settings = cx.new(|cx| Settings {
             draft: config.clone(),
@@ -771,6 +920,8 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             advanced_expanded: false,
             window: None,
             _tray: tray,
+            #[cfg(windows)]
+            update: UpdateState::default(),
         });
         *reopened.borrow_mut() = Some(settings.clone());
         let on_close = settings.clone();
@@ -801,6 +952,22 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                 if cx
                     .update(|cx| {
                         while let Ok(event) = tray_icon::menu::MenuEvent::receiver().try_recv() {
+                            #[cfg(windows)]
+                            if event.id.0 == crate::tray::UPDATE {
+                                if let Err(e) = show_settings(&settings, cx) {
+                                    settings.update(cx, |this, cx| {
+                                        this.message(format!("{e:#}"), true, cx)
+                                    });
+                                    continue;
+                                }
+                                settings.update(cx, |this, cx| {
+                                    if this.update.release.is_some() {
+                                        this.install_update(cx);
+                                    } else {
+                                        this.check_update(cx);
+                                    }
+                                });
+                            }
                             if event.id.0 == crate::tray::QUIT {
                                 cx.quit();
                                 return;
@@ -814,6 +981,8 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                             }
                         }
                         settings.update(cx, |this, cx| {
+                            #[cfg(windows)]
+                            this.poll_update(cx);
                             #[cfg(any(windows, target_os = "linux"))]
                             if observe_groups
                                 && group_observed.elapsed() >= Duration::from_millis(100)

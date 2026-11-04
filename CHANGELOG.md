@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Windows: check for the latest stable release automatically at startup and every eight hours, or from the tray or Settings, then choose update and restart. Installer and portable copies verify downloads before exiting and preserve configuration; failures report an error and allow retry.
+
 ## 0.2.1 — 2026-11-03
 
 - Fixed centered windows shrinking to the default Center size when selecting an unrelated window, including a snapped window behind them or a window on another monitor. Each monitor keeps its centered layout; the main window shrinks only when another centered member on the same monitor takes over. Applies to centered groups on Windows and GNOME Wayland.

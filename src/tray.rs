@@ -6,11 +6,25 @@ use tray_icon::{
 
 pub const SETTINGS: &str = "tt-pane.settings";
 pub const QUIT: &str = "tt-pane.quit";
+#[cfg(windows)]
+pub const UPDATE: &str = "tt-pane.update";
 
-pub fn create() -> Result<TrayIcon> {
+pub struct Tray {
+    pub icon: TrayIcon,
+    #[cfg(windows)]
+    pub update: MenuItem,
+}
+
+pub fn create() -> Result<Tray> {
     let menu = Menu::new();
+    menu.append(&MenuItem::with_id(SETTINGS, "Settings…", true, None))?;
+    #[cfg(windows)]
+    let update = {
+        let item = MenuItem::with_id(UPDATE, "Check for updates…", true, None);
+        menu.append(&item)?;
+        item
+    };
     menu.append_items(&[
-        &MenuItem::with_id(SETTINGS, "Settings…", true, None),
         &PredefinedMenuItem::separator(),
         &MenuItem::with_id(QUIT, "Quit tt-pane", true, None),
     ])?;
@@ -30,5 +44,9 @@ pub fn create() -> Result<TrayIcon> {
         32,
         32,
     )?);
-    Ok(builder.build()?)
+    Ok(Tray {
+        icon: builder.build()?,
+        #[cfg(windows)]
+        update,
+    })
 }

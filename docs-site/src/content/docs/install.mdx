@@ -53,6 +53,14 @@ Choose the app package or install script for your platform. Each script download
   </TabItem>
 </Tabs>
 
+### Update from the Windows tray
+
+Open the taskbar tray menu and choose **Check for updates…**. Settings shows your current version and the result. When a newer stable release is available, choose **Update and restart** from the tray or Settings. Save any settings edits before updating.
+
+The download is verified against the release's SHA-256 checksum before tt-pane closes. Installer copies update in their existing directory; portable copies replace their executable in place. tt-pane then restarts with the same configuration. tt-pane also checks quietly at startup and every eight hours while running, changing the tray item to **Update and restart…** when an update is available. Background checks do not open Settings or install updates. Prereleases or older versions are not installed. The application folder must be writable; debug builds can check but cannot install updates.
+
+If downloading or verification fails, the app stays open and displays the error so you can retry. An installation or restart failure shows a dialog with a diagnostics location in your temporary folder. macOS and Linux currently use the installation commands or manual replacement instructions.
+
 ### Script options
 
 Set these environment variables before the command, such as `curl -fsSL … | TTPANE_VERSION=v0.2.0 sh` or `$env:TTPANE_VERSION = 'v0.2.0'; irm … | iex`.
@@ -97,7 +105,7 @@ Your configuration is kept when you upgrade or uninstall.
 
 <Tabs syncKey="os">
   <TabItem label="Windows">
-    To upgrade, rerun the install script; it closes the running tt-pane for you. Or quit tt-pane from its tray menu and rerun the setup. In the setup, deselecting a previously selected shortcut removes it.
+    To upgrade, choose **Check for updates… → Update and restart** from the tray. You can also rerun the install script; it closes the running tt-pane for you. Or quit tt-pane from its tray menu and rerun the setup. In the setup, deselecting a previously selected shortcut removes it.
 
     To uninstall from PowerShell:
 

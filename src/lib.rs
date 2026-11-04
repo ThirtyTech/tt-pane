@@ -14,3 +14,5 @@ pub mod shortcuts;
 mod tray;
 #[cfg(feature = "gui")]
 pub mod ui;
+#[cfg(windows)]
+pub mod update;

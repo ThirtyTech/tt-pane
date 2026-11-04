@@ -31,6 +31,14 @@ The stable AppId identifies upgrades. Files live in `%LOCALAPPDATA%\Programs\tt-
 
 Silent install: `setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=""`. Select the optional desktop shortcut with `/TASKS="desktopicon"`. There is no startup task: tt-pane registers its own sign-in entry (`HKCU\…\Run`) when it first runs, and setup removes a Startup-folder shortcut left by earlier installers. Uninstall removes the Run value. Silent installs do not launch tt-pane. Uninstall uses `unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`.
 
+## Windows in-app updates
+
+Windows checks for stable releases at startup and every eight hours while running, and also supports manual checks from the tray and Settings. A single tray item changes from **Check for updates** to **Update and restart** when an update is available. Manual checks reset the eight-hour interval. Checks never overlap a check or installation; failures retain any previously discovered release and retry on the next interval without opening a window. `src/update.rs` fetches GitHub release metadata using Windows system curl, compares semantic versions, downloads the matching setup or ZIP plus `SHA256SUMS.txt`, and verifies the asset before handing off. Network calls run on a worker thread; only HTTPS downloads and redirects are permitted. Debug builds do not install updates.
+
+The embedded `src/update_windows.ps1` reads a local JSON job using UTF-8, stages the portable executable when applicable, and acknowledges readiness before the app quits. It waits for the original process to exit, runs setup with the current directory (preserving shortcut choices), or replaces the portable executable with a backup, then starts the same executable with its absolute configuration path. It never asks Windows to reboot. Portable replacement failures attempt rollback; setup failures retain installer logs and restart the existing executable when possible. Failed handoffs retain the running app; post-exit failures display a native error dialog. Successful updates clean up staging files.
+
+Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/test-updater.ps1` to exercise portable and installer handoffs and invalid archives with disposable local executables. It verifies that replacement waits for exit, paths with spaces and Unicode survive restart, configuration is preserved, and portable backup files are cleaned up. This check also runs in Windows release CI. It does not download a release or update a real installation. Rust unit tests cover semantic version selection and checksum rejection.
+
 ## Build locally on macOS
 
 Install Rust, Xcode with the Metal Toolchain, and Python 3. From the repository root:

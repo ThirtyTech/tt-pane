@@ -73,6 +73,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./packaging/windows/test-installer.ps1 -BinDir 'target/${{ matrix.target }}/release' -Tag $env:RELEASE_TAG
+      - name: Verify Windows update and restart helper
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./packaging/windows/test-updater.ps1
       # tt-pane.app in a designed .dmg (packaging/macos/package.sh). Signed
       # and notarized when the MACOS_* secrets are set, ad hoc otherwise.
       - name: Package macOS app and disk image

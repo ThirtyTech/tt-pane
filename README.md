@@ -40,6 +40,12 @@ Windows and Linux packages are unsigned; the macOS app is signed and notarized w
 
 Quit the existing tray instance before upgrading. On macOS, quit from the menu-bar icon and drag the new tt-pane onto Applications, replacing the old one; an ad-hoc-signed update may need Accessibility turned off and on again. On Windows, rerun the installer; deselecting a previously selected shortcut removes it. Uninstall through **Settings → Apps → Installed apps → tt-pane**. From PowerShell: `$env:TTPANE_UNINSTALL = '1'; irm https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.ps1 | iex`. Your configuration in `%APPDATA%\tt-pane\config` is preserved. The installer does not change PATH; use the installed executable's full path for CLI commands. tt-pane starts at sign-in by default on every platform; turn it off in **Settings → General → Launch at login**. Uninstalling removes the sign-in entry. To remove a script install: `curl -fsSL https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.sh | sh -s -- --uninstall`.
 
+### Update from the Windows tray
+
+Choose **Check for updates…** from the taskbar tray icon (or Settings). tt-pane checks the latest stable GitHub release and shows whether a newer version is available. Choose **Update and restart** to download it, verify its SHA-256 checksum, install it, and restart with the same configuration. Save any settings edits first. Checks run quietly at startup and every eight hours while tt-pane is running; you can also check manually. When an update is found, the tray item changes to **Update and restart…**. Installation always requires your click; prereleases and older versions are never installed.
+
+Installer copies keep their installation directory and shortcut choices. Portable copies replace their executable in place. The folder must be writable. Download or verification failures keep the app running and let you retry; failures after exit show a dialog and retain diagnostics in a `tt-pane-update-*` folder under your temporary directory. Debug builds can check releases but cannot install updates. macOS and Linux still use the manual/script upgrade instructions above.
+
 For local packaging, release workflow details, and installer artwork, see [packaging/README.md](packaging/README.md).
 
 ## Run from source
