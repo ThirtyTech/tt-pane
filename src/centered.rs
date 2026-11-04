@@ -200,7 +200,7 @@ impl Group {
             .collect();
         let selected_index = peers.iter().position(|m| m.handle == handle);
         // Move background members first, keeping their native Z order and focus.
-        // Leaving the group also shrinks its former main window.
+        // Unrelated focus changes leave each monitor's current layout intact.
         let members = self.members.clone();
         let mut moves: Vec<_> = members
             .iter()
@@ -210,7 +210,7 @@ impl Group {
                     peers.iter().position(|m| m.handle == member.handle),
                 ) {
                     (Some(selected), Some(index)) => target(&peers, index, selected),
-                    _ => inactive_target(member),
+                    _ => member.last,
                 };
                 (member, bounds)
             })
@@ -246,21 +246,6 @@ impl Group {
             }
         }
         failure.map_or(Ok(()), Err)
-    }
-}
-
-fn inactive_target(member: &Member) -> Rect {
-    let base = Action::Center.target(member.area, member.area);
-    Rect {
-        x: (member.last.x + (member.last.width - base.width) / 2).clamp(
-            member.area.x,
-            member.area.x + member.area.width - base.width,
-        ),
-        y: (member.last.y + (member.last.height - base.height) / 2).clamp(
-            member.area.y,
-            member.area.y + member.area.height - base.height,
-        ),
-        ..base
     }
 }
 
@@ -564,7 +549,7 @@ mod tests {
             group = Group::load(&path).unwrap();
             let saved = group.members[0].centered;
             group.arrange(u64::MAX).unwrap();
-            assert_eq!(group.members[0].last.width, group.members[0].area.width / 2);
+            assert_eq!(group.members[0].last, saved);
             group.arrange(handles[0]).unwrap();
             assert_eq!(group.members[0].last, saved);
             let changed = platform::apply_with(Some(handles[0]), &mut |_, _, bounds| {
@@ -687,7 +672,7 @@ mod tests {
     }
 
     #[test]
-    fn leaving_group_shrinks_main_without_losing_saved_size() {
+    fn unrelated_focus_preserves_grown_center_and_staggered_peers() {
         let mut m = member(1);
         m.centered = Rect {
             x: -1520,
@@ -696,8 +681,39 @@ mod tests {
             height: 900,
         };
         m.last = m.centered;
-        assert_eq!(inactive_target(&m), member(1).centered);
-        assert_eq!(m.centered.width, 1440);
+        let mut group = Group {
+            members: vec![m, member(2), member(3)],
+        };
+        for index in 1..group.members.len() {
+            group.members[index].last = target(&group.members, index, 0);
+        }
+        let before = group.clone();
+        // An unregistered window can be snapped behind the center or on any screen.
+        group.arrange(u64::MAX).unwrap();
+        assert_eq!(group, before);
+    }
+
+    #[test]
+    fn focusing_center_on_another_monitor_preserves_existing_group() {
+        let mut first = member(1);
+        first.centered = Rect {
+            x: -1520,
+            y: 70,
+            width: 1440,
+            height: 900,
+        };
+        first.last = first.centered;
+        let mut other = member(3);
+        other.area.x += 1600;
+        other.centered.x += 1600;
+        other.last = other.centered;
+        let mut group = Group {
+            members: vec![first, member(2), other],
+        };
+        group.members[1].last = target(&group.members[..2], 1, 0);
+        let before = group.clone();
+        group.arrange(3).unwrap();
+        assert_eq!(group, before);
     }
 
     #[test]

@@ -112,7 +112,7 @@ In Position preview, hover a placement first, then Shrink width or Expand width 
 
 ### Centered window groups (Windows)
 
-Use **Ctrl+Alt+3** on two or more windows on the same monitor to form a group. The focused member returns to its saved centered size and position, including growth. Inactive members shrink to the first Center snap size (half the work-area width and height), and stagger left/right and down by up to **25% of the focused window's width and height** per step. Spacing compresses to fit the work area. Circular enrollment order keeps both sides populated. Leaving the group also shrinks its former main window while retaining its saved focused size.
+Use **Ctrl+Alt+3** on two or more windows on the same monitor to form a group. The focused member returns to its saved centered size and position, including growth. Inactive members shrink to the first Center snap size (half the work-area width and height), and stagger left/right and down by up to **25% of the focused window's width and height** per step. Spacing compresses to fit the work area. Circular enrollment order keeps both sides populated. Selecting a window outside the group preserves its current layout and main window size. The main window shrinks only when another centered member on the same monitor takes over; groups on other monitors keep their layout.
 
 **Ctrl+Alt+H/L** rotates through centered members with wraparound, including covered windows. Repeated L continues cycling; a single-member group stays put on a tap. Hold H/L for **400 ms** to exit to background edge-snapped windows on the same monitor. **J/K** leaves for background windows above/below, preferring the leftmost column. Clicking or Alt+Tabbing to a member restores its saved size while the tray app runs.
 
