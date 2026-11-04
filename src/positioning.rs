@@ -20,6 +20,8 @@ struct Gap {
     source_bounds: Rect,
     anchor: HorizontalAnchor,
     target: Rect,
+    #[serde(default)]
+    middle: bool,
 }
 
 impl Gap {
@@ -47,6 +49,8 @@ struct Cycle {
     step: u32,
     growth: Growth,
     #[serde(default)]
+    middle: bool,
+    #[serde(default)]
     width_anchor: Option<HorizontalAnchor>,
     #[serde(default)]
     gaps: Vec<Gap>,
@@ -67,6 +71,7 @@ impl Cycle {
             window: window.to_owned(),
             action: Action::FillGap,
             area,
+            middle: gap.middle,
             base: gap.target,
             last: gap.target,
             step: 0,
@@ -96,6 +101,7 @@ impl Cycle {
         {
             self.gaps.retain(|g| g.area != self.area);
             self.gaps.push(Gap {
+                middle: self.middle,
                 source: self.window.clone(),
                 area: self.area,
                 base: self.base,
@@ -135,6 +141,10 @@ impl Cycle {
             .map(|p| p.base)
             .or_else(|| saved_gap.map(|g| g.base))
             .unwrap_or(current);
+        let middle = previous
+            .map(|p| p.middle || p.action == Action::Center)
+            .or_else(|| saved_gap.map(|g| g.middle))
+            .unwrap_or_else(|| !platform::is_edge_snapped(current, area, config.gaps));
         let percent =
             config.width_resize.percent as i32 * if action == Action::ShrinkWidth { -1 } else { 1 };
         Self {
@@ -143,7 +153,17 @@ impl Cycle {
             action,
             area,
             base,
-            last: current.adjust_width_from(area, anchor, percent, base),
+            middle,
+            last: current.adjust_width_from(
+                if !middle {
+                    config.gaps.work_area(area)
+                } else {
+                    area
+                },
+                anchor,
+                percent,
+                base,
+            ),
             step: 0,
             growth: config.growth,
             width_anchor: Some(anchor),
@@ -190,6 +210,7 @@ impl Cycle {
             area,
             base,
             last,
+            middle: action == Action::Center,
             step,
             growth,
             width_anchor: None,
@@ -260,6 +281,7 @@ fn apply_inner(
     include_hidden: bool,
 ) -> Result<()> {
     config.validate()?;
+    platform::set_snap_gaps(config.gaps);
     let visibility = if include_hidden {
         platform::FocusVisibility::Hold
     } else if !config.focus.include_middle_windows {
@@ -353,13 +375,32 @@ fn apply_inner(
     }
     let mut next = None;
     let actual = platform::apply_with(window, &mut |id, area, current| {
-        let cycle = if action == Action::FillGap {
+        let mut cycle = if action == Action::FillGap {
             Cycle::fill_gap(previous.as_ref(), id, area, config.growth)?
         } else if action.adjusts_width() {
             Cycle::adjust_width(previous.as_ref(), id, action, area, current, config)
         } else {
             Cycle::next(previous.as_ref(), id, action, area, current, config.growth)
         };
+        if Action::POSITIONS.contains(&action) && action != Action::Center {
+            cycle.last = config.gaps.inset(area, cycle.last);
+        } else if action == Action::FillGap {
+            // The saved strip already has its outer margins. Add spacing only
+            // along the source boundary, and leave floating-window strips alone.
+            if let Some(gap) = previous
+                .as_ref()
+                .and_then(|p| p.gaps.iter().rev().find(|g| g.usable_on(area)))
+                && !gap.middle
+                && platform::is_edge_snapped(gap.source_bounds, area, config.gaps)
+            {
+                let spacing = config.gaps.inner * 2;
+                cycle.last = if gap.target.x >= gap.source_bounds.x + gap.source_bounds.width {
+                    crate::geometry::inset_rect(cycle.last, spacing, 0, 0, 0)
+                } else {
+                    crate::geometry::inset_rect(cycle.last, 0, 0, spacing, 0)
+                };
+            }
+        }
         let target = cycle.last;
         next = Some(cycle);
         Ok(target)
@@ -503,7 +544,10 @@ mod tests {
 
     #[test]
     fn width_actions_keep_anchor_past_saturation_without_resetting() {
-        let config = Config::default();
+        let config = Config {
+            gaps: crate::geometry::SnapGaps { inner: 0, outer: 0 },
+            ..Config::default()
+        };
         for placement in [Action::BottomLeft, Action::BottomRight, Action::Center] {
             let mut cycle = Cycle::next(None, "window", placement, AREA, CURRENT, config.growth);
             let base = cycle.last;
@@ -569,6 +613,29 @@ mod tests {
             assert_eq!(cycle.base, moved);
             assert_eq!(cycle.width_anchor, Some(HorizontalAnchor::Right));
         }
+    }
+
+    #[test]
+    fn fully_grown_center_keeps_gap_free_width_and_fill_behavior() {
+        let config = Config::default();
+        let mut cycle = Cycle::next(None, "middle", Action::Center, AREA, CURRENT, config.growth);
+        cycle.last = AREA;
+        cycle.middle = true;
+        for action in [Action::ShrinkWidth; 2]
+            .into_iter()
+            .chain([Action::ExpandWidth; 12])
+        {
+            let before = cycle.clone();
+            cycle =
+                Cycle::adjust_width(Some(&before), "middle", action, AREA, before.last, &config);
+            cycle.record_result(Some(&before), cycle.last);
+            assert!(cycle.middle);
+            assert_eq!((cycle.last.y, cycle.last.height), (AREA.y, AREA.height));
+            for gap in &cycle.gaps {
+                assert!(gap.middle);
+            }
+        }
+        assert_eq!(cycle.last, AREA);
     }
 
     #[test]

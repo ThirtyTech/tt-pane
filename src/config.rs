@@ -19,6 +19,8 @@ pub struct Binding {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub version: u32,
+    #[serde(default)]
+    pub gaps: crate::geometry::SnapGaps,
     /// Start tt-pane when the user signs in. On by default.
     #[serde(default = "enabled")]
     pub launch_at_login: bool,
@@ -149,6 +151,7 @@ impl Default for Config {
         ];
         Self {
             version: 1,
+            gaps: crate::geometry::SnapGaps::default(),
             launch_at_login: true,
             growth: Growth::default(),
             width_resize: WidthResize::default(),
@@ -238,6 +241,10 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.gaps.inner <= 100 && self.gaps.outer <= 100,
+            "Window gaps must be between 0 and 100"
+        );
         ensure!(
             self.focus.minimum_visible_percent <= 99,
             "Focus visibility percentage must be between 0 and 99"
@@ -647,5 +654,67 @@ mod launch_at_login_tests {
         let path = dir.path().join("config.toml");
         config.save(&path).unwrap();
         assert!(!Config::load(&path).unwrap().launch_at_login);
+    }
+}
+
+#[cfg(test)]
+mod gap_tests {
+    use super::*;
+    use crate::geometry::SnapGaps;
+
+    #[test]
+    fn gaps_migrate_validate_and_persist() {
+        let old: Config = toml::from_str("version = 1\nbindings = []").unwrap();
+        assert_eq!(
+            old.gaps,
+            SnapGaps {
+                inner: 5,
+                outer: 20
+            }
+        );
+        let partial: Config =
+            toml::from_str("version = 1\nbindings = []\n[gaps]\ninner = 0").unwrap();
+        assert_eq!(
+            partial.gaps,
+            SnapGaps {
+                inner: 0,
+                outer: 20
+            }
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        for gaps in [
+            SnapGaps { inner: 0, outer: 0 },
+            SnapGaps {
+                inner: 17,
+                outer: 100,
+            },
+        ] {
+            let config = Config {
+                gaps,
+                ..Config::default()
+            };
+            config.save(&path).unwrap();
+            assert_eq!(Config::load(&path).unwrap().gaps, gaps);
+        }
+        for gaps in [
+            SnapGaps {
+                inner: 101,
+                outer: 0,
+            },
+            SnapGaps {
+                inner: 0,
+                outer: u32::MAX,
+            },
+        ] {
+            assert!(
+                Config {
+                    gaps,
+                    ..Config::default()
+                }
+                .validate()
+                .is_err()
+            );
+        }
     }
 }

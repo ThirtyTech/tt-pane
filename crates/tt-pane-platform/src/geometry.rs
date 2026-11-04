@@ -11,6 +11,71 @@ pub struct Rect {
     pub height: i32,
 }
 
+/// Insets in native desktop units, matching Hyprland's per-window gap defaults.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SnapGaps {
+    pub inner: u32,
+    pub outer: u32,
+}
+
+impl Default for SnapGaps {
+    fn default() -> Self {
+        Self {
+            inner: 5,
+            outer: 20,
+        }
+    }
+}
+
+impl SnapGaps {
+    pub fn inset(self, area: Rect, target: Rect) -> Rect {
+        let left = if target.x == area.x {
+            self.outer
+        } else {
+            self.inner
+        };
+        let top = if target.y == area.y {
+            self.outer
+        } else {
+            self.inner
+        };
+        let right = if i64::from(target.x) + i64::from(target.width)
+            == i64::from(area.x) + i64::from(area.width)
+        {
+            self.outer
+        } else {
+            self.inner
+        };
+        let bottom = if i64::from(target.y) + i64::from(target.height)
+            == i64::from(area.y) + i64::from(area.height)
+        {
+            self.outer
+        } else {
+            self.inner
+        };
+        inset_rect(target, left, top, right, bottom)
+    }
+
+    pub fn work_area(self, area: Rect) -> Rect {
+        self.inset(area, area)
+    }
+}
+
+/// Clamp insets so even very small work areas retain a positive rectangle.
+pub fn inset_rect(rect: Rect, left: u32, top: u32, right: u32, bottom: u32) -> Rect {
+    let left = left.min((rect.width.max(1) - 1) as u32 / 2) as i32;
+    let right = right.min((rect.width.max(1) - 1) as u32 / 2) as i32;
+    let top = top.min((rect.height.max(1) - 1) as u32 / 2) as i32;
+    let bottom = bottom.min((rect.height.max(1) - 1) as u32 / 2) as i32;
+    Rect {
+        x: rect.x + left,
+        y: rect.y + top,
+        width: rect.width - left - right,
+        height: rect.height - top - bottom,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HorizontalAnchor {
@@ -293,7 +358,7 @@ pub fn resize_vertical_pair(selected: Rect, neighbor: Rect, up: bool) -> Option<
         (neighbor, selected)
     };
     let gap = i64::from(bottom.y) - i64::from(top.y) - i64::from(top.height);
-    if !(-2..=16).contains(&gap) {
+    if !(-2..=i64::from(crate::SNAP_GAPS.get().inner * 2).max(16)).contains(&gap) {
         return None;
     }
     let step = ((i64::from(selected.height) + 2) / 4).max(1);
@@ -1115,5 +1180,79 @@ mod focus_tests {
             focus_neighbor(current, &[rect(10, 500)], Action::FocusRight),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod gap_tests {
+    use super::*;
+
+    #[test]
+    fn adjacent_tiles_have_inner_spacing_and_outer_margins() {
+        let area = Rect {
+            x: -2001,
+            y: 41,
+            width: 2001,
+            height: 1201,
+        };
+        for gaps in [
+            SnapGaps::default(),
+            SnapGaps {
+                inner: 17,
+                outer: 40,
+            },
+            SnapGaps { inner: 0, outer: 0 },
+        ] {
+            let left = gaps.inset(area, Action::TopLeft.target(area, area));
+            let right = gaps.inset(area, Action::TopRight.target(area, area));
+            let bottom = gaps.inset(area, Action::BottomLeft.target(area, area));
+            assert_eq!(left.x - area.x, gaps.outer as i32);
+            assert_eq!(left.y - area.y, gaps.outer as i32);
+            assert_eq!(right.x - left.x - left.width, (2 * gaps.inner) as i32);
+            assert_eq!(bottom.y - left.y - left.height, (2 * gaps.inner) as i32);
+            assert_eq!(
+                area.x + area.width - right.x - right.width,
+                gaps.outer as i32
+            );
+            assert!(crate::is_edge_snapped(left, area, gaps));
+            assert!(!crate::is_edge_snapped(
+                Action::Center.target(area, area),
+                area,
+                gaps
+            ));
+        }
+        let tiny = Rect {
+            x: -3,
+            y: 2,
+            width: 3,
+            height: 1,
+        };
+        let inset = SnapGaps {
+            inner: 100,
+            outer: 100,
+        }
+        .work_area(tiny);
+        assert!(inset.width > 0 && inset.height > 0);
+        assert_eq!(inset.intersection(tiny), Some(inset));
+    }
+
+    #[test]
+    fn paired_resize_preserves_custom_spacing() {
+        crate::set_snap_gaps(SnapGaps {
+            inner: 30,
+            outer: 20,
+        });
+        let top = Rect {
+            x: 20,
+            y: 20,
+            width: 400,
+            height: 300,
+        };
+        let bottom = Rect { y: 380, ..top };
+        let (a, b) = resize_vertical_pair(top, bottom, true).unwrap();
+        assert_eq!(b.y - a.y - a.height, 60);
+        assert_eq!(a.y, top.y);
+        assert_eq!(b.y + b.height, bottom.y + bottom.height);
+        crate::set_snap_gaps(SnapGaps { inner: 0, outer: 0 });
     }
 }

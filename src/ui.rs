@@ -491,6 +491,30 @@ impl Render for Settings {
                             this.draft.focus.include_middle_windows = !this.draft.focus.include_middle_windows;
                             this.message("Window focus updated. Save to activate.", false, cx);
                         })))
+                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Snapped window gaps"))
+                    .child(div().text_sm().child("Inner gap per window"))
+                    .child(div().flex().items_center().justify_between()
+                        .child(button("gap-inner-less", "−").on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.gaps.inner = this.draft.gaps.inner.saturating_sub(1);
+                            this.message("Window gaps updated. Save to activate.", false, cx);
+                        })))
+                        .child(format!("{}", self.draft.gaps.inner))
+                        .child(button("gap-inner-more", "+").on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.gaps.inner = (this.draft.gaps.inner + 1).min(100);
+                            this.message("Window gaps updated. Save to activate.", false, cx);
+                        }))))
+                    .child(div().text_sm().child("Desktop edge gap"))
+                    .child(div().flex().items_center().justify_between()
+                        .child(button("gap-outer-less", "−").on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.gaps.outer = this.draft.gaps.outer.saturating_sub(1);
+                            this.message("Window gaps updated. Save to activate.", false, cx);
+                        })))
+                        .child(format!("{}", self.draft.gaps.outer))
+                        .child(button("gap-outer-more", "+").on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.gaps.outer = (this.draft.gaps.outer + 1).min(100);
+                            this.message("Window gaps updated. Save to activate.", false, cx);
+                        }))))
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Defaults: 5 on each inner edge (10 between tiles), 20 at desktop edges. Range: 0–100; 0 disables spacing. Applies on the next snap. Center windows are unchanged."))
                     .child(button("advanced-toggle", if self.advanced_expanded { "Advanced ▾" } else { "Advanced ▸" })
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.advanced_expanded = !this.advanced_expanded;

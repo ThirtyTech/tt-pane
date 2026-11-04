@@ -89,6 +89,14 @@ pub(crate) fn focus_eligible(
 }
 
 pub(crate) fn is_snapped(window: Rect, work_area: Option<Rect>) -> bool {
+    is_snapped_with_gaps(window, work_area, crate::SNAP_GAPS.get())
+}
+
+pub(crate) fn is_snapped_with_gaps(
+    window: Rect,
+    work_area: Option<Rect>,
+    gaps: crate::geometry::SnapGaps,
+) -> bool {
     work_area.is_some_and(|area| {
         if window.width <= 0 || window.height <= 0 || area.width <= 0 || area.height <= 0 {
             return false;
@@ -103,11 +111,11 @@ pub(crate) fn is_snapped(window: Rect, work_area: Option<Rect>) -> bool {
             && [
                 (w.left - a.left),
                 (w.top - a.top),
-                (w.right - a.right),
-                (w.bottom - a.bottom),
+                (a.right - w.right),
+                (a.bottom - w.bottom),
             ]
             .into_iter()
-            .any(|distance| distance.abs() <= 2)
+            .any(|distance| distance.abs() <= 2 || (distance - i64::from(gaps.outer)).abs() <= 2)
     })
 }
 

@@ -118,6 +118,11 @@ fn binary_positions_disposable_window_on_every_monitor() {
         let path = dir.path().join("config.toml");
         let config = tt_pane::config::Config {
             growth,
+            gaps: if growth.steps == 1 {
+                tt_pane::geometry::SnapGaps { inner: 0, outer: 0 }
+            } else {
+                Default::default()
+            },
             width_resize: tt_pane::config::WidthResize {
                 percent: if growth.steps == 1 { 50 } else { 25 },
             },
@@ -132,6 +137,7 @@ fn binary_positions_disposable_window_on_every_monitor() {
             growth.percent,
             growth.steps,
             config.width_resize.percent,
+            config.gaps,
         );
     }
 }

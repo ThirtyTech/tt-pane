@@ -5,6 +5,7 @@ pub fn binary_positions_disposable_window_on_every_monitor(
     percent: u32,
     steps: u32,
     width_percent: u32,
+    gaps: crate::geometry::SnapGaps,
 ) {
     use crate::geometry::{Action, Rect};
     use std::time::{Duration, Instant};
@@ -198,6 +199,11 @@ pub fn binary_positions_disposable_window_on_every_monitor(
                             (1.0 + f64::from(percent) / 100.0).powi(step as i32),
                         )
                     };
+                    let expected = if action == Action::Center {
+                        expected
+                    } else {
+                        gaps.inset(area, expected)
+                    };
                     let actual = apply_command(action, window.0, true);
                     assert_eq!(
                         actual, expected,
@@ -209,6 +215,16 @@ pub fn binary_positions_disposable_window_on_every_monitor(
                     Action::BottomLeft | Action::BottomRight | Action::Center
                 ) {
                     let anchor = action.horizontal_anchor().unwrap();
+                    let resize_area = if action == Action::Center {
+                        area
+                    } else {
+                        gaps.work_area(area)
+                    };
+                    let base = if action == Action::Center {
+                        base
+                    } else {
+                        gaps.inset(area, base)
+                    };
                     let mut expected = base;
                     for adjustment in [Action::ShrinkWidth; 4]
                         .into_iter()
@@ -220,7 +236,7 @@ pub fn binary_positions_disposable_window_on_every_monitor(
                             } else {
                                 1
                             };
-                        expected = expected.adjust_width_from(area, anchor, change, base);
+                        expected = expected.adjust_width_from(resize_area, anchor, change, base);
                         let actual = apply_command(adjustment, window.0, true);
                         assert_eq!(
                             actual, expected,
@@ -228,12 +244,19 @@ pub fn binary_positions_disposable_window_on_every_monitor(
                         );
                     }
                     assert_eq!(
-                        expected.width, area.width,
+                        expected.width, resize_area.width,
                         "Expansion should stop at the work-area edge"
                     );
                     let base = apply_command(action, window.0, true);
                     let reduced = apply_command(Action::ShrinkWidth, window.0, true);
                     let gap = base.freed_width_gap(reduced).unwrap();
+                    let gap = if action == Action::Center {
+                        gap
+                    } else if gap.x >= reduced.x + reduced.width {
+                        crate::geometry::inset_rect(gap, gaps.inner * 2, 0, 0, 0)
+                    } else {
+                        crate::geometry::inset_rect(gap, 0, 0, gaps.inner * 2, 0)
+                    };
                     assert_eq!(apply_command(Action::FillGap, window.0, false), reduced);
                     SetWindowPos(
                         destination.0,

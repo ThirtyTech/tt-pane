@@ -27,6 +27,10 @@ This is a **partial example**, not the complete default binding list. Omitted ac
 version = 1
 launch_at_login = true
 
+[gaps]
+inner = 5
+outer = 20
+
 [growth]
 percent = 15
 steps = 3
@@ -59,6 +63,12 @@ Tap **Ctrl+Alt+H/L** (release before **400 ms**) for regular navigation. Hold fo
 Saved growth settings are preserved on upgrade. New configurations and files without growth settings default to 15% and three steps; reset defaults and save to adopt these values in an existing configuration. Width and growth controls are under **Advanced**, which starts collapsed.
 
 Old `include_obscured = false` settings migrate to 50%, and `true` or an omitted value migrates to 10%. An explicit `minimum_visible_percent` wins if both keys exist. Saving writes only the new percentage key.
+
+## Snapped window gaps
+
+**Settings → Snapped window gaps** controls spacing for half, quarter, and fill-work-area placements. Defaults match [Hyprland](https://wiki.hypr.land/configuring/core/config-options/): `inner = 5` per window edge (10 total between adjacent tiles), and `outer = 20` at desktop work-area edges. Values use native desktop coordinates (pixels on Windows, points on macOS), range from 0–100, and zero disables the corresponding spacing. Existing configurations inherit these defaults.
+
+Changes apply on the next placement; existing windows are not rearranged when saving. Repeated growth retains margins, width expansion stops at the inset work-area edge, and filling a saved strip beside a snapped window leaves inner spacing. Center placement and floating center groups retain their existing geometry. Background focus navigation recognizes both inset tiles and native edge snaps.
 
 ## Launch at login
 
