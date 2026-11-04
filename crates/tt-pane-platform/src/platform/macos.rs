@@ -347,8 +347,7 @@ pub fn focus_window(action: Action, visibility: super::FocusVisibility) -> Resul
     let screens = ScreenInfo::read(mtm)?;
     // Hold enters middle windows from an edge, or exits a middle window to the edges.
     let hold = visibility == FocusVisibility::Hold;
-    let snapped_only =
-        hold && !crate::visibility::is_snapped(current, screens.work_area(current));
+    let snapped_only = hold && !crate::visibility::is_snapped(current, screens.work_area(current));
     let middle_only = hold && !snapped_only;
     let visibility = if hold {
         FocusVisibility::IncludeHidden
@@ -362,10 +361,11 @@ pub fn focus_window(action: Action, visibility: super::FocusVisibility) -> Resul
     let mut candidates = Vec::new();
     let mut bounds = Vec::new();
     // Windows at or above the Dock layer (menu bar, Dock, overlays) are not app windows.
-    for listed in listed_windows()?.into_iter().filter(|w| (0..20).contains(&w.layer)) {
-        let is_selected = !selected_seen
-            && listed.pid == front_pid
-            && near(listed.rect, current);
+    for listed in listed_windows()?
+        .into_iter()
+        .filter(|w| (0..20).contains(&w.layer))
+    {
+        let is_selected = !selected_seen && listed.pid == front_pid && near(listed.rect, current);
         selected_seen |= is_selected;
         if !is_selected && listed.layer == 0 && listed.pid != own_pid {
             let work_area = screens.work_area(listed.rect);
@@ -386,7 +386,10 @@ pub fn focus_window(action: Action, visibility: super::FocusVisibility) -> Resul
                     visibility,
                 )
             {
-                let (window, _) = ax_windows.get_mut(&listed.pid).unwrap().swap_remove(element);
+                let (window, _) = ax_windows
+                    .get_mut(&listed.pid)
+                    .unwrap()
+                    .swap_remove(element);
                 candidates.push((listed.pid, window));
                 bounds.push(listed.rect);
             }
@@ -411,7 +414,10 @@ fn activate_window(pid: i32, window: &CFType) -> Result<()> {
             CFString::from_static_string("AXRaise").as_concrete_TypeRef(),
         )
     };
-    ensure!(result == 0, "Cannot raise the window (Accessibility error {result})");
+    ensure!(
+        result == 0,
+        "Cannot raise the window (Accessibility error {result})"
+    );
     let _ = set_attribute(window, "AXMain", &CFBoolean::true_value().as_CFType());
     // Accessibility can bring a background application forward where cooperative
     // NSRunningApplication activation is refused; fall back to it otherwise.
