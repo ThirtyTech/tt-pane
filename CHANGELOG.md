@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-11-03
+
+Changes since 0.1.0:
 
 - Sway and Hyprland support is removed, including `tt-pane export` and the **Export shortcuts** button. Tiling compositors already manage placement and focus; use GNOME or an X11 session.
 - Keyboard shortcuts and window positioning now work on GNOME Wayland. tt-pane installs a bundled GNOME Shell extension and registers its bindings as GNOME custom shortcuts (**Set up GNOME** in Settings, or `tt-pane gnome setup`); log out and back in once after the first setup.
@@ -11,10 +13,7 @@
 - The macOS release is signed and notarized when signing secrets are configured, and signed ad hoc otherwise.
 - Directional focus (Ctrl+Alt+H/J/K/L) now works on macOS. It uses Accessibility to raise the neighboring window on the current Space. Default vim focus keys are stored in lowercase, matching the shortcut recorder.
 
-## 0.2.0 — 2026-11-03
-
-Changes since 0.1.0:
-
+- New install scripts download and verify release packages for Windows, Linux, and macOS CLI use. Linux script installs include an app launcher and icon.
 - Windows centered window groups retain each member's focused size, shrink and stagger inactive members, and restore members on mouse or Alt+Tab focus.
 - H/L rotates through centered groups. Hold either horizontal focus shortcut for 400 ms to enter middle windows from an edge-snapped window or return to background edge windows. J/K exits groups vertically.
 - Regular directional navigation targets edge-snapped windows by default, including covered windows. Middle-window navigation and its visibility filter are separately configurable and default to off.
@@ -25,7 +24,7 @@ Changes since 0.1.0:
 - Fixed Linux/macOS compilation of shortcut handling by gating the Windows foreground-window lookup.
 - Windows file and product versions now derive from Cargo, alongside CLI version reporting; packaging rejects version mismatches.
 
-The new grouping, directional focus, and glow behavior is Windows-only. Hold shortcuts and continuous mouse/Alt+Tab group observation require the tray app.
+Centered groups work on Windows and GNOME Wayland; directional focus also works on macOS. Focus glow, hold shortcuts, and paired vertical resizing are Windows-only. Holds and continuous mouse/Alt+Tab group observation require the tray app. Linux X11 supports positioning but not directional focus or centered groups.
 
 ## 0.1.0
 

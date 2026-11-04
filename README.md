@@ -26,7 +26,7 @@ Download packages from [GitHub Releases](https://github.com/thirtytech/tt-pane/r
   powershell -ExecutionPolicy Bypass -c "irm https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.ps1 | iex"
   ```
 
-  Or run `tt-pane-vVERSION-windows-x64-setup.exe` yourself. It installs for your account without administrator rights, adds a Start menu shortcut, and offers optional desktop and sign-in shortcuts. Launch tt-pane from Start, then open Settings from its tray menu. The portable ZIP can be unpacked anywhere instead.
+  Or run `tt-pane-vVERSION-windows-x64-setup.exe` yourself. It installs for your account without administrator rights, adds a Start menu shortcut, and offers an optional desktop shortcut. Launch tt-pane from Start, then open Settings from its tray menu. The portable ZIP can be unpacked anywhere instead.
 - **macOS Apple Silicon:** open `tt-pane-vVERSION-macos-arm64.dmg` and drag **tt-pane** onto **Applications**. Open tt-pane from Applications, Launchpad, or Spotlight; it runs in the menu bar with no Dock icon and no terminal. On first launch macOS asks to let tt-pane control the computer: choose **Open System Settings** and turn on tt-pane under **Privacy & Security → Accessibility**. Settings opens and explains this until access is granted; shortcuts work as soon as it is on. Opening tt-pane again while it runs shows Settings. If the build is not notarized, macOS blocks the first launch: choose **Done**, then **System Settings → Privacy & Security → Open Anyway**. The CLI is the same executable: `/Applications/tt-pane.app/Contents/MacOS/tt-pane`.
 - **Linux x64** (and the macOS command-line executable)**:** run the install script. It verifies the download's checksum and installs `tt-pane` into `~/.local/bin`; on Linux it also adds an app launcher and icon under `~/.local/share`. Set `TTPANE_VERSION` (such as `v0.2.0`) for a specific release, or `TTPANE_PREFIX` for another location (`/usr/local` with `sudo` for every user). Rerun it to upgrade; pass `--uninstall` to remove it. On macOS this installs only the bare executable for scripted use; the `.dmg` above is the app.
 
@@ -52,7 +52,7 @@ cargo run --release
 
 tt-pane starts in the system tray without a settings window. Open **Settings…** from its tray menu, click a shortcut to record a replacement, then **Save changes**. Escape cancels recording; Backspace disables an action. Changes are validated for duplicate actions and shortcuts. Native registration conflicts appear in the settings screen, and a failed registration preserves the previous bindings. Saving uses a temporary file in the same directory followed by replacement.
 
-Closing Settings leaves the tray and shortcuts running. **Quit tt-pane** in the tray menu exits the app. `tt-pane settings` opens settings immediately when starting an instance. Start one tray instance at a time; single-instance forwarding is not implemented yet.
+Closing Settings leaves the tray and shortcuts running. **Quit tt-pane** in the tray menu exits the app. `tt-pane settings` opens settings immediately when starting an instance. Start one tray instance at a time; general single-instance forwarding is not implemented. Reopening the macOS app from Finder, Launchpad, or Spotlight shows Settings in the running instance.
 
 Hover over a keybinding row to animate **Position preview** to that action's initial placement. The green rectangle represents the window and the dark rectangle represents the monitor's usable space. The preview keeps the last hovered action when the pointer leaves. Clicking the shortcut button starts recording; hovering only changes the illustration.
 
@@ -298,7 +298,7 @@ The lifecycle test briefly creates its own settings window, closes it with a nat
 - `crates/tt-pane-platform/src/geometry.rs`: shared placement math and monitor selection.
 - `config.rs`: versioned TOML, validation, atomic save.
 - `positioning.rs`: shared repeated-action cycles, persisted baseline and cross-process locking.
-- `shortcuts.rs`: native shortcut lifetime, conflict handling, Wayland export.
+- `shortcuts.rs`: native shortcut lifetime, conflict handling, and GNOME accelerator conversion.
 - `crates/tt-pane-platform/`: native Windows, macOS, X11, and GNOME adapters, plus Windows icon/console interop. The application reexports geometry and platform APIs at their existing paths.
 - `ui.rs`: GPUI settings, shortcut recorder, preview, save/error feedback.
 

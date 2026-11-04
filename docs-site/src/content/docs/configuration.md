@@ -92,7 +92,7 @@ tt-pane apply focus-right
 tt-pane apply resize-up
 ```
 
-Focus and paired resize commands require Windows. On Windows, `--window HWND` can target an explicit window. `--json` provides structured output for scripting. Use `tt-pane apply --help` for the supported actions and arguments.
+Focus commands work on Windows, macOS, and GNOME Wayland. Paired resize commands and hold gestures require Windows. On Windows, `--window HWND` can target an explicit window. `--json` provides structured output for scripting. Use `tt-pane apply --help` for the supported actions and arguments.
 
 ## Shared positioning state
 

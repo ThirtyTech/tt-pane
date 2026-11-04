@@ -27,7 +27,7 @@ The test compiles the same installer script with a unique AppId and shortcut nam
 
 ## Windows installer behavior
 
-The stable AppId identifies upgrades. Files live in `%LOCALAPPDATA%\Programs\tt-pane`; no elevation or PATH changes are required. Desktop and login shortcuts are opt-in, and launch-after-install is unchecked to avoid starting a second tray instance. Settings are kept outside the installation directory and are never deleted. Windows Restart Manager handles files held open during upgrades; users should quit tt-pane before updating. See [Inno Setup's CloseApplications behavior](https://jrsoftware.org/ishelp/topic_setup_closeapplications.htm).
+The stable AppId identifies upgrades. Files live in `%LOCALAPPDATA%\Programs\tt-pane`; no elevation or PATH changes are required. The desktop shortcut is opt-in, launch at login is managed in Settings, and launch-after-install is unchecked to avoid starting a second tray instance. Settings are kept outside the installation directory and are never deleted. Windows Restart Manager handles files held open during upgrades; users should quit tt-pane before updating. See [Inno Setup's CloseApplications behavior](https://jrsoftware.org/ishelp/topic_setup_closeapplications.htm).
 
 Silent install: `setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=""`. Select the optional desktop shortcut with `/TASKS="desktopicon"`. There is no startup task: tt-pane registers its own sign-in entry (`HKCU\…\Run`) when it first runs, and setup removes a Startup-folder shortcut left by earlier installers. Uninstall removes the Run value. Silent installs do not launch tt-pane. Uninstall uses `unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`.
 

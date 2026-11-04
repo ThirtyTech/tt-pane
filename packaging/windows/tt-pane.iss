@@ -9,6 +9,9 @@
 #ifndef ShortcutName
   #define ShortcutName "tt-pane"
 #endif
+#ifndef RunValueName
+  #define RunValueName "tt-pane"
+#endif
 
 [Setup]
 AppId={#AppId}
@@ -83,7 +86,7 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'tt-pane');
-    RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run', 'tt-pane');
+    RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', '{#RunValueName}');
+    RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run', '{#RunValueName}');
   end;
 end;

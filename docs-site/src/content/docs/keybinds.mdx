@@ -41,7 +41,7 @@ Expansion uses the `=` / `+` key **without Shift**. Ctrl + Alt + Shift + = also 
 
 Read [Resize & refine](/tt-pane/resizing/) for anchoring, growth cycles, and neighboring-window behavior.
 
-## Move focus — Windows
+## Move focus — Windows, macOS, and GNOME Wayland
 
 | Shortcut | Direction |
 | --- | --- |
@@ -58,7 +58,9 @@ When middle-window navigation is enabled, **Settings → Advanced → Filter mid
 
 Tap **Ctrl+Alt+H/L** (release before **400 ms**) for regular navigation. Hold for **400 ms** from a background edge-snapped window to enter middle windows, including covered ones. From a centered member or floating middle window, hold to exit to background edge-snapped windows on the same monitor. Holds fire once; release before holding again. If no candidate qualifies, focus stays put. Remapped horizontal focus shortcuts work the same way. Holds require the running tray app.
 
-## Centered groups — Windows
+Holds require Windows. macOS and GNOME shortcuts perform regular navigation on press; macOS targets the current Space and GNOME the active workspace.
+
+## Centered groups — Windows and GNOME Wayland
 
 Press **Ctrl + Alt + 3** on each window you want in a group. Windows must be on the same monitor and placed using Center; dragging them to the middle does not enroll them.
 
@@ -68,7 +70,7 @@ The focused member returns to its saved centered size and position, including gr
 
 Moving or resizing a member manually, another placement/width shortcut, changing monitors/work areas, minimizing, maximizing, hiding, or closing removes membership. Center explicitly rejoins the window. Repeated Center presses still grow the focused window and update its saved centered size. Groups are independent per monitor.
 
-CLI Center/focus actions share the same saved groups. Mouse and Alt+Tab observation requires the running tray app.
+CLI Center/focus actions share the same saved groups. Mouse and Alt+Tab observation requires the running tray app. Hold-to-exit is Windows-only; use J/K to leave a group on GNOME.
 
 ## Change a shortcut
 

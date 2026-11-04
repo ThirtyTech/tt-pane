@@ -7,7 +7,7 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 ## Quick install
 
-Run one command for your platform. Each script downloads the latest release, checks it against the release's `SHA256SUMS.txt`, and installs tt-pane for your account. Rerun the same command to upgrade.
+Choose the app package or install script for your platform. Each script downloads the latest release, checks it against the release's `SHA256SUMS.txt`, and installs tt-pane for your account. Rerun the same command to upgrade.
 
 <Tabs syncKey="os">
   <TabItem label="Windows">
@@ -22,13 +22,19 @@ Run one command for your platform. Each script downloads the latest release, che
     Supports Windows 10 and 11 on x64. Windows 11 on ARM runs the x64 build through emulation.
   </TabItem>
   <TabItem label="macOS">
-    In Terminal:
+    Download the `.dmg` from [GitHub Releases](https://github.com/ThirtyTech/tt-pane/releases), open it, and drag **tt-pane** to **Applications**. Open it from Applications, Launchpad, or Spotlight. It runs in the menu bar without a terminal or Dock icon.
+
+    Allow Accessibility access under **System Settings → Privacy & Security → Accessibility** when prompted. Settings opens with instructions until access is granted. Reopening the app shows Settings in the running instance.
+
+    Unless the release says the app is notarized, macOS blocks the first launch: choose **Done**, then **System Settings → Privacy & Security → Open Anyway**.
+
+    For the standalone command-line executable instead, run in Terminal:
 
     ```sh
     curl -fsSL https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.sh | sh
     ```
 
-    The script installs `tt-pane` into `~/.local/bin`.
+    The script installs only the executable into `~/.local/bin`, not the app bundle.
 
     Then run `~/.local/bin/tt-pane` to start it in the menu bar, and grant the installed executable Accessibility access under **System Settings → Privacy & Security → Accessibility**. Upgrades replace the unsigned executable, so macOS can ask for that access again.
 
@@ -66,12 +72,13 @@ To install by hand instead, choose the matching package from [GitHub Releases](h
 | --- | --- | --- |
 | Windows x64 | `tt-pane-vVERSION-windows-x64-setup.exe` | Install, then launch tt-pane from Start |
 | Windows x64, portable | `.zip` | Extract and run the executable |
-| macOS Apple Silicon | `.tar.gz` | Extract, then run `./tt-pane` |
+| macOS Apple Silicon | `.dmg` | Drag tt-pane to Applications and open it |
+| macOS Apple Silicon, CLI | `.tar.gz` | Extract, then run `./tt-pane` |
 | Linux x64 | `.tar.gz` | Extract, then run `./tt-pane` |
 
-Windows installation is per-user and needs no administrator rights. The installer offers desktop and sign-in shortcuts. Linux and macOS downloads are standalone executables, not system packages or a macOS app bundle. See [Platforms & troubleshooting](/tt-pane/platforms/) for permissions and native dependencies.
+Windows installation is per-user and needs no administrator rights. The installer offers an optional desktop shortcut; launch at login is managed in Settings. Linux archives and the macOS CLI archive contain standalone executables. The macOS disk image contains the app bundle. See [Platforms & troubleshooting](/tt-pane/platforms/) for permissions and native dependencies.
 
-Packages are unsigned. Each release includes `SHA256SUMS.txt`. Check your file with `Get-FileHash -Algorithm SHA256` on Windows, `shasum -a 256` on macOS, or `sha256sum` on Linux.
+Windows and Linux packages are unsigned. The macOS app is signed and notarized when release credentials are configured, and signed ad hoc otherwise. Each release includes `SHA256SUMS.txt`. Check your file with `Get-FileHash -Algorithm SHA256` on Windows, `shasum -a 256` on macOS, or `sha256sum` on Linux.
 
 ## Your first placement
 
@@ -82,7 +89,7 @@ Packages are unsigned. Each release includes `SHA256SUMS.txt`. Check your file w
 
 On macOS, use **Control + Option**. On GNOME Wayland, log out and back in once after the first launch so GNOME loads the tt-pane extension ([details](/tt-pane/platforms/#gnome-on-wayland)).
 
-Open **Settings…** from the tray to customize shortcuts. Closing Settings leaves tt-pane running; **Quit tt-pane** exits. Run one tray instance at a time: single-instance forwarding is not implemented.
+Open **Settings…** from the tray to customize shortcuts. Closing Settings leaves tt-pane running; **Quit tt-pane** exits. Run one tray instance at a time. Reopening the macOS app from Finder shows Settings; general single-instance forwarding is not implemented.
 
 ## Upgrade or uninstall
 
@@ -101,9 +108,9 @@ Your configuration is kept when you upgrade or uninstall.
     Or use **Settings → Apps → Installed apps → tt-pane**.
   </TabItem>
   <TabItem label="macOS">
-    To upgrade, rerun the install script, then quit tt-pane from the menu bar and start it again.
+    For the app, quit tt-pane and replace it in Applications with the new version. An ad-hoc-signed update may need Accessibility turned off and on again. To uninstall the app, turn off **Launch at login** and save, quit tt-pane, then remove it from Applications.
 
-    To uninstall:
+    For a script install, rerun the install script to upgrade, then quit and restart tt-pane. To uninstall the script installation:
 
     ```sh
     curl -fsSL https://github.com/ThirtyTech/tt-pane/releases/latest/download/install.sh | sh -s -- --uninstall

@@ -28,7 +28,7 @@ $stage = Join-Path $testRoot 'stage'
 $install = Join-Path $testRoot 'installed'
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $BinDir 'tt-pane.exe'), "$root/README.md" -Destination $stage
-& $Iscc /Qp "/DAppId=$id" "/DShortcutName=$name" "/DAppVersion=$version" "/DFileVersion=$fileVersion" `
+& $Iscc /Qp "/DAppId=$id" "/DShortcutName=$name" "/DRunValueName=$name" "/DAppVersion=$version" "/DFileVersion=$fileVersion" `
     "/DStageDir=$stage" /DOutputBase=smoke-setup "/O$testRoot" "$PSScriptRoot/tt-pane.iss"
 if ($LASTEXITCODE -ne 0) { throw 'Smoke installer compilation failed' }
 $setup = Join-Path $testRoot 'smoke-setup.exe'
@@ -68,8 +68,13 @@ try {
     Invoke-Setup '' 'upgrade'
     if (Test-Path -LiteralPath $desktop) { throw 'Upgrade retained deselected shortcuts' }
     if ((Get-ItemProperty -LiteralPath $key).DisplayVersion -ne $version) { throw 'Wrong registered version' }
+    # Exercise cleanup with a unique value, preserving the real app's login entry.
+    $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+    New-Item -Path $runKey -Force | Out-Null
+    New-ItemProperty -LiteralPath $runKey -Name $name -Value ('"' + (Join-Path $install 'tt-pane.exe') + '"') -PropertyType String -Force | Out-Null
     $process = Start-Process -FilePath $uninstall -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -WindowStyle Hidden -PassThru -Wait
     if ($process.ExitCode -ne 0) { throw "Uninstall failed: $($process.ExitCode)" }
+    if (Get-ItemProperty -LiteralPath $runKey -Name $name -ErrorAction SilentlyContinue) { throw 'Uninstall retained the login entry' }
     foreach ($path in "$install/tt-pane.exe", $menu, $desktop, $startup, $key) {
         if (Test-Path -LiteralPath $path) { throw "Uninstall left behind: $path" }
     }
