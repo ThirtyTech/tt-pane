@@ -37,10 +37,15 @@ pub fn create(style: TrayIconStyle) -> Result<Tray> {
     let builder = TrayIconBuilder::new()
         .with_id("tt-pane")
         .with_tooltip("tt-pane — window shortcuts")
-        .with_menu(Box::new(menu))
-        .with_icon(icon(style)?);
+        .with_menu(Box::new(menu));
     #[cfg(target_os = "macos")]
-    let builder = builder.with_icon_as_template(is_template(style));
+    let builder = if is_template(style) {
+        builder.with_icon_templated(icon(style)?)
+    } else {
+        builder.with_icon(icon(style)?)
+    };
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.with_icon(icon(style)?);
     Ok(Tray {
         icon: builder.build()?,
         #[cfg(windows)]
@@ -51,8 +56,9 @@ pub fn create(style: TrayIconStyle) -> Result<Tray> {
 /// Switch a running tray icon to `style`.
 pub fn set_style(tray: &TrayIcon, style: TrayIconStyle) -> Result<()> {
     #[cfg(target_os = "macos")]
-    tray.set_icon_with_as_template(Some(icon(style)?), is_template(style))?;
-    #[cfg(not(target_os = "macos"))]
+    if is_template(style) {
+        return Ok(tray.set_icon_templated(Some(icon(style)?))?);
+    }
     tray.set_icon(Some(icon(style)?))?;
     Ok(())
 }
