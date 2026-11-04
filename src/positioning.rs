@@ -324,7 +324,12 @@ fn apply_inner(
     if action.focuses() {
         let result = (|| -> Result<()> {
             if include_hidden
-                || !group.focus(window, action, platform::FocusVisibility::IncludeHidden)?
+                || !group.focus(
+                    window,
+                    action,
+                    platform::FocusVisibility::IncludeHidden,
+                    config.center_layout,
+                )?
             {
                 platform::focus_window_with_members(
                     window,
@@ -333,7 +338,7 @@ fn apply_inner(
                     &group.exit_members(window, action),
                     &group.handles(),
                 )?;
-                group.refresh()?;
+                group.refresh(config.center_layout)?;
             }
             Ok(())
         })();
@@ -417,12 +422,12 @@ fn apply_inner(
             let result = if action == Action::Center {
                 group.register(&cycle.window, actual);
                 match cycle.window.rsplit(':').next().and_then(|s| s.parse().ok()) {
-                    Some(handle) => group.arrange(handle),
+                    Some(handle) => group.arrange(handle, config.center_layout),
                     None => Ok(()),
                 }
             } else {
                 group.remove(&cycle.window);
-                group.refresh()
+                group.refresh(config.center_layout)
             };
             if group != group_before {
                 group.save(&path)?;

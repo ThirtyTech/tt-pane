@@ -1,5 +1,6 @@
 //! Explicit Center membership, shared by the tray and CLI under the cycle lock.
 use crate::{
+    config::CenterLayout,
     geometry::{Action, Rect},
     platform,
 };
@@ -133,6 +134,7 @@ impl Group {
         handle: Option<u64>,
         action: Action,
         visibility: platform::FocusVisibility,
+        layout: CenterLayout,
     ) -> Result<bool> {
         let Some(handle) = handle.or_else(platform::foreground_handle) else {
             return Ok(false);
@@ -161,7 +163,7 @@ impl Group {
             return Ok(false);
         }
         platform::focus_snapshot(&live)?;
-        self.arrange(next)?;
+        self.arrange(next, layout)?;
         Ok(true)
     }
 
@@ -182,15 +184,15 @@ impl Group {
             .collect()
     }
 
-    pub fn refresh(&mut self) -> Result<()> {
+    pub fn refresh(&mut self, layout: CenterLayout) -> Result<()> {
         self.prune();
         if let Some(handle) = platform::foreground_handle() {
-            self.arrange(handle)?;
+            self.arrange(handle, layout)?;
         }
         Ok(())
     }
 
-    pub fn arrange(&mut self, handle: u64) -> Result<()> {
+    pub fn arrange(&mut self, handle: u64, layout: CenterLayout) -> Result<()> {
         let selected = self.members.iter().find(|m| m.handle == handle);
         let peers: Vec<_> = self
             .members
@@ -209,7 +211,7 @@ impl Group {
                     selected_index,
                     peers.iter().position(|m| m.handle == member.handle),
                 ) {
-                    (Some(selected), Some(index)) => target(&peers, index, selected),
+                    (Some(selected), Some(index)) => layout_target(&peers, index, selected, layout),
                     _ => member.last,
                 };
                 (member, bounds)
@@ -260,6 +262,14 @@ fn slot(index: usize, selected: usize, count: usize) -> i64 {
     }
 }
 
+fn layout_target(peers: &[Member], index: usize, selected: usize, layout: CenterLayout) -> Rect {
+    if layout == CenterLayout::Stack && index != selected {
+        // Keep the same inactive size as Offset, but remove the displacement.
+        return Action::Center.target(peers[index].area, peers[index].area);
+    }
+    target(peers, index, selected)
+}
+
 fn target(peers: &[Member], index: usize, selected_index: usize) -> Rect {
     if index == selected_index {
         return peers[index].centered;
@@ -296,7 +306,7 @@ fn target(peers: &[Member], index: usize, selected_index: usize) -> Rect {
 
 /// Observe mouse/Alt+Tab focus as well as keybindings. Avoid blocking the UI on a
 /// concurrent CLI command. The caller throttles this to ten observations/second.
-pub fn observe(path: &Path) -> Result<()> {
+pub fn observe(path: &Path, layout: CenterLayout) -> Result<()> {
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     if !crate::positioning::sidecar(&path, ".centered.json").exists() {
         return Ok(());
@@ -312,7 +322,7 @@ pub fn observe(path: &Path) -> Result<()> {
     }
     let mut group = Group::load(&path)?;
     let before = group.clone();
-    let result = group.refresh();
+    let result = group.refresh(layout);
     if group != before {
         group.save(&path)?;
     }
@@ -437,7 +447,7 @@ mod tests {
                 for (action, expected) in [(Action::FocusLeft, left), (Action::FocusRight, right)] {
                     platform::focus_snapshot(&platform::window_snapshot(source).unwrap().unwrap())
                         .unwrap();
-                    observe(&path).unwrap();
+                    observe(&path, CenterLayout::Offset).unwrap();
                     config.focus.minimum_visible_percent = 99;
                     crate::positioning::apply_gesture(&config, &path, action, Some(source), true)
                         .unwrap();
@@ -487,7 +497,7 @@ mod tests {
             // A regular native focus change is picked up by the tray observer.
             platform::focus_snapshot(&platform::window_snapshot(handles[0]).unwrap().unwrap())
                 .unwrap();
-            observe(&path).unwrap();
+            observe(&path, CenterLayout::Offset).unwrap();
             group = Group::load(&path).unwrap();
             assert_eq!(
                 platform::window_snapshot(handles[0])
@@ -527,7 +537,7 @@ mod tests {
                     3,
                     "Our moves must not evict group members"
                 );
-                group.arrange(handle).unwrap();
+                group.arrange(handle, CenterLayout::Offset).unwrap();
                 let selected = group.members.iter().find(|m| m.handle == handle).unwrap();
                 assert_eq!(
                     platform::window_snapshot(handle).unwrap().unwrap().bounds,
@@ -548,9 +558,9 @@ mod tests {
             assert_eq!(platform::foreground_handle(), Some(handles[0]));
             group = Group::load(&path).unwrap();
             let saved = group.members[0].centered;
-            group.arrange(u64::MAX).unwrap();
+            group.arrange(u64::MAX, CenterLayout::Offset).unwrap();
             assert_eq!(group.members[0].last, saved);
-            group.arrange(handles[0]).unwrap();
+            group.arrange(handles[0], CenterLayout::Offset).unwrap();
             assert_eq!(group.members[0].last, saved);
             let changed = platform::apply_with(Some(handles[0]), &mut |_, _, bounds| {
                 Ok(Rect {
@@ -561,7 +571,7 @@ mod tests {
             .unwrap();
             group.prune();
             assert_eq!(group.members.len(), 2);
-            group.arrange(handles[1]).unwrap();
+            group.arrange(handles[1], CenterLayout::Offset).unwrap();
             assert_eq!(
                 platform::window_snapshot(handles[0])
                     .unwrap()
@@ -601,6 +611,94 @@ mod tests {
                 height: 500,
             },
         }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    #[ignore = "requires interactive Windows desktop; briefly focuses disposable windows"]
+    fn native_stacked_cycle_promotes_covered_members_and_switches_layout() {
+        platform::test_support::with_group_windows(|handles| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            let mut config = crate::config::Config::default();
+            config.focus.glow_enabled = false;
+            for handle in handles {
+                crate::positioning::apply(&config, &path, Action::Center, Some(handle)).unwrap();
+            }
+            config.center_layout = CenterLayout::Stack;
+            platform::focus_snapshot(&platform::window_snapshot(handles[0]).unwrap().unwrap())
+                .unwrap();
+            observe(&path, config.center_layout).unwrap();
+            for turn in 0..6 {
+                let selected = turn % handles.len();
+                let group = Group::load(&path).unwrap();
+                assert_eq!(group.members.len(), handles.len());
+                for member in &group.members {
+                    let live = platform::window_snapshot(member.handle).unwrap().unwrap();
+                    assert_eq!(live.bounds, member.centered);
+                }
+                crate::positioning::apply_gesture(
+                    &config,
+                    &path,
+                    Action::FocusRight,
+                    Some(handles[selected]),
+                    false,
+                )
+                .unwrap();
+                assert_eq!(
+                    platform::foreground_handle(),
+                    Some(handles[(selected + 1) % handles.len()])
+                );
+            }
+            observe(&path, CenterLayout::Offset).unwrap();
+            let group = Group::load(&path).unwrap();
+            assert_eq!(group.members.len(), handles.len());
+            assert!(
+                group
+                    .members
+                    .iter()
+                    .any(|member| member.last != member.centered)
+            );
+        });
+    }
+
+    #[test]
+    fn stacked_cycle_stays_centered_and_preserves_offset_sizing() {
+        let mut group = Group {
+            members: (1..=3).map(member).collect(),
+        };
+        group.members[0].centered = Rect {
+            x: -1520,
+            y: 70,
+            width: 1440,
+            height: 900,
+        };
+        let mut handle = 1;
+        for turn in 0..9 {
+            let selected = turn % 3;
+            assert_eq!(handle, selected as u64 + 1);
+            for (index, peer) in group.members.iter().enumerate() {
+                let stacked = layout_target(&group.members, index, selected, CenterLayout::Stack);
+                let offset = layout_target(&group.members, index, selected, CenterLayout::Offset);
+                assert_eq!(
+                    (stacked.width, stacked.height),
+                    (offset.width, offset.height)
+                );
+                assert_eq!(
+                    stacked.x * 2 + stacked.width,
+                    peer.area.x * 2 + peer.area.width
+                );
+                assert_eq!(
+                    stacked.y * 2 + stacked.height,
+                    peer.area.y * 2 + peer.area.height
+                );
+                if index == selected {
+                    assert_eq!(stacked, peer.centered);
+                }
+            }
+            handle = group.neighbor(handle, Action::FocusRight).unwrap();
+        }
+        assert_eq!(group.neighbor(1, Action::FocusLeft), Some(3));
     }
 
     #[test]
@@ -689,7 +787,7 @@ mod tests {
         }
         let before = group.clone();
         // An unregistered window can be snapped behind the center or on any screen.
-        group.arrange(u64::MAX).unwrap();
+        group.arrange(u64::MAX, CenterLayout::Offset).unwrap();
         assert_eq!(group, before);
     }
 
@@ -712,7 +810,7 @@ mod tests {
         };
         group.members[1].last = target(&group.members[..2], 1, 0);
         let before = group.clone();
-        group.arrange(3).unwrap();
+        group.arrange(3, CenterLayout::Offset).unwrap();
         assert_eq!(group, before);
     }
 

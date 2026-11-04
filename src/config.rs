@@ -25,6 +25,8 @@ pub struct Config {
     #[serde(default = "enabled")]
     pub launch_at_login: bool,
     #[serde(default)]
+    pub center_layout: CenterLayout,
+    #[serde(default)]
     pub growth: Growth,
     #[serde(default)]
     pub width_resize: WidthResize,
@@ -35,6 +37,14 @@ pub struct Config {
 
 fn enabled() -> bool {
     true
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CenterLayout {
+    #[default]
+    Offset,
+    Stack,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -153,6 +163,7 @@ impl Default for Config {
             version: 1,
             gaps: crate::geometry::SnapGaps::default(),
             launch_at_login: true,
+            center_layout: CenterLayout::default(),
             growth: Growth::default(),
             width_resize: WidthResize::default(),
             focus: Focus::default(),
@@ -340,6 +351,26 @@ mod tests {
                 percent: 25,
                 steps: 3
             }
+        );
+    }
+
+    #[test]
+    fn center_layout_defaults_and_round_trips() {
+        let old: Config = toml::from_str("version = 1\nbindings = []").unwrap();
+        assert_eq!(old.center_layout, CenterLayout::Offset);
+        assert_eq!(Config::default().center_layout, CenterLayout::Offset);
+        for layout in [CenterLayout::Offset, CenterLayout::Stack] {
+            let config = Config {
+                center_layout: layout,
+                ..Config::default()
+            };
+            let saved = toml::to_string(&config).unwrap();
+            let loaded: Config = toml::from_str(&saved).unwrap();
+            assert_eq!(loaded.center_layout, layout);
+        }
+        assert!(
+            toml::from_str::<Config>("version = 1\nbindings = []\ncenter_layout = 'invalid'")
+                .is_err()
         );
     }
 

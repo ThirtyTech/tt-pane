@@ -26,6 +26,7 @@ This is a **partial example**, not the complete default binding list. Omitted ac
 ```toml
 version = 1
 launch_at_login = true
+center_layout = "offset" # or "stack"
 
 [gaps]
 inner = 5
@@ -63,6 +64,12 @@ Tap **Ctrl+Alt+H/L** (release before **400 ms**) for regular navigation. Hold fo
 Saved growth settings are preserved on upgrade. New configurations and files without growth settings default to 15% and three steps; reset defaults and save to adopt these values in an existing configuration. Width and growth controls are under **Advanced**, which starts collapsed.
 
 Old `include_obscured = false` settings migrate to 50%, and `true` or an omitted value migrates to 10%. An explicit `minimum_visible_percent` wins if both keys exist. Saving writes only the new percentage key.
+
+## Center window layout
+
+**Settings → Center windows → Layout** switches between **Offset** (the default, including existing configurations) and **Stack**. In Stack mode, all group members stay centered and H/L cycles through the same order, bringing the selected window to the front even when it was fully covered. Set `center_layout = "stack"` at the top level of the TOML file to enable it from the CLI.
+
+Sizing is unchanged: the selected window restores its saved size, background members use the base center size, and growth and width adjustments continue to work as before. Save to activate; existing groups adopt the layout when a member is focused or the next center/group action runs.
 
 ## Snapped window gaps
 

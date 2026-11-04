@@ -1,5 +1,5 @@
 use crate::{
-    config::{Binding, Config},
+    config::{Binding, CenterLayout, Config},
     geometry::Action,
     platform,
     shortcuts::Shortcuts,
@@ -454,6 +454,18 @@ impl Render for Settings {
                             this.message("Launch at login updated. Save to activate.", false, cx);
                         })))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Start tt-pane in the tray when you sign in."))
+                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Center windows"))
+                    .child(button("center-layout", match self.draft.center_layout {
+                        CenterLayout::Offset => "Layout: Offset",
+                        CenterLayout::Stack => "Layout: Stack",
+                    }).on_click(cx.listener(|this, _, _, cx| {
+                        this.draft.center_layout = match this.draft.center_layout {
+                            CenterLayout::Offset => CenterLayout::Stack,
+                            CenterLayout::Stack => CenterLayout::Offset,
+                        };
+                        this.message("Center layout updated. Save to activate.", false, cx);
+                    })))
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Offset (default) spreads background center windows out. Stack keeps them centered; H/L brings the next window forward. Sizing stays the same."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Window focus"))
                     .when(cfg!(windows), |el| el
                         .child(div().text_sm().child("Focus glow"))
@@ -807,7 +819,9 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                                 && group_observed.elapsed() >= Duration::from_millis(100)
                             {
                                 group_observed = std::time::Instant::now();
-                                if let Err(e) = crate::centered::observe(&this.path) {
+                                if let Err(e) =
+                                    crate::centered::observe(&this.path, this.active.center_layout)
+                                {
                                     this.message(format!("{e:#}"), true, cx);
                                 }
                             }
