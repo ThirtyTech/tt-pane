@@ -30,6 +30,8 @@ pub struct Config {
     #[serde(default)]
     pub center_layout: CenterLayout,
     #[serde(default)]
+    pub tiling: Tiling,
+    #[serde(default)]
     pub growth: Growth,
     #[serde(default)]
     pub width_resize: WidthResize,
@@ -40,6 +42,49 @@ pub struct Config {
 
 fn enabled() -> bool {
     true
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TilingLayout {
+    #[default]
+    Dwindle,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Tiling {
+    pub enabled: bool,
+    pub layout: TilingLayout,
+    pub default_split_ratio: f64,
+    pub split_width_multiplier: f64,
+    pub preserve_split: bool,
+    /// Exact executable basenames, matched without ASCII case sensitivity.
+    pub float_apps: Vec<String>,
+}
+
+impl Default for Tiling {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            layout: TilingLayout::Dwindle,
+            default_split_ratio: 0.5,
+            split_width_multiplier: 1.0,
+            preserve_split: true,
+            float_apps: Vec::new(),
+        }
+    }
+}
+
+impl Tiling {
+    pub fn tree(&self) -> Result<crate::platform::tiling::Dwindle> {
+        crate::platform::tiling::Dwindle::new(
+            self.default_split_ratio,
+            self.split_width_multiplier,
+            self.preserve_split,
+        )
+        .map_err(|_| anyhow::anyhow!("Invalid tiling split settings"))
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -189,16 +234,17 @@ impl Default for Config {
             gaps: crate::geometry::SnapGaps::default(),
             launch_at_login: true,
             center_layout: CenterLayout::default(),
+            tiling: Tiling::default(),
             tray_icon: TrayIconStyle::default(),
             growth: Growth::default(),
             width_resize: WidthResize::default(),
             focus: Focus::default(),
             bindings: Action::ALL
                 .into_iter()
-                .zip(keys)
+                .zip(keys.into_iter().map(Some).chain(std::iter::repeat(None)))
                 .map(|(action, key)| Binding {
                     action,
-                    shortcut: format!("Ctrl+Alt+{key}"),
+                    shortcut: key.map_or_else(String::new, |key| format!("Ctrl+Alt+{key}")),
                 })
                 .collect(),
         }
@@ -234,6 +280,14 @@ impl Config {
                 config.normalize_letter_keys();
                 config.validate()?;
                 config.add_missing_focus_bindings();
+                for action in Action::TILING {
+                    if !config.bindings.iter().any(|b| b.action == action) {
+                        config.bindings.push(Binding {
+                            action,
+                            shortcut: String::new(),
+                        });
+                    }
+                }
                 config.validate()?;
                 Ok(config)
             }
@@ -278,6 +332,22 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        self.tiling.tree()?;
+        ensure!(
+            (0.1..=10.0).contains(&self.tiling.split_width_multiplier),
+            "Tiling split width multiplier must be between 0.1 and 10"
+        );
+        ensure!(
+            self.tiling.float_apps.len() <= 128
+                && self
+                    .tiling
+                    .float_apps
+                    .iter()
+                    .all(|app| !app.trim().is_empty()
+                        && app.len() <= 260
+                        && !app.contains(['/', '\\', '*', '?'])),
+            "Tiling float_apps must contain at most 128 executable basenames (no paths or wildcards)"
+        );
         ensure!(
             self.gaps.inner <= 100 && self.gaps.outer <= 100,
             "Window gaps must be between 0 and 100"
@@ -354,6 +424,50 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tiling_defaults_migrate_and_roundtrip_without_enabling_shortcuts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "version = 1\nbindings = []").unwrap();
+        let mut config = Config::load(&path).unwrap();
+        assert_eq!(config.tiling, Tiling::default());
+        for action in Action::TILING {
+            assert!(
+                config
+                    .bindings
+                    .iter()
+                    .any(|b| b.action == action && b.shortcut.is_empty())
+            );
+        }
+        config.tiling = Tiling {
+            enabled: true,
+            default_split_ratio: 0.6,
+            split_width_multiplier: 1.4,
+            preserve_split: false,
+            float_apps: vec!["notepad.exe".into()],
+            ..Tiling::default()
+        };
+        config.save(&path).unwrap();
+        assert_eq!(Config::load(&path).unwrap().tiling, config.tiling);
+        for ratio in [0.0, 1.0, f64::NAN, f64::INFINITY] {
+            let mut invalid = config.clone();
+            invalid.tiling.default_split_ratio = ratio;
+            assert!(invalid.validate().is_err());
+        }
+        for multiplier in [0.0, 11.0, f64::NAN, f64::INFINITY] {
+            let mut invalid = config.clone();
+            invalid.tiling.split_width_multiplier = multiplier;
+            assert!(invalid.validate().is_err());
+        }
+        for app in ["", " ", "C:\\app.exe", "*.exe"] {
+            let mut invalid = config.clone();
+            invalid.tiling.float_apps = vec![app.into()];
+            assert!(invalid.validate().is_err());
+        }
+        assert!(
+            toml::from_str::<Config>("version=1\nbindings=[]\n[tiling]\nlayout='master'").is_err()
+        );
+    }
     #[test]
     fn existing_configs_keep_bindings_and_gain_default_growth() {
         let config: Config = toml::from_str(

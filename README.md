@@ -82,6 +82,12 @@ The command-line positioning tool can be built independently of GPUI:
 cargo build --release --no-default-features
 ```
 
+## Experimental automatic tiling (Windows)
+
+On `experimental/hypr-tiling`, enable **Settings > Experimental > Automatic tiling** and save. Dwindle tiles existing and newly opened eligible windows on the current virtual desktop, with a separate layout per monitor. It is off by default. Closing/minimizing a tile reflows its neighbors; moving or snapping a tile makes it floating. Turning tiling off leaves windows in place. Keep the tray running for automatic updates.
+
+The new toggle-float, swap-left/down/up/right, toggle-split, split-grow/shrink, and toggle-tiling actions start unbound and work through Settings shortcuts, `tt-pane apply`, and Herdr. On a tiled window, H/J/K/L navigates the tree, -/= changes the split ratio, and Up/Down moves the nearest horizontal boundary. See the [configuration reference](docs-site/src/content/docs/configuration.md) for options, runtime toggling, exclusions, and current limitations. Linux and macOS tiling remain future work.
+
 ## Default bindings
 
 | Shortcut | Action |
@@ -302,6 +308,7 @@ The lifecycle test briefly creates its own settings window, closes it with a nat
 ## Structure and validation
 
 - `crates/tt-pane-platform/src/geometry.rs`: shared placement math and monitor selection.
+- `crates/tt-pane-platform/src/tiling.rs`: pure dwindle/BSP layout engine; `src/tiling.rs`: Windows polling, shared state, and tiling actions.
 - `config.rs`: versioned TOML, validation, atomic save.
 - `positioning.rs`: shared repeated-action cycles, persisted baseline and cross-process locking.
 - `shortcuts.rs`: native shortcut lifetime, conflict handling, and GNOME accelerator conversion.

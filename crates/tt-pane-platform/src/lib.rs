@@ -5,6 +5,7 @@
 
 pub mod geometry;
 mod platform;
+pub mod tiling;
 #[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
 mod visibility;
 pub use platform::*;

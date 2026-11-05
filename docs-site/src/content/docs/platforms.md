@@ -15,6 +15,17 @@ Shared-boundary resizing is **Windows-only**. Centered window groups work on Win
 
 ## Windows
 
+Experimental automatic tiling is available on the `experimental/hypr-tiling` branch:
+
+| Platform | Automatic tiling |
+| --- | --- |
+| Windows | Dwindle, opt-in; current virtual desktop, per monitor |
+| GNOME Wayland | Planned; tiling shortcuts are not registered |
+| Linux X11 | Planned |
+| macOS | Planned |
+
+Windows tiling polls every 100 ms while the tray runs. It skips dialogs and minimized, maximized, fullscreen, hidden, utility, and non-resizable windows. Windows that reject moves become floating; elevated apps may reject control from an unelevated process. See [experimental tiling configuration](/tt-pane/configuration/#tiling-experimental-windows).
+
 Run normally. Elevated applications can reject positioning from an unelevated process. GUI launches do not allocate a console; terminal launches attach to the terminal, where Ctrl+C terminates tt-pane.
 
 ## macOS

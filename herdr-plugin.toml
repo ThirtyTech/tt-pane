@@ -121,3 +121,57 @@ id = "focus-right"
 title = "Focus right"
 contexts = ["workspace"]
 command = ["./target/plugin/release/tt-pane", "apply", "focus-right", "--json"]
+
+[[actions]]
+id = "toggle-float"
+title = "Toggle floating"
+contexts = ["workspace"]
+command = ["./target/plugin/release/tt-pane", "apply", "toggle-float", "--json"]
+
+[[actions]]
+id = "swap-left"
+title = "Swap tile left"
+contexts = ["workspace"]
+command = ["./target/plugin/release/tt-pane", "apply", "swap-left", "--json"]
+
+[[actions]]
+id = "swap-down"
+title = "Swap tile down"
+contexts = ["workspace"]
+command = ["./target/plugin/release/tt-pane", "apply", "swap-down", "--json"]
+
+[[actions]]
+id = "swap-up"
+title = "Swap tile up"
+contexts = ["workspace"]
+command = ["./target/plugin/release/tt-pane", "apply", "swap-up", "--json"]
+
+[[actions]]
+id = "swap-right"
+title = "Swap tile right"
+contexts = ["workspace"]
+command = ["./target/plugin/release/tt-pane", "apply", "swap-right", "--json"]
+
+[[actions]]
+id = "toggle-split"
+title = "Toggle tile split"
+contexts = ["workspace"]
+command = ["./target/plugin/release/tt-pane", "apply", "toggle-split", "--json"]
+
+[[actions]]
+id = "split-grow"
+title = "Grow tile split"
+contexts = ["workspace"]
+command = ["./target/plugin/release/tt-pane", "apply", "split-grow", "--json"]
+
+[[actions]]
+id = "split-shrink"
+title = "Shrink tile split"
+contexts = ["workspace"]
+command = ["./target/plugin/release/tt-pane", "apply", "split-shrink", "--json"]
+
+[[actions]]
+id = "toggle-tiling"
+title = "Toggle experimental tiling"
+contexts = ["workspace"]
+command = ["./target/plugin/release/tt-pane", "apply", "toggle-tiling", "--json"]

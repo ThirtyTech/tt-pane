@@ -15,7 +15,7 @@ pub fn apply(action: Action) -> Result<()> {
         return focus_window(None, action);
     }
     anyhow::ensure!(
-        action != Action::FillGap && !action.adjusts_pair(),
+        action != Action::FillGap && !action.adjusts_pair() && !action.is_tiling(),
         "This action requires the positioning coordinator"
     );
     apply_with(None, &mut |_, area, current| {
@@ -52,7 +52,7 @@ pub fn apply_to_window(action: Action, handle: u64) -> Result<()> {
         return focus_window(Some(handle), action);
     }
     anyhow::ensure!(
-        action != Action::FillGap && !action.adjusts_pair(),
+        action != Action::FillGap && !action.adjusts_pair() && !action.is_tiling(),
         "This action requires the positioning coordinator"
     );
     apply_with(Some(handle), &mut |_, area, current| {
@@ -106,6 +106,8 @@ pub use macos::{accessibility_trusted, show_alert};
 pub use windows::attach_parent_console;
 #[cfg(all(windows, feature = "window-icon"))]
 pub use windows::set_window_icon;
+#[cfg(windows)]
+pub use windows::{TilingDesktop, TilingWindow, move_tiling_window, tiling_desktop};
 #[cfg(windows)]
 pub use windows::{
     WindowSnapshot, choose_glow_color, focus_snapshot, foreground_handle, move_snapshot,

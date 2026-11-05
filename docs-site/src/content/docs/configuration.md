@@ -66,6 +66,30 @@ Saved growth settings are preserved on upgrade. New configurations and files wit
 
 Old `include_obscured = false` settings migrate to 50%, and `true` or an omitted value migrates to 10%. An explicit `minimum_visible_percent` wins if both keys exist. Saving writes only the new percentage key.
 
+## Tiling (experimental, Windows)
+
+On the `experimental/hypr-tiling` branch, **Settings → Experimental → Automatic tiling** enables dwindle tiling. It defaults to **Off**, including existing configurations. **Save changes** activates the setting and tiles already-open eligible windows on the current virtual desktop. Turn it off and save to leave windows where they are. Keep the tray app running for automatic updates (polled every 100 ms); standalone CLI actions reconcile once.
+
+```toml
+[tiling]
+enabled = false
+layout = "dwindle"
+default_split_ratio = 0.5
+split_width_multiplier = 1.0
+preserve_split = true
+float_apps = ["example.exe"]
+```
+
+`default_split_ratio` is the left/top child's fraction, from 0.1 to 0.9. A node splits side-by-side when its width exceeds its height times `split_width_multiplier` (0.1–10); otherwise it splits top/bottom. `preserve_split = true` retains split directions; false recomputes directions as shapes change and disables the toggle-split action. `float_apps` matches exact executable basenames without case sensitivity; paths and wildcards are not supported. Edit these advanced values in the config and restart the app; configuration-file watching is not implemented.
+
+Each monitor/work-area and virtual desktop has its own tree. New windows split the focused tile (or the last focused tile when the newly opened window has focus). Closed or minimized windows leave the tree and remaining tiles reflow; restored windows can rejoin. Existing inner and outer gap settings apply. Manually moving or resizing a tile, including moving it to another monitor, makes it floating. Snap, center, and fill-gap actions also float a tiled window. Centered groups and configured floating apps stay outside the tree. Disabling and re-enabling tiling resets manual floating choices and split changes.
+
+Only restored, resizable application windows are enrolled. Dialogs, owned windows, tool windows, hidden/cloaked windows, minimized/maximized/fullscreen windows, and tt-pane itself are excluded. Windows checks the current virtual desktop again before each move. Applications that reject tile sizes or moves become floating rather than being repeatedly resized; a size-constrained move attempts to restore the prior bounds. A monitor/work-area change currently floats affected windows.
+
+While a tiled window has focus, H/J/K/L navigates tiles on its monitor, including deep nested tiles. Width shortcuts (`-`/`=`) shrink/grow the immediate split by five percentage points instead of changing only the width. Up/Down moves the nearest horizontal split boundary by five percentage points. New [tiling actions](/tt-pane/keybinds/#experimental-tiling-actions-windows) start unbound and can be assigned in Settings or invoked through the CLI/Herdr.
+
+`tt-pane apply toggle-tiling` switches the shared runtime state and reconciles immediately when enabling. This override is stored in `<config>.tiling.json` alongside the tree, floating choices, and observed bounds. It persists across CLI/tray processes and restarts until Settings is saved or the `[tiling]` configuration changes. The Settings toggle shows the saved configuration; saving it overrides the runtime toggle. State updates use the same cycle lock as snapping and centered groups. Missing or corrupt sidecar data resets the layout.
+
 ## Center window layout
 
 **Settings → Center windows → Layout** switches between **Offset** (the default, including existing configurations) and **Stack**. In Stack mode, all group members stay centered and H/L cycles through the same order, bringing the selected window to the front even when it was fully covered. Set `center_layout = "stack"` at the top level of the TOML file to enable it from the CLI.
@@ -76,7 +100,7 @@ Sizing is unchanged: the selected window restores its saved size, background mem
 
 **Settings → Snapped window gaps** controls spacing for half, quarter, and fill-work-area placements. Defaults match [Hyprland](https://wiki.hypr.land/configuring/core/config-options/): `inner = 5` per window edge (10 total between adjacent tiles), and `outer = 20` at desktop work-area edges. Values use native desktop coordinates (pixels on Windows, points on macOS), range from 0–100, and zero disables the corresponding spacing. Existing configurations inherit these defaults.
 
-Changes apply on the next placement; existing windows are not rearranged when saving. Repeated growth retains margins, width expansion stops at the inset work-area edge, and filling a saved strip beside a snapped window leaves inner spacing. Center placement and floating center groups retain their existing geometry. Background focus navigation recognizes both inset tiles and native edge snaps.
+Changes apply on the next placement; existing windows are not rearranged when saving unless experimental automatic tiling is active. Repeated growth retains margins, width expansion stops at the inset work-area edge, and filling a saved strip beside a snapped window leaves inner spacing. Center placement and floating center groups retain their existing geometry. Background focus navigation recognizes both inset tiles and native edge snaps.
 
 ## Launch at login
 

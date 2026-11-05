@@ -122,6 +122,15 @@ pub enum Action {
     FocusDown,
     FocusUp,
     FocusRight,
+    ToggleFloat,
+    SwapLeft,
+    SwapDown,
+    SwapUp,
+    SwapRight,
+    ToggleSplit,
+    SplitGrow,
+    SplitShrink,
+    ToggleTiling,
 }
 
 impl Action {
@@ -138,7 +147,7 @@ impl Action {
         Self::Maximize,
     ];
 
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 28] = [
         Self::Left,
         Self::Right,
         Self::Top,
@@ -158,7 +167,32 @@ impl Action {
         Self::FocusDown,
         Self::FocusUp,
         Self::FocusRight,
+        Self::ToggleFloat,
+        Self::SwapLeft,
+        Self::SwapDown,
+        Self::SwapUp,
+        Self::SwapRight,
+        Self::ToggleSplit,
+        Self::SplitGrow,
+        Self::SplitShrink,
+        Self::ToggleTiling,
     ];
+
+    pub const TILING: [Self; 9] = [
+        Self::ToggleFloat,
+        Self::SwapLeft,
+        Self::SwapDown,
+        Self::SwapUp,
+        Self::SwapRight,
+        Self::ToggleSplit,
+        Self::SplitGrow,
+        Self::SplitShrink,
+        Self::ToggleTiling,
+    ];
+
+    pub fn is_tiling(self) -> bool {
+        Self::TILING.contains(&self)
+    }
 
     pub fn focuses(self) -> bool {
         matches!(
@@ -190,7 +224,16 @@ impl Action {
             | Self::FocusLeft
             | Self::FocusDown
             | Self::FocusUp
-            | Self::FocusRight => None,
+            | Self::FocusRight
+            | Self::ToggleFloat
+            | Self::SwapLeft
+            | Self::SwapDown
+            | Self::SwapUp
+            | Self::SwapRight
+            | Self::ToggleSplit
+            | Self::SplitGrow
+            | Self::SplitShrink
+            | Self::ToggleTiling => None,
         }
     }
 
@@ -214,6 +257,16 @@ impl Action {
             Self::FocusDown => "focus-down",
             Self::FocusUp => "focus-up",
             Self::FocusRight => "focus-right",
+            Self::ToggleFloat => "toggle-float",
+            Self::SwapLeft => "swap-left",
+            Self::SwapDown => "swap-down",
+            Self::SwapUp => "swap-up",
+            Self::SwapRight => "swap-right",
+            Self::ToggleSplit => "toggle-split",
+            Self::SplitGrow => "split-grow",
+            Self::SplitShrink => "split-shrink",
+            Self::ToggleTiling => "toggle-tiling",
+
             Self::ResizeDown => "resize-down",
         }
     }
@@ -238,6 +291,16 @@ impl Action {
             Self::FocusDown => "Focus down",
             Self::FocusUp => "Focus up",
             Self::FocusRight => "Focus right",
+            Self::ToggleFloat => "Toggle floating",
+            Self::SwapLeft => "Swap tile left",
+            Self::SwapDown => "Swap tile down",
+            Self::SwapUp => "Swap tile up",
+            Self::SwapRight => "Swap tile right",
+            Self::ToggleSplit => "Toggle tile split",
+            Self::SplitGrow => "Grow tile split",
+            Self::SplitShrink => "Shrink tile split",
+            Self::ToggleTiling => "Toggle experimental tiling",
+
             Self::ResizeDown => "Move shared boundary down",
         }
     }
@@ -254,7 +317,16 @@ impl Action {
             | Self::FocusLeft
             | Self::FocusDown
             | Self::FocusUp
-            | Self::FocusRight => return current,
+            | Self::FocusRight
+            | Self::ToggleFloat
+            | Self::SwapLeft
+            | Self::SwapDown
+            | Self::SwapUp
+            | Self::SwapRight
+            | Self::ToggleSplit
+            | Self::SplitGrow
+            | Self::SplitShrink
+            | Self::ToggleTiling => return current,
             Self::ShrinkWidth | Self::ExpandWidth => {
                 return current.adjust_width(
                     area,

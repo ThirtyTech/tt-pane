@@ -439,6 +439,15 @@ impl Settings {
         }
         let tray_changed = self.active.tray_icon != self.draft.tray_icon;
         self.active = self.draft.clone();
+        #[cfg(windows)]
+        if let Err(error) = crate::tiling::saved_settings(&self.active, &self.path) {
+            self.message(
+                format!("Saved, but could not update tiling: {error:#}"),
+                true,
+                cx,
+            );
+            return;
+        }
         if tray_changed
             && let Err(error) = crate::tray::set_style(&self._tray.icon, self.active.tray_icon)
         {
@@ -594,6 +603,7 @@ impl Render for Settings {
                             .w(px(preview_width)).h(px(preview_height)).rounded_sm()
                             .bg(rgb(0x258c78)).border_1().border_color(rgb(0x6ee7c0))))
                     .child(div().text_sm().child(selected.label()))
+                    .when(selected.is_tiling(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Experimental Windows tiling action. Enable Automatic tiling below or use Toggle experimental tiling. These actions edit the live layout and have no fixed snap position.")))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Hover a keybinding to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."))
                     .when(selected.adjusts_pair(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Move the shared boundary by 25% of the selected window's current height, with a 50/50 stop when returning toward the middle. Blue shows the neighbor. Windows only; matching left and right edges required.")))
                     .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("H: left, J: down, K: up, L: right. Tap H/J/K/L to navigate background windows by default. Inside a centered group, H/L rotate continuously. Hold for 400 ms to enter covered middle windows from an edge, or exit a middle window to a background edge window. Holds are Windows only; centered groups rotate on Windows and GNOME on Wayland.")))
@@ -607,6 +617,15 @@ impl Render for Settings {
                             this.message("Launch at login updated. Save to activate.", false, cx);
                         })))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Start tt-pane in the tray when you sign in."))
+                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Experimental"))
+                    .when(cfg!(windows), |el| el
+                        .child(button("tiling-enabled", if self.draft.tiling.enabled { "Automatic tiling: On" } else { "Automatic tiling: Off" })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.draft.tiling.enabled = !this.draft.tiling.enabled;
+                                this.message("Automatic tiling updated. Save to activate.", false, cx);
+                            })))
+                        .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Dwindle tiles existing and new restored windows on the current desktop. Moving or snapping a tile floats it. Turning off leaves windows in place. Save to activate.")))
+                    .when(!cfg!(windows), |el| el.child(div().text_xs().text_color(rgb(0x91a4bb)).child("Automatic tiling is currently available on Windows only.")))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Center windows"))
                     .child(button("center-layout", match self.draft.center_layout {
                         CenterLayout::Offset => "Layout: Offset",
@@ -1243,6 +1262,10 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                                 && group_observed.elapsed() >= Duration::from_millis(100)
                             {
                                 group_observed = std::time::Instant::now();
+                                #[cfg(windows)]
+                                if let Err(e) = crate::tiling::observe(&this.active, &this.path) {
+                                    this.message(format!("Tiling: {e:#}"), true, cx);
+                                }
                                 if let Err(e) =
                                     crate::centered::observe(&this.path, this.active.center_layout)
                                 {

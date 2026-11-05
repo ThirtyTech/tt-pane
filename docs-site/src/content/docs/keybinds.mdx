@@ -82,3 +82,21 @@ CLI Center/focus actions share the same saved groups. Mouse and Alt+Tab observat
 Duplicate shortcuts are rejected. Native registration conflicts appear in Settings; failed registration preserves the previous bindings. On GNOME Wayland, saving re-registers the GNOME shortcuts. See [platform setup](/tt-pane/platforms/).
 
 Older configurations gain missing focus actions unless a default key is already taken. Existing custom or disabled bindings are preserved. Older configurations may need the two boundary shortcuts recorded manually, or defaults reset and saved.
+
+## Experimental tiling actions (Windows)
+
+Available on `experimental/hypr-tiling`. All start **unbound**, including migrated configurations. Assign shortcuts in Settings or use `tt-pane apply ACTION` (also exposed in the Herdr manifest).
+
+| Action | Behavior |
+| --- | --- |
+| `toggle-tiling` | Enable/disable shared runtime tiling; enabling tiles existing eligible windows |
+| `toggle-float` | Remove the selected tile from the tree, or reinsert a floating window |
+| `swap-left`, `swap-down`, `swap-up`, `swap-right` | Swap with the nearest tile in that direction on the same monitor |
+| `toggle-split` | Toggle the immediate parent's direction; requires `preserve_split = true` |
+| `split-grow`, `split-shrink` | Change the selected tile's share of its immediate parent by five percentage points |
+
+On tiled windows, H/J/K/L uses tree geometry (including deep tiles); horizontal hold gestures also navigate tiles. `shrink-width`/`expand-width` act like `split-shrink`/`split-grow`, and `resize-up`/`resize-down` moves the nearest horizontal split boundary. A lone tile has no split to adjust. Ratios stay between 10% and 90%.
+
+Snap/center/fill-gap actions float a tiled window before normal placement. Floating windows keep ordinary positioning behavior. To retile a centered group member, first use a non-center snap to leave the group, then `toggle-float`. Apps listed in `float_apps` must be removed from that list before retiling. All tiling actions other than `toggle-tiling` require active tiling; GNOME skips registering them until its backend is implemented.
+
+The runtime toggle persists in the shared sidecar. Saving Settings makes the saved toggle authoritative again. See [configuration](/tt-pane/configuration/#tiling-experimental-windows) for the full behavior.

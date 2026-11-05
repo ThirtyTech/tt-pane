@@ -157,7 +157,7 @@ fn extension_running() -> bool {
 /// Linux yet, and Ctrl+Alt+Up/Down would shadow GNOME's workspace switching
 /// for nothing.
 fn supported(action: Action) -> bool {
-    !action.adjusts_pair()
+    !action.adjusts_pair() && !action.is_tiling()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

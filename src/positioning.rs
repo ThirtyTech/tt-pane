@@ -281,6 +281,11 @@ fn apply_inner(
     include_hidden: bool,
 ) -> Result<()> {
     config.validate()?;
+    #[cfg(not(windows))]
+    ensure!(
+        !action.is_tiling(),
+        "Experimental tiling currently supports Windows only"
+    );
     platform::set_snap_gaps(config.gaps);
     let visibility = if include_hidden {
         platform::FocusVisibility::Hold
@@ -298,7 +303,11 @@ fn apply_inner(
     // Resolve symlinks when the config exists so aliases share one cycle.
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     #[cfg(any(windows, target_os = "linux"))]
-    if action.focuses() && !sidecar(&path, ".centered.json").exists() {
+    if action.focuses()
+        && !sidecar(&path, ".centered.json").exists()
+        && !config.tiling.enabled
+        && !sidecar(&path, ".tiling.json").exists()
+    {
         return platform::focus_window_filtered(window, action, visibility, &[]);
     }
     let parent = path
@@ -314,6 +323,10 @@ fn apply_inner(
         .open(sidecar(&path, ".cycle.lock"))
         .context("Open positioning cycle lock")?;
     lock.lock().context("Lock positioning cycle")?;
+    #[cfg(windows)]
+    if crate::tiling::action(config, &path, action, window)? {
+        return Ok(());
+    }
     #[cfg(any(windows, target_os = "linux"))]
     let mut group = crate::centered::Group::load(&path)?;
     #[cfg(any(windows, target_os = "linux"))]
