@@ -66,14 +66,12 @@ impl PositionPreview {
     }
 
     fn select(&mut self, action: Action, percent: u32, now: Instant) {
-        if !action.focuses()
-            && !action.adjusts_width()
-            && !action.adjusts_pair()
-            && action != Action::FillGap
-        {
+        // Only fixed placements have an anchor. Contextual actions must never
+        // replace the remembered snap used by width and gap previews.
+        if Action::POSITIONS.contains(&action) {
             self.placement = action;
         }
-        let target = if action.focuses() {
+        let target = if action.focuses() || action.is_tiling() {
             Self::target(self.placement)
         } else if action.adjusts_pair() {
             let base = Action::BottomLeft.target(PREVIEW_AREA, PREVIEW_AREA);
@@ -123,6 +121,29 @@ impl PositionPreview {
             self.action = action;
             self.to = target;
             self.started = Some(now);
+        }
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::{Action, Instant, PositionPreview};
+
+    #[test]
+    fn tiling_hover_preserves_snap_anchor_for_width_and_gap_previews() {
+        let now = Instant::now();
+        for placement in Action::POSITIONS {
+            for tiling in Action::TILING {
+                for next in [Action::ShrinkWidth, Action::ExpandWidth, Action::FillGap] {
+                    let mut preview = PositionPreview::new(placement);
+                    preview.select(tiling, 25, now);
+                    preview.select(next, 25, now);
+                    let mut expected = PositionPreview::new(placement);
+                    expected.select(next, 25, now);
+                    assert_eq!(preview.placement, placement);
+                    assert_eq!(preview.to, expected.to);
+                }
+            }
         }
     }
 }
@@ -596,6 +617,15 @@ impl Render for Settings {
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).mb_2().child("HOVER TO PREVIEW · CLICK A SHORTCUT TO RECORD"))
                     .children(rows))
                 .child(div().id("placement-options").w(px(264.)).flex_shrink_0().min_h_0().overflow_y_scroll().flex().flex_col().gap_4().p_4().rounded_lg().bg(rgb(0x131e2c))
+                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Experimental"))
+                    .when(cfg!(windows), |el| el
+                        .child(button("tiling-enabled", if self.draft.tiling.enabled { "Automatic tiling: On" } else { "Automatic tiling: Off" })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.draft.tiling.enabled = !this.draft.tiling.enabled;
+                                this.message("Automatic tiling updated. Save to activate.", false, cx);
+                            })))
+                        .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Dwindle tiles existing and new restored windows on the current desktop. Moving or snapping a tile floats it. Turning off leaves windows in place. Save to activate.")))
+                    .when(!cfg!(windows), |el| el.child(div().text_xs().text_color(rgb(0x91a4bb)).child("Automatic tiling is currently available on Windows only.")))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Position preview"))
                     .child(div().relative().flex_shrink_0().w(px(PREVIEW_AREA.width as f32)).h(px(PREVIEW_AREA.height as f32)).rounded_md().overflow_hidden().bg(rgb(0x090f19)).border_1().border_color(rgb(0x354961))
                         .when(selected.adjusts_pair(), |el| el.child(div().absolute().left(px(preview_x)).top(px(0.)).w(px(preview_width)).h(px(preview_y.max(0.))).bg(rgb(0x355b91)).border_1().border_color(rgb(0x8bb5ef))))
@@ -603,7 +633,7 @@ impl Render for Settings {
                             .w(px(preview_width)).h(px(preview_height)).rounded_sm()
                             .bg(rgb(0x258c78)).border_1().border_color(rgb(0x6ee7c0))))
                     .child(div().text_sm().child(selected.label()))
-                    .when(selected.is_tiling(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Experimental Windows tiling action. Enable Automatic tiling below or use Toggle experimental tiling. These actions edit the live layout and have no fixed snap position.")))
+                    .when(selected.is_tiling(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Experimental Windows tiling action. Enable Automatic tiling at the top of this pane or use Toggle experimental tiling. These actions edit the live layout and have no fixed snap position.")))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Hover a keybinding to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."))
                     .when(selected.adjusts_pair(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Move the shared boundary by 25% of the selected window's current height, with a 50/50 stop when returning toward the middle. Blue shows the neighbor. Windows only; matching left and right edges required.")))
                     .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("H: left, J: down, K: up, L: right. Tap H/J/K/L to navigate background windows by default. Inside a centered group, H/L rotate continuously. Hold for 400 ms to enter covered middle windows from an edge, or exit a middle window to a background edge window. Holds are Windows only; centered groups rotate on Windows and GNOME on Wayland.")))
@@ -617,15 +647,6 @@ impl Render for Settings {
                             this.message("Launch at login updated. Save to activate.", false, cx);
                         })))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Start tt-pane in the tray when you sign in."))
-                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Experimental"))
-                    .when(cfg!(windows), |el| el
-                        .child(button("tiling-enabled", if self.draft.tiling.enabled { "Automatic tiling: On" } else { "Automatic tiling: Off" })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.draft.tiling.enabled = !this.draft.tiling.enabled;
-                                this.message("Automatic tiling updated. Save to activate.", false, cx);
-                            })))
-                        .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Dwindle tiles existing and new restored windows on the current desktop. Moving or snapping a tile floats it. Turning off leaves windows in place. Save to activate.")))
-                    .when(!cfg!(windows), |el| el.child(div().text_xs().text_color(rgb(0x91a4bb)).child("Automatic tiling is currently available on Windows only.")))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Center windows"))
                     .child(button("center-layout", match self.draft.center_layout {
                         CenterLayout::Offset => "Layout: Offset",
