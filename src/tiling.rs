@@ -34,6 +34,10 @@ struct Group {
 struct Floating {
     workspace: String,
     id: String,
+    /// Floated on purpose with toggle-float. Snaps that rearrange tiles leave these
+    /// alone, but retile windows floated by drags or earlier snaps.
+    #[serde(default)]
+    explicit: bool,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
@@ -116,6 +120,7 @@ impl State {
             self.floating.push(Floating {
                 workspace: workspace.to_owned(),
                 id: id.to_owned(),
+                explicit: false,
             });
         }
         for group in &mut self.groups {
@@ -319,6 +324,7 @@ impl State {
                     self.floating.push(Floating {
                         workspace: group.workspace.clone(),
                         id,
+                        explicit: false,
                     });
                 }
             }
@@ -460,7 +466,7 @@ pub(crate) fn action(
             .any(|app| app.eq_ignore_ascii_case(&live.app))
     {
         let before = state.clone();
-        if dock_window(&mut state, config, live, dock) {
+        if dock_window(&mut state, config, &desktop, &centered, live, dock) {
             // Docking a centered member leaves its group, as another snap would.
             if centered.contains(&handle) {
                 centers.remove(&live.snapshot.id);
@@ -489,6 +495,11 @@ pub(crate) fn action(
     if action == Action::ToggleFloat {
         if group_index.is_some() {
             state.float(&live.workspace, &live.snapshot.id);
+            for floating in &mut state.floating {
+                if floating.id == live.snapshot.id {
+                    floating.explicit = true;
+                }
+            }
         } else {
             ensure!(
                 !config
@@ -586,24 +597,74 @@ fn dock_for(action: Action) -> Option<Dock> {
 }
 
 /// Dock a tiled or floating window into its monitor's tree at a snap position.
-/// Repeating the same snap grows its share through the configured growth steps,
-/// then returns to half. Returns false, leaving state untouched, when there is no
-/// other tile to arrange around it or the tree cannot hold the dock.
+/// Windows on the same monitor that were floated by drags or earlier snaps rejoin
+/// the layout first; explicit toggle-float choices, centered groups and float_apps
+/// stay floating. Repeating the same snap grows its share through the configured
+/// growth steps, then returns to half. Returns false, leaving state untouched, when
+/// there is no other tile to arrange around it or the tree cannot hold the dock.
 fn dock_window(
     state: &mut State,
     config: &Config,
+    desktop: &platform::TilingDesktop,
+    centered: &[u64],
     live: &platform::TilingWindow,
     dock: Dock,
 ) -> bool {
     let handle = live.snapshot.handle;
-    let Some(index) = state.groups.iter().position(|g| {
-        g.workspace == live.workspace
-            && g.area == live.snapshot.area
-            && g.members.iter().any(|m| m.handle != handle)
-    }) else {
+    let mut next = state.clone();
+    let index = next
+        .groups
+        .iter()
+        .position(|g| g.workspace == live.workspace && g.area == live.snapshot.area)
+        .unwrap_or_else(|| {
+            next.groups.push(Group {
+                workspace: live.workspace.clone(),
+                area: live.snapshot.area,
+                tree: config.tiling.tree().expect("validated config"),
+                members: Vec::new(),
+                focused: None,
+            });
+            next.groups.len() - 1
+        });
+    let rejoin: Vec<_> = desktop
+        .windows
+        .iter()
+        .filter(|w| {
+            w.snapshot.handle != handle
+                && w.workspace == live.workspace
+                && w.snapshot.area == live.snapshot.area
+                && !centered.contains(&w.snapshot.handle)
+                && !config
+                    .tiling
+                    .float_apps
+                    .iter()
+                    .any(|app| app.eq_ignore_ascii_case(&w.app))
+                && next
+                    .floating
+                    .iter()
+                    .any(|f| f.id == w.snapshot.id && !f.explicit)
+        })
+        .collect();
+    let group = &mut next.groups[index];
+    for window in rejoin {
+        let target = group.focused.filter(|id| group.tree.contains(*id));
+        if group
+            .tree
+            .insert(window.snapshot.handle, target, group.area)
+            .is_ok()
+        {
+            group.members.push(Member {
+                handle: window.snapshot.handle,
+                id: window.snapshot.id.clone(),
+                last: window.snapshot.bounds,
+            });
+            next.floating.retain(|f| f.id != window.snapshot.id);
+        }
+    }
+    let group = &mut next.groups[index];
+    if !group.members.iter().any(|m| m.handle != handle) {
         return false;
-    };
-    let group = &mut state.groups[index];
+    }
     let growth = config.growth;
     let shares: Vec<f64> = (0..=growth.steps)
         .map(|step| (0.5 * (1.0 + f64::from(growth.percent) / 100.0).powi(step as i32)).min(0.9))
@@ -628,7 +689,8 @@ fn dock_window(
             last: live.snapshot.bounds,
         });
     }
-    state.floating.retain(|f| f.id != live.snapshot.id);
+    next.floating.retain(|f| f.id != live.snapshot.id);
+    *state = next;
     true
 }
 
@@ -1124,13 +1186,26 @@ mod tests {
                 .unwrap()
                 .1
         };
+        // Snap the window at `index` on `desktop`, as the action path does.
+        fn snap(
+            state: &mut State,
+            config: &Config,
+            desktop: &platform::TilingDesktop,
+            centered: &[u64],
+            index: usize,
+            dock: Dock,
+        ) -> bool {
+            dock_window(
+                state,
+                config,
+                desktop,
+                centered,
+                &desktop.windows[index],
+                dock,
+            )
+        }
         // Ctrl+Alt+2 on tile 1: it takes the right half, the others share the left.
-        assert!(dock_window(
-            &mut state,
-            &config,
-            &desktop.windows[0],
-            Dock::Right
-        ));
+        assert!(snap(&mut state, &config, &desktop, &[], 0, Dock::Right));
         tick(&mut state, &mut desktop, &config, Some(1), &[]);
         let right = tile(&state, 1);
         assert_eq!(right.x + right.width, work.x + work.width);
@@ -1142,12 +1217,7 @@ mod tests {
         // Repeating grows through the growth steps, then returns to half.
         let mut widths = vec![right.width];
         for _ in 0..=config.growth.steps {
-            assert!(dock_window(
-                &mut state,
-                &config,
-                &desktop.windows[0],
-                Dock::Right
-            ));
+            assert!(snap(&mut state, &config, &desktop, &[], 0, Dock::Right));
             widths.push(tile(&state, 1).width);
         }
         assert!(widths.windows(2).take(3).all(|w| w[1] > w[0]));
@@ -1156,25 +1226,39 @@ mod tests {
         state.float("desktop-a", "test:3");
         tick(&mut state, &mut desktop, &config, Some(1), &[]);
         assert!(!state.groups[0].tree.contains(3));
-        assert!(dock_window(
-            &mut state,
-            &config,
-            &desktop.windows[2],
-            Dock::Left
-        ));
+        assert!(snap(&mut state, &config, &desktop, &[], 2, Dock::Left));
         assert!(state.groups[0].tree.contains(3) && state.floating.is_empty());
         assert_eq!(tile(&state, 3).x, work.x);
+        // One tile with drag-floated windows behind it: snapping it rearranges them
+        // all, while explicit toggle-float choices and centered windows stay put.
+        let mut state = State::default();
+        let mut desktop = self::desktop((1..=5).map(window).collect());
+        tick(&mut state, &mut desktop, &config, Some(1), &[4]);
+        for id in ["test:2", "test:3", "test:5"] {
+            state.float("desktop-a", id);
+        }
+        state
+            .floating
+            .iter_mut()
+            .find(|f| f.id == "test:5")
+            .unwrap()
+            .explicit = true;
+        tick(&mut state, &mut desktop, &config, Some(1), &[4]);
+        assert_eq!(state.groups[0].members.len(), 1);
+        assert!(snap(&mut state, &config, &desktop, &[4], 0, Dock::Right));
+        let group = &state.groups[0];
+        assert!([1, 2, 3].iter().all(|id| group.tree.contains(*id)));
+        assert!(!group.tree.contains(4) && !group.tree.contains(5));
+        assert_eq!(
+            tile(&state, 1).x + tile(&state, 1).width,
+            work.x + work.width
+        );
         // A window alone on its monitor keeps the normal snap.
         let mut lone = State::default();
         let mut single = self::desktop(vec![window(9)]);
         tick(&mut lone, &mut single, &config, Some(9), &[]);
         let before = lone.clone();
-        assert!(!dock_window(
-            &mut lone,
-            &config,
-            &single.windows[0],
-            Dock::Right
-        ));
+        assert!(!snap(&mut lone, &config, &single, &[], 0, Dock::Right));
         assert_eq!(lone, before);
     }
 
