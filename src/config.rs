@@ -1,3 +1,5 @@
+mod compat;
+
 use crate::geometry::Action;
 use anyhow::{Context, Result, ensure};
 use global_hotkey::hotkey::HotKey;
@@ -226,20 +228,103 @@ impl Config {
         Ok(path)
     }
 
+    /// Load settings, printing a warning for each entry this build skipped.
     pub fn load(path: &Path) -> Result<Self> {
-        match std::fs::read_to_string(path) {
-            Ok(text) => {
-                let mut config: Self =
-                    toml::from_str(&text).context("Invalid configuration TOML")?;
-                config.normalize_letter_keys();
-                config.validate()?;
-                config.add_missing_focus_bindings();
-                config.validate()?;
-                Ok(config)
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(error) => Err(error).with_context(|| format!("Read {}", path.display())),
+        let (config, warnings) = Self::load_with_warnings(path)?;
+        for warning in warnings {
+            eprintln!("Warning: {} ({})", warning, path.display());
         }
+        Ok(config)
+    }
+
+    /// Settings from another build (e.g. a branch with newer actions) must not
+    /// prevent launch. Unsupported entries are skipped and invalid values reset.
+    /// Only unreadable TOML or an unsupported format version is an error.
+    pub fn load_with_warnings(path: &Path) -> Result<(Self, Vec<String>)> {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok((Self::default(), Vec::new()));
+            }
+            Err(error) => return Err(error).with_context(|| format!("Read {}", path.display())),
+        };
+        let raw: toml::Table = text.parse().context("Invalid configuration TOML")?;
+        let mut warnings = Vec::new();
+        let raw = compat::sanitize(raw, &mut warnings);
+        let mut config: Self = toml::Value::Table(raw)
+            .try_into()
+            .context("Invalid configuration TOML")?;
+        ensure!(
+            config.version == 1,
+            "Unsupported configuration version {}",
+            config.version
+        );
+        config.normalize_letter_keys();
+        config.repair(&mut warnings);
+        config.add_missing_focus_bindings();
+        config.validate()?;
+        Ok((config, warnings))
+    }
+
+    /// Reset out-of-range values and drop conflicting shortcuts, mirroring `validate`.
+    fn repair(&mut self, warnings: &mut Vec<String>) {
+        let defaults = Self::default();
+        let mut reset = |invalid: bool, name: &str| {
+            if invalid {
+                warnings.push(format!("Using the default for out-of-range `{name}`"));
+            }
+            invalid
+        };
+        if reset(self.gaps.inner > 100 || self.gaps.outer > 100, "gaps") {
+            self.gaps = defaults.gaps;
+        }
+        if reset(
+            self.focus.minimum_visible_percent > 99,
+            "focus.minimum_visible_percent",
+        ) {
+            self.focus.minimum_visible_percent = defaults.focus.minimum_visible_percent;
+        }
+        if reset(self.focus.glow_rgb().is_none(), "focus.glow_color") {
+            self.focus.glow_color = defaults.focus.glow_color;
+        }
+        if reset(
+            !(1..=99).contains(&self.width_resize.percent),
+            "width_resize.percent",
+        ) {
+            self.width_resize = defaults.width_resize;
+        }
+        if reset(
+            !(1..=100).contains(&self.growth.percent) || self.growth.steps > 20,
+            "growth",
+        ) {
+            self.growth = defaults.growth;
+        }
+        let mut actions = HashSet::new();
+        let mut keys = HashSet::new();
+        self.bindings.retain_mut(|binding| {
+            let name = binding.action.name();
+            if !actions.insert(binding.action) {
+                warnings.push(format!("Ignoring duplicate binding for {name}"));
+                return false;
+            }
+            if binding.shortcut.is_empty() {
+                return true;
+            }
+            let problem = match binding.shortcut.parse::<HotKey>() {
+                Err(_) => Some("is not supported"),
+                Ok(key) if key.mods.is_empty() => Some("needs a modifier"),
+                Ok(key) if !keys.insert(key.id()) => Some("is already used"),
+                Ok(_) => None,
+            };
+            if let Some(problem) = problem {
+                warnings.push(format!(
+                    "Unbinding {name}: shortcut {} {problem}",
+                    binding.shortcut
+                ));
+                binding.shortcut.clear();
+            }
+            true
+        });
     }
 
     // Match the recorder, which stores letter keys in lowercase.
@@ -343,8 +428,13 @@ impl Config {
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
         std::fs::create_dir_all(parent)?;
+        let mut document = toml::Table::try_from(self)?;
+        // Keep entries another build (e.g. a different branch) understands.
+        if let Ok(existing) = std::fs::read_to_string(path) {
+            compat::preserve_foreign(&existing, &mut document);
+        }
         let mut file = tempfile::NamedTempFile::new_in(parent)?;
-        file.write_all(toml::to_string_pretty(self)?.as_bytes())?;
+        file.write_all(toml::to_string_pretty(&document)?.as_bytes())?;
         file.as_file().sync_all()?;
         file.persist(path).map_err(|e| e.error)?;
         Ok(())
@@ -773,6 +863,108 @@ mod gap_tests {
                 .is_err()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod compat_tests {
+    use super::*;
+
+    const OTHER_BRANCH: &str = r#"
+version = 1
+center_layout = "carousel"
+future_mode = true
+
+[gaps]
+inner = 500
+outer = 10
+
+[focus]
+glow_enabled = false
+glow_shape = "rounded"
+
+[growth]
+percent = 20
+steps = "many"
+
+[[bindings]]
+action = "left"
+shortcut = "Ctrl+Alt+Digit1"
+
+[[bindings]]
+action = "toggle-float"
+shortcut = "Ctrl+Alt+KeyF"
+
+[[bindings]]
+action = "right"
+shortcut = "Ctrl+Alt+Digit1"
+"#;
+
+    #[test]
+    fn settings_from_another_build_load_with_warnings_instead_of_failing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, OTHER_BRANCH).unwrap();
+        let (config, warnings) = Config::load_with_warnings(&path).unwrap();
+        let joined = warnings.join("\n");
+        for expected in [
+            "`future_mode`",
+            "`focus.glow_shape`",
+            "`toggle-float`",
+            "`center_layout`",
+            "`growth.steps`",
+            "`gaps`",
+            "Unbinding right",
+        ] {
+            assert!(
+                joined.contains(expected),
+                "{expected} missing from:\n{joined}"
+            );
+        }
+        assert_eq!(config.center_layout, CenterLayout::default());
+        assert_eq!(config.gaps, crate::geometry::SnapGaps::default());
+        assert!(!config.focus.glow_enabled);
+        assert_eq!((config.growth.percent, config.growth.steps), (20, 3));
+        let shortcut = |action| {
+            config
+                .bindings
+                .iter()
+                .find(|b| b.action == action)
+                .map(|b| b.shortcut.as_str())
+        };
+        assert_eq!(shortcut(Action::Left), Some("Ctrl+Alt+Digit1"));
+        assert_eq!(shortcut(Action::Right), Some(""));
+        config.validate().unwrap();
+        // Unreadable TOML and unknown format versions are still errors.
+        std::fs::write(&path, "version = 2\nbindings = []").unwrap();
+        assert!(Config::load(&path).is_err());
+    }
+
+    #[test]
+    fn saving_keeps_entries_only_another_build_understands() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, OTHER_BRANCH).unwrap();
+        let mut config = Config::load(&path).unwrap();
+        config.focus.glow_enabled = true;
+        config.save(&path).unwrap();
+        config.save(&path).unwrap();
+        let saved: toml::Table = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        assert_eq!(saved["future_mode"].as_bool(), Some(true));
+        assert_eq!(saved["focus"]["glow_shape"].as_str(), Some("rounded"));
+        assert_eq!(saved["focus"]["glow_enabled"].as_bool(), Some(true));
+        let bindings = saved["bindings"].as_array().unwrap();
+        let foreign: Vec<_> = bindings
+            .iter()
+            .filter(|b| b["action"].as_str() == Some("toggle-float"))
+            .collect();
+        assert_eq!(foreign.len(), 1, "preserved once across repeated saves");
+        assert_eq!(foreign[0]["shortcut"].as_str(), Some("Ctrl+Alt+KeyF"));
+        // This build still reads its own result.
+        assert_eq!(
+            toml::to_string(&Config::load(&path).unwrap()).unwrap(),
+            toml::to_string(&config).unwrap()
+        );
     }
 }
 

@@ -68,10 +68,11 @@ fn invalid_target_returns_json_and_failure_exit_status() {
 }
 
 #[test]
-fn invalid_growth_config_returns_json_error() {
+fn unreadable_config_returns_json_error() {
+    // Unsupported or out-of-range settings only warn; unparseable TOML still fails.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
-    std::fs::write(&path, "version = 1\nbindings = []\n[growth]\npercent = 0").unwrap();
+    std::fs::write(&path, "version = 1\nbindings = []\n[growth\npercent = 0").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_tt-pane"))
         .arg("--config")
         .arg(path)
@@ -85,7 +86,7 @@ fn invalid_growth_config_returns_json_error() {
         response["error"]
             .as_str()
             .unwrap()
-            .contains("Growth percentage")
+            .contains("Invalid configuration TOML")
     );
 }
 
