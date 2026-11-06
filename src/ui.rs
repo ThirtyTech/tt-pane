@@ -652,16 +652,16 @@ impl Render for Settings {
                 .child(div().text_xs().text_color(rgb(0x6ee7c0)).child(platform::description())))
             .child(div().flex().flex_1().min_h_0().gap_6()
                 // Left: experimental toggles stay fixed above the scrolling bindings.
-                .child(div().flex().flex_col().flex_1().min_h_0().gap_3()
+                .child(div().flex().flex_col().flex_1().min_w_0().min_h_0().gap_3()
                     .when(cfg!(windows), |el| el.child(div().flex_shrink_0().flex().gap_4().p_3().rounded_lg().bg(rgb(0x131e2c))
-                        .child(div().flex().flex_col().gap_2().flex_1()
+                        .child(div().flex().flex_col().gap_2().flex_1().min_w_0()
                             .child(button("tiling-enabled", if self.draft.tiling.enabled { "Automatic tiling: On" } else { "Automatic tiling: Off" })
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.draft.tiling.enabled = !this.draft.tiling.enabled;
                                     this.message("Automatic tiling updated. Save to activate.", false, cx);
                                 })))
                             .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Experimental. Dwindle tiles restored windows on the current desktop. Moving or snapping a tile floats it.")))
-                        .child(div().flex().flex_col().gap_2().flex_1()
+                        .child(div().flex().flex_col().gap_2().flex_1().min_w_0()
                             .child(button("tiling-snap-rearranges", if self.draft.tiling.snap_rearranges { "Snaps rearrange tiles: On" } else { "Snaps rearrange tiles: Off" })
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.draft.tiling.snap_rearranges = !this.draft.tiling.snap_rearranges;
