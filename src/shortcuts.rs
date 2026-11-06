@@ -157,6 +157,8 @@ pub struct Shortcuts {
     registered: Vec<(HotKey, Action)>,
     gesture: FocusGesture,
     resize: Option<ResizeMode>,
+    /// Glow color held around the focused window during resize mode.
+    glow: Option<u32>,
 }
 
 impl Shortcuts {
@@ -170,6 +172,7 @@ impl Shortcuts {
             registered: Vec::new(),
             gesture: FocusGesture::default(),
             resize: None,
+            glow: None,
         })
     }
 
@@ -197,6 +200,12 @@ impl Shortcuts {
             last: now,
             individual: false,
         });
+        #[cfg(windows)]
+        if self.manager.is_some()
+            && let Some(color) = self.glow
+        {
+            platform::hold_focus_glow(color);
+        }
     }
 
     fn leave_resize(&mut self) {
@@ -206,6 +215,8 @@ impl Shortcuts {
             for (key, _) in mode.keys {
                 let _ = manager.unregister(key);
             }
+            #[cfg(windows)]
+            platform::release_focus_glow();
         }
     }
 
@@ -302,6 +313,11 @@ impl Shortcuts {
     /// Register a complete set, rolling back on OS shortcut conflicts.
     pub fn replace(&mut self, config: &Config) -> Result<()> {
         self.leave_resize();
+        self.glow = config
+            .focus
+            .glow_enabled
+            .then(|| config.focus.glow_rgb())
+            .flatten();
         let next = configured_hotkeys(config)?;
         if let Some(manager) = &self.manager {
             // Keep shared keys registered, so swapping actions doesn't lose a grab.
@@ -503,6 +519,7 @@ mod tests {
             registered: Vec::new(),
             gesture,
             resize: None,
+            glow: None,
         };
         shortcuts
             .gesture
@@ -520,6 +537,7 @@ mod tests {
             registered: configured_hotkeys(&config).unwrap(),
             gesture: FocusGesture::default(),
             resize: None,
+            glow: None,
         };
         let id = |code| HotKey::new(None, code).id();
         let start = Instant::now();

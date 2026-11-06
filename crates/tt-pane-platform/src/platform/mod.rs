@@ -110,8 +110,8 @@ pub use windows::set_window_icon;
 pub use windows::{TilingDesktop, TilingWindow, move_tiling_window, tiling_desktop};
 #[cfg(windows)]
 pub use windows::{
-    WindowSnapshot, choose_glow_color, focus_snapshot, foreground_handle, move_snapshot,
-    show_focus_glow, wait_for_focus_glow, window_snapshot,
+    WindowSnapshot, choose_glow_color, focus_snapshot, foreground_handle, hold_focus_glow,
+    move_snapshot, release_focus_glow, show_focus_glow, wait_for_focus_glow, window_snapshot,
 };
 
 /// Move the shared boundary of a window and its vertical neighbor.

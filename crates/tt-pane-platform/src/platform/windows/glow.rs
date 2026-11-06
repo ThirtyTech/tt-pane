@@ -4,7 +4,7 @@ use anyhow::{Result, ensure};
 use std::{
     sync::{
         Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -20,6 +20,7 @@ use windows::{
 
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 static WORKER: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
+static HELD: AtomicBool = AtomicBool::new(false);
 
 pub(super) fn is_glow(window: HWND) -> bool {
     // SAFETY: The property is an opaque marker, never dereferenced.
@@ -27,6 +28,10 @@ pub(super) fn is_glow(window: HWND) -> bool {
 }
 
 pub fn show_focus_glow(handle: u64, color: u32) {
+    // A held glow already marks the focused window.
+    if HELD.load(Ordering::SeqCst) {
+        return;
+    }
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     if let Ok(mut worker) = WORKER.lock() {
         *worker = thread::Builder::new()
@@ -124,82 +129,154 @@ impl Drop for Surface {
     }
 }
 
+/// A ready-to-show overlay around `target`, sized for its current bounds.
+struct Overlay {
+    surface: Surface,
+    destination: POINT,
+    size: SIZE,
+    bounds: RECT,
+}
+
+impl Overlay {
+    /// # Safety
+    /// Call on the thread that will show and drop the overlay.
+    unsafe fn new(target: HWND, color: u32) -> Result<Self> {
+        // SAFETY: Win32 validates HWNDs. Buffers are sized from checked dimensions;
+        // the DIB pointer remains valid until Surface drops, after all writes finish.
+        unsafe {
+            let (_, bounds) = read_bounds(target)?;
+            let dpi = windows::Win32::UI::HiDpi::GetDpiForWindow(target).max(96);
+            let pad = (14 * dpi / 96) as i32;
+            let width = bounds.right - bounds.left + pad * 2;
+            let height = bounds.bottom - bounds.top + pad * 2;
+            ensure!(
+                width > 0 && height > 0 && i64::from(width) * i64::from(height) <= 40_000_000,
+                "Invalid glow bounds"
+            );
+            let mut surface = Surface {
+                window: CreateWindowExW(
+                    WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+                    w!("STATIC"),
+                    w!("tt-pane focus glow"),
+                    WS_POPUP,
+                    bounds.left - pad,
+                    bounds.top - pad,
+                    width,
+                    height,
+                    None,
+                    None,
+                    None,
+                    None,
+                )?,
+                ..Surface::default()
+            };
+            SetPropW(
+                surface.window,
+                w!("tt-pane.focus-glow"),
+                Some(HANDLE(std::ptr::dangling_mut())),
+            )?;
+            surface.dc = CreateCompatibleDC(None);
+            ensure!(!surface.dc.is_invalid(), "Create glow DC");
+            let info = BITMAPINFO {
+                bmiHeader: BITMAPINFOHEADER {
+                    biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: width,
+                    biHeight: -height,
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    biCompression: BI_RGB.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut bits = std::ptr::null_mut();
+            surface.bitmap =
+                CreateDIBSection(Some(surface.dc), &info, DIB_RGB_COLORS, &mut bits, None, 0)?;
+            ensure!(!bits.is_null(), "Create glow bitmap");
+            surface.previous = SelectObject(surface.dc, surface.bitmap.into());
+            let pixels = std::slice::from_raw_parts_mut(
+                bits.cast::<u32>(),
+                width as usize * height as usize,
+            );
+            for y in 0..height {
+                for x in 0..width {
+                    pixels[(y * width + x) as usize] = pixel(x, y, width, height, pad, color);
+                }
+            }
+            Ok(Self {
+                surface,
+                destination: POINT {
+                    x: bounds.left - pad,
+                    y: bounds.top - pad,
+                },
+                size: SIZE {
+                    cx: width,
+                    cy: height,
+                },
+                bounds,
+            })
+        }
+    }
+
+    /// # Safety
+    /// Call on the overlay's creating thread.
+    unsafe fn paint(&self, alpha: u8, first: bool) -> Result<()> {
+        let blend = BLENDFUNCTION {
+            BlendOp: AC_SRC_OVER as u8,
+            SourceConstantAlpha: alpha,
+            AlphaFormat: AC_SRC_ALPHA as u8,
+            BlendFlags: 0,
+        };
+        // SAFETY: All handles are owned by this overlay on this thread.
+        unsafe {
+            UpdateLayeredWindow(
+                self.surface.window,
+                None,
+                Some(&self.destination),
+                Some(&self.size),
+                Some(self.surface.dc),
+                Some(&POINT::default()),
+                COLORREF(0),
+                Some(&blend),
+                ULW_ALPHA,
+            )?;
+            if first {
+                SetWindowPos(
+                    self.surface.window,
+                    Some(HWND_TOPMOST),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                )?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn pump() {
+    let mut msg = MSG::default();
+    // SAFETY: Dispatches messages for windows owned by this thread.
+    unsafe {
+        while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+}
+
 fn animate(handle: u64, color: u32, generation: u64) -> Result<()> {
     let target = HWND(usize::try_from(handle)? as *mut _);
     let _dpi = DpiContext::enter();
-    // SAFETY: Win32 validates HWNDs. Buffers are sized from checked dimensions;
-    // the DIB pointer remains valid until Surface drops, after all writes finish.
+    // SAFETY: Win32 validates HWNDs; the overlay stays on this thread.
     unsafe {
         if !IsWindow(Some(target)).as_bool() || IsIconic(target).as_bool() {
             return Ok(());
         }
         let foreground = GetForegroundWindow();
-        let (_, bounds) = read_bounds(target)?;
-        let dpi = windows::Win32::UI::HiDpi::GetDpiForWindow(target).max(96);
-        let pad = (14 * dpi / 96) as i32;
-        let width = bounds.right - bounds.left + pad * 2;
-        let height = bounds.bottom - bounds.top + pad * 2;
-        ensure!(
-            width > 0 && height > 0 && i64::from(width) * i64::from(height) <= 40_000_000,
-            "Invalid glow bounds"
-        );
-        let mut surface = Surface {
-            window: CreateWindowExW(
-                WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
-                w!("STATIC"),
-                w!("tt-pane focus glow"),
-                WS_POPUP,
-                bounds.left - pad,
-                bounds.top - pad,
-                width,
-                height,
-                None,
-                None,
-                None,
-                None,
-            )?,
-            ..Surface::default()
-        };
-        SetPropW(
-            surface.window,
-            w!("tt-pane.focus-glow"),
-            Some(HANDLE(std::ptr::dangling_mut())),
-        )?;
-        surface.dc = CreateCompatibleDC(None);
-        ensure!(!surface.dc.is_invalid(), "Create glow DC");
-        let info = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: width,
-                biHeight: -height,
-                biPlanes: 1,
-                biBitCount: 32,
-                biCompression: BI_RGB.0,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let mut bits = std::ptr::null_mut();
-        surface.bitmap =
-            CreateDIBSection(Some(surface.dc), &info, DIB_RGB_COLORS, &mut bits, None, 0)?;
-        ensure!(!bits.is_null(), "Create glow bitmap");
-        surface.previous = SelectObject(surface.dc, surface.bitmap.into());
-        let pixels =
-            std::slice::from_raw_parts_mut(bits.cast::<u32>(), width as usize * height as usize);
-        for y in 0..height {
-            for x in 0..width {
-                pixels[(y * width + x) as usize] = pixel(x, y, width, height, pad, color);
-            }
-        }
-        let destination = POINT {
-            x: bounds.left - pad,
-            y: bounds.top - pad,
-        };
-        let size = SIZE {
-            cx: width,
-            cy: height,
-        };
-        let origin = POINT::default();
+        let overlay = Overlay::new(target, color)?;
         let start = Instant::now();
         let mut shown = false;
         while start.elapsed() < Duration::from_millis(480)
@@ -208,48 +285,69 @@ fn animate(handle: u64, color: u32, generation: u64) -> Result<()> {
             if GetForegroundWindow() != foreground
                 || !IsWindowVisible(target).as_bool()
                 || IsIconic(target).as_bool()
-                || !read_bounds(target).is_ok_and(|(_, current)| current == bounds)
+                || !read_bounds(target).is_ok_and(|(_, current)| current == overlay.bounds)
             {
                 break;
             }
-            let blend = BLENDFUNCTION {
-                BlendOp: AC_SRC_OVER as u8,
-                SourceConstantAlpha: envelope(start.elapsed().as_secs_f32()),
-                AlphaFormat: AC_SRC_ALPHA as u8,
-                BlendFlags: 0,
-            };
-            UpdateLayeredWindow(
-                surface.window,
-                None,
-                Some(&destination),
-                Some(&size),
-                Some(surface.dc),
-                Some(&origin),
-                COLORREF(0),
-                Some(&blend),
-                ULW_ALPHA,
-            )?;
-            if !shown {
-                SetWindowPos(
-                    surface.window,
-                    Some(HWND_TOPMOST),
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-                )?;
-                shown = true;
-            }
-            let mut msg = MSG::default();
-            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                let _ = TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
+            overlay.paint(envelope(start.elapsed().as_secs_f32()), !shown)?;
+            shown = true;
+            pump();
             thread::sleep(Duration::from_millis(16));
         }
     }
     Ok(())
+}
+
+/// Keep a steady glow on whichever window has focus, following it as it
+/// moves or resizes, until `release_focus_glow`. Flashes are skipped meanwhile.
+pub fn hold_focus_glow(color: u32) {
+    HELD.store(true, Ordering::SeqCst);
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    if let Ok(mut worker) = WORKER.lock() {
+        *worker = thread::Builder::new()
+            .name("focus-glow".into())
+            .spawn(move || hold(color, generation))
+            .ok();
+    }
+}
+
+pub fn release_focus_glow() {
+    if HELD.swap(false, Ordering::SeqCst) {
+        GENERATION.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+fn hold(color: u32, generation: u64) {
+    let _dpi = DpiContext::enter();
+    let mut current: Option<(HWND, Overlay)> = None;
+    while GENERATION.load(Ordering::SeqCst) == generation {
+        // SAFETY: Win32 validates the borrowed foreground HWND; overlays stay here.
+        unsafe {
+            let target = GetForegroundWindow();
+            let eligible = !target.is_invalid()
+                && target != GetDesktopWindow()
+                && target != GetShellWindow()
+                && IsWindowVisible(target).as_bool()
+                && !IsIconic(target).as_bool();
+            let bounds = read_bounds(target).ok().map(|(_, bounds)| bounds);
+            let stale = current.as_ref().is_none_or(|(window, overlay)| {
+                *window != target || Some(overlay.bounds) != bounds
+            });
+            if !eligible {
+                current = None;
+            } else if stale {
+                // Drop the old overlay first so two never show at once.
+                current = None;
+                if let Ok(overlay) = Overlay::new(target, color)
+                    && overlay.paint(255, true).is_ok()
+                {
+                    current = Some((target, overlay));
+                }
+            }
+        }
+        pump();
+        thread::sleep(Duration::from_millis(16));
+    }
 }
 
 #[cfg(test)]
