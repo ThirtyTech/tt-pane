@@ -367,6 +367,12 @@ fn apply_inner(
         return result;
     }
     let state_path = sidecar(&path, ".cycle.json");
+    if action.sizes_alone() {
+        platform::apply_with(window, &mut |_, area, current| {
+            Ok(action.sized_alone(area, current))
+        })?;
+        return Ok(());
+    }
     if action.adjusts_pair() {
         platform::resize_pair(window, action == Action::ResizeUp)?;
         #[cfg(any(windows, target_os = "linux"))]

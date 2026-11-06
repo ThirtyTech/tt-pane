@@ -136,6 +136,10 @@ pub enum Action {
     /// A shortcut-only mode: H/J/K/L move dividers until Escape or Enter.
     #[value(skip)]
     ResizeMode,
+    SizeNarrower,
+    SizeWider,
+    SizeShorter,
+    SizeTaller,
 }
 
 impl Action {
@@ -152,7 +156,7 @@ impl Action {
         Self::Maximize,
     ];
 
-    pub const ALL: [Self; 31] = [
+    pub const ALL: [Self; 35] = [
         Self::Left,
         Self::Right,
         Self::Top,
@@ -184,6 +188,10 @@ impl Action {
         Self::ResizeLeft,
         Self::ResizeRight,
         Self::ResizeMode,
+        Self::SizeNarrower,
+        Self::SizeWider,
+        Self::SizeShorter,
+        Self::SizeTaller,
     ];
 
     pub const TILING: [Self; 11] = [
@@ -213,6 +221,46 @@ impl Action {
 
     pub fn adjusts_pair(self) -> bool {
         matches!(self, Self::ResizeUp | Self::ResizeDown)
+    }
+
+    pub fn sizes_alone(self) -> bool {
+        matches!(
+            self,
+            Self::SizeNarrower | Self::SizeWider | Self::SizeShorter | Self::SizeTaller
+        )
+    }
+
+    /// Resize one window by 5% of the work area. The edge nearer the screen edge
+    /// stays put, so a left window narrows toward the left and a right one
+    /// toward the right. Sizes stay between a tenth and all of the work area.
+    pub fn sized_alone(self, area: Rect, current: Rect) -> Rect {
+        fn axis(start: i32, size: i32, area_start: i32, area_size: i32, delta: i32) -> (i32, i32) {
+            let next = (size + delta).clamp((area_size / 10).max(1), area_size.max(1));
+            let before = start - area_start;
+            let after = area_start + area_size - (start + size);
+            let start = if before <= after {
+                start
+            } else {
+                start + size - next
+            };
+            (start.clamp(area_start, area_start + area_size - next), next)
+        }
+        let (dx, dy) = (area.width / 20, area.height / 20);
+        let (dx, dy) = match self {
+            Self::SizeNarrower => (-dx, 0),
+            Self::SizeWider => (dx, 0),
+            Self::SizeShorter => (0, -dy),
+            Self::SizeTaller => (0, dy),
+            _ => return current,
+        };
+        let mut target = current;
+        if dx != 0 {
+            (target.x, target.width) = axis(current.x, current.width, area.x, area.width, dx);
+        }
+        if dy != 0 {
+            (target.y, target.height) = axis(current.y, current.height, area.y, area.height, dy);
+        }
+        target
     }
 
     pub fn adjusts_width(self) -> bool {
@@ -246,7 +294,11 @@ impl Action {
             | Self::ToggleTiling
             | Self::ResizeLeft
             | Self::ResizeRight
-            | Self::ResizeMode => None,
+            | Self::ResizeMode
+            | Self::SizeNarrower
+            | Self::SizeWider
+            | Self::SizeShorter
+            | Self::SizeTaller => None,
         }
     }
 
@@ -282,6 +334,10 @@ impl Action {
             Self::ResizeLeft => "resize-left",
             Self::ResizeRight => "resize-right",
             Self::ResizeMode => "resize-mode",
+            Self::SizeNarrower => "size-narrower",
+            Self::SizeWider => "size-wider",
+            Self::SizeShorter => "size-shorter",
+            Self::SizeTaller => "size-taller",
 
             Self::ResizeDown => "resize-down",
         }
@@ -319,6 +375,10 @@ impl Action {
             Self::ResizeLeft => "Move tile boundary left",
             Self::ResizeRight => "Move tile boundary right",
             Self::ResizeMode => "Resize mode (H/J/K/L)",
+            Self::SizeNarrower => "Make window narrower",
+            Self::SizeWider => "Make window wider",
+            Self::SizeShorter => "Make window shorter",
+            Self::SizeTaller => "Make window taller",
 
             Self::ResizeDown => "Move shared boundary down",
         }
@@ -348,7 +408,11 @@ impl Action {
             | Self::ToggleTiling
             | Self::ResizeLeft
             | Self::ResizeRight
-            | Self::ResizeMode => return current,
+            | Self::ResizeMode
+            | Self::SizeNarrower
+            | Self::SizeWider
+            | Self::SizeShorter
+            | Self::SizeTaller => return current,
             Self::ShrinkWidth | Self::ExpandWidth => {
                 return current.adjust_width(
                     area,
@@ -692,6 +756,62 @@ pub fn focus_neighbor(current: Rect, candidates: &[Rect], action: Action) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sizing_alone_keeps_the_screen_side_edge_and_stays_on_screen() {
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 1000,
+            height: 800,
+        };
+        let left = Rect {
+            x: 0,
+            y: 0,
+            width: 500,
+            height: 400,
+        };
+        let right = Rect {
+            x: 500,
+            y: 400,
+            width: 500,
+            height: 400,
+        };
+        assert_eq!(
+            Action::SizeNarrower.sized_alone(area, left),
+            Rect { width: 450, ..left }
+        );
+        assert_eq!(
+            Action::SizeNarrower.sized_alone(area, right),
+            Rect {
+                x: 550,
+                width: 450,
+                ..right
+            }
+        );
+        assert_eq!(
+            Action::SizeTaller.sized_alone(area, right),
+            Rect {
+                y: 360,
+                height: 440,
+                ..right
+            }
+        );
+        assert_eq!(
+            Action::SizeShorter.sized_alone(area, left),
+            Rect {
+                height: 360,
+                ..left
+            }
+        );
+        // Never past the work area or below a tenth of it.
+        let full = Rect {
+            width: 1000,
+            ..left
+        };
+        assert_eq!(Action::SizeWider.sized_alone(area, full), full);
+        let thin = Rect { width: 100, ..left };
+        assert_eq!(Action::SizeNarrower.sized_alone(area, thin), thin);
+    }
     #[test]
     fn centered_vertical_exit_reaches_wide_screen_corners_left_first() {
         let area = Rect {

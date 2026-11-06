@@ -187,3 +187,27 @@ id = "resize-right"
 title = "Move tile boundary right"
 contexts = ["workspace"]
 command = ["./target/plugin/release/tt-pane", "apply", "resize-right", "--json"]
+
+[[actions]]
+id = "size-narrower"
+title = "Make window narrower"
+contexts = ["workspace"]
+command = ["./target/plugin/release/tt-pane", "apply", "size-narrower", "--json"]
+
+[[actions]]
+id = "size-wider"
+title = "Make window wider"
+contexts = ["workspace"]
+command = ["./target/plugin/release/tt-pane", "apply", "size-wider", "--json"]
+
+[[actions]]
+id = "size-shorter"
+title = "Make window shorter"
+contexts = ["workspace"]
+command = ["./target/plugin/release/tt-pane", "apply", "size-shorter", "--json"]
+
+[[actions]]
+id = "size-taller"
+title = "Make window taller"
+contexts = ["workspace"]
+command = ["./target/plugin/release/tt-pane", "apply", "size-taller", "--json"]

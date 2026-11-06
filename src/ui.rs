@@ -317,8 +317,16 @@ impl Settings {
             {
                 platform::show_focus_glow(target, color);
             }
+            let individual = self
+                .shortcuts
+                .as_ref()
+                .is_some_and(|s| s.resizing_individually());
             self.message(
-                "Resize mode: H/J/K/L or arrows move dividers · Esc or Enter finishes",
+                if individual {
+                    "Resize mode, this window only: H/L narrower/wider, K/J shorter/taller · I shares edges · Esc finishes"
+                } else {
+                    "Resize mode: H/J/K/L or arrows move shared edges · I sizes this window only · Esc finishes"
+                },
                 false,
                 cx,
             );

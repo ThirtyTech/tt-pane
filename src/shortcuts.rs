@@ -113,7 +113,8 @@ impl FocusGesture {
 /// are never held hostage if the user walks away.
 const RESIZE_IDLE: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Plain keys grabbed only while resize mode is on. None ends the mode.
+/// Plain keys grabbed only while resize mode is on. None ends the mode, and
+/// ResizeMode (I) switches between shared edges and the window alone.
 fn resize_keys() -> Vec<(HotKey, Option<Action>)> {
     [
         (Code::KeyH, Some(Action::ResizeLeft)),
@@ -124,6 +125,7 @@ fn resize_keys() -> Vec<(HotKey, Option<Action>)> {
         (Code::ArrowUp, Some(Action::ResizeUp)),
         (Code::KeyL, Some(Action::ResizeRight)),
         (Code::ArrowRight, Some(Action::ResizeRight)),
+        (Code::KeyI, Some(Action::ResizeMode)),
         (Code::Escape, None),
         (Code::Enter, None),
     ]
@@ -135,6 +137,18 @@ fn resize_keys() -> Vec<(HotKey, Option<Action>)> {
 struct ResizeMode {
     keys: Vec<(HotKey, Option<Action>)>,
     last: std::time::Instant,
+    individual: bool,
+}
+
+/// In individual mode the divider moves become sizes of the window alone.
+fn individual(action: Action) -> Action {
+    match action {
+        Action::ResizeLeft => Action::SizeNarrower,
+        Action::ResizeRight => Action::SizeWider,
+        Action::ResizeUp => Action::SizeShorter,
+        Action::ResizeDown => Action::SizeTaller,
+        other => other,
+    }
 }
 
 /// Lives on the GPUI event-loop thread (required by macOS and Windows).
@@ -163,6 +177,10 @@ impl Shortcuts {
         self.resize.is_some()
     }
 
+    pub fn resizing_individually(&self) -> bool {
+        self.resize.as_ref().is_some_and(|mode| mode.individual)
+    }
+
     fn enter_resize(&mut self, now: std::time::Instant) {
         let keys = resize_keys()
             .into_iter()
@@ -174,7 +192,11 @@ impl Shortcuts {
                     .is_none_or(|manager| manager.register(*key).is_ok())
             })
             .collect();
-        self.resize = Some(ResizeMode { keys, last: now });
+        self.resize = Some(ResizeMode {
+            keys,
+            last: now,
+            individual: false,
+        });
     }
 
     fn leave_resize(&mut self) {
@@ -212,8 +234,20 @@ impl Shortcuts {
             }
             mode.last = now;
             return match step {
+                Some(Action::ResizeMode) => {
+                    mode.individual = !mode.individual;
+                    Some(Invocation {
+                        action: Action::ResizeMode,
+                        window,
+                        include_hidden: false,
+                    })
+                }
                 Some(action) => Some(Invocation {
-                    action,
+                    action: if mode.individual {
+                        individual(action)
+                    } else {
+                        action
+                    },
                     window,
                     include_hidden: false,
                 }),
@@ -520,6 +554,20 @@ mod tests {
                 None
             );
         }
+        // I switches to sizing the window alone, and back.
+        shortcuts.event(id(Code::KeyI), HotKeyState::Pressed, start);
+        assert!(shortcuts.resizing_individually());
+        for (code, action) in [
+            (Code::KeyH, Action::SizeNarrower),
+            (Code::KeyJ, Action::SizeTaller),
+            (Code::KeyK, Action::SizeShorter),
+            (Code::KeyL, Action::SizeWider),
+        ] {
+            let step = shortcuts.event(id(code), HotKeyState::Pressed, start);
+            assert_eq!(step.unwrap().action, action);
+        }
+        shortcuts.event(id(Code::KeyI), HotKeyState::Pressed, start);
+        assert!(!shortcuts.resizing_individually());
         shortcuts.event(id(Code::Escape), HotKeyState::Pressed, start);
         assert!(!shortcuts.resizing());
         // Pressing the shortcut again, another shortcut, or idling also ends it.
