@@ -218,15 +218,22 @@ impl State {
                 self.float(&window.workspace, &live.id);
             }
         }
-        // Reflow after constraints reject a tile. Each rejection removes one member,
-        // so this converges without a repeating polling fight with the application.
+        // Reflow after constraints reject a tile. A rejected window is relocated into
+        // the largest other tile it has not tried (never splitting the focused window,
+        // which is usually the one being resized); only when no tile remains is it
+        // floated. Each attempt consumes a (window, tile) pair, so this converges
+        // without a repeating polling fight with the application.
         let mut failure = None;
         for group in &mut self.groups {
             if !desktop.workspaces.contains(&group.workspace) {
                 continue;
             }
             let mut live_windows = desktop.windows.clone();
-            for _ in 0..=group.members.len() {
+            let mut originals = std::collections::HashMap::new();
+            let mut tried: std::collections::HashMap<u64, Vec<u64>> =
+                std::collections::HashMap::new();
+            let members = group.members.len();
+            for _ in 0..=members * members {
                 let targets = match group.tree.layout(group.area, config.gaps) {
                     Ok(targets) => targets,
                     Err(e) => {
@@ -258,24 +265,51 @@ impl State {
                             }
                         }
                         result => {
-                            // If an app constrained the requested rectangle, restore its
-                            // prior placement when possible, then leave it floating.
+                            originals.entry(handle).or_insert(original);
                             if let Ok(actual) = &result {
                                 live.snapshot.bounds = *actual;
-                                let _ = move_window(live, original);
                             }
-                            failure = Some(result.err().unwrap_or_else(|| {
-                                anyhow::anyhow!("Window rejected its tile size; left floating")
-                            }));
-                            rejected.push((handle, live.snapshot.id.clone()));
+                            rejected.push((handle, live.snapshot.id.clone(), result.err()));
                         }
                     }
                 }
                 if rejected.is_empty() {
                     break;
                 }
-                for (handle, id) in rejected {
+                for (handle, id, error) in rejected {
                     group.tree.remove(handle);
+                    let tried = tried.entry(handle).or_default();
+                    let candidate = group
+                        .tree
+                        .layout(group.area, config.gaps)
+                        .ok()
+                        .and_then(|tiles| {
+                            tiles
+                                .into_iter()
+                                .filter(|(other, _)| {
+                                    Some(*other) != focused && !tried.contains(other)
+                                })
+                                .max_by_key(|(_, r)| i64::from(r.width) * i64::from(r.height))
+                        })
+                        .map(|(other, _)| other);
+                    if let Some(other) = candidate
+                        && group.tree.insert(handle, Some(other), group.area).is_ok()
+                    {
+                        tried.push(other);
+                        continue;
+                    }
+                    // Nowhere left: restore its prior placement when possible and float.
+                    if let Some(live) = live_windows
+                        .iter_mut()
+                        .find(|w| w.snapshot.handle == handle)
+                        && let Some(original) = originals.get(&handle)
+                        && error.is_none()
+                    {
+                        let _ = move_window(live, *original);
+                    }
+                    failure = Some(error.unwrap_or_else(|| {
+                        anyhow::anyhow!("Window rejected its tile size; left floating")
+                    }));
                     group.members.retain(|m| m.handle != handle);
                     self.floating.push(Floating {
                         workspace: group.workspace.clone(),
@@ -434,6 +468,7 @@ pub(crate) fn action(
             state.floating.retain(|f| f.id != live.snapshot.id);
         }
     } else if let Some(index) = group_index {
+        let before = state.clone();
         let group = &mut state.groups[index];
         match control(group, config, action, handle)? {
             Control::Focus(next) => {
@@ -458,7 +493,21 @@ pub(crate) fn action(
                 result?;
                 return Ok(false);
             }
-            Control::Reflow => {}
+            Control::Reflow => {
+                let desktop = platform::tiling_desktop()?;
+                let result = reflow(
+                    &mut state,
+                    before,
+                    config,
+                    &desktop,
+                    handle,
+                    &centered,
+                    platform::move_tiling_window,
+                );
+                state.save(path)?;
+                result?;
+                return Ok(true);
+            }
         }
     } else {
         ensure!(!action.is_tiling(), "Select a tiled window first");
@@ -476,6 +525,42 @@ pub(crate) fn action(
     state.save(path)?;
     result?;
     Ok(true)
+}
+
+/// Apply a resize/swap. If a tile that was already tiled could not be relocated
+/// and would be floated, undo the change instead: a layout edit never evicts.
+fn reflow(
+    state: &mut State,
+    before: State,
+    config: &Config,
+    desktop: &platform::TilingDesktop,
+    handle: u64,
+    centered: &[u64],
+    mut move_window: impl FnMut(&platform::TilingWindow, Rect) -> Result<Rect>,
+) -> Result<()> {
+    let result = state.reconcile(config, desktop, Some(handle), centered, &mut move_window);
+    let evicted = state
+        .floating
+        .iter()
+        .any(|f| !before.floating.iter().any(|b| b.id == f.id));
+    if !evicted {
+        return result;
+    }
+    *state = before;
+    // Put the edited group back on the rectangles it accepted before the change.
+    // Moving directly avoids re-observing our own moves as manual moves.
+    if let Some(group) = state.groups.iter().find(|g| g.tree.contains(handle)) {
+        for member in &group.members {
+            if let Some(live) = desktop
+                .windows
+                .iter()
+                .find(|w| w.snapshot.handle == member.handle)
+            {
+                let _ = move_window(live, member.last);
+            }
+        }
+    }
+    anyhow::bail!("Neighboring tile can't get any smaller")
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -796,7 +881,7 @@ mod tests {
     }
 
     #[test]
-    fn constraints_restore_then_float_and_reflow_without_retries() {
+    fn constraints_relocate_once_then_restore_float_and_reflow_without_retries() {
         let mut state = State::default();
         let config = config();
         state.configure(&config.tiling);
@@ -818,7 +903,90 @@ mod tests {
         assert_eq!(state.groups[0].members.len(), 1);
         desktop.windows[1].snapshot.bounds = config.gaps.work_area(AREA);
         assert_eq!(tick(&mut state, &mut desktop, &config, Some(2), &[]), 0);
-        assert_eq!(moves.iter().filter(|(id, _)| *id == 1).count(), 2); // request + restore
+        assert_eq!(moves.iter().filter(|(id, _)| *id == 1).count(), 3); // request + one relocation + restore
+    }
+
+    // Returns the window's current rectangle (a rejection) when `refuses` says so.
+    fn constrained(
+        moves: &mut Vec<(u64, Rect)>,
+        refuses: impl Fn(u64, Rect) -> bool + 'static,
+    ) -> impl FnMut(&platform::TilingWindow, Rect) -> Result<Rect> + '_ {
+        move |w, target| {
+            moves.push((w.snapshot.handle, target));
+            Ok(if refuses(w.snapshot.handle, target) {
+                w.snapshot.bounds
+            } else {
+                target
+            })
+        }
+    }
+
+    #[test]
+    fn squeezed_neighbor_relocates_into_largest_other_tile() {
+        let mut state = State::default();
+        let config = config();
+        let mut desktop = desktop(vec![window(1), window(2)]);
+        tick(&mut state, &mut desktop, &config, Some(2), &[]);
+        desktop.windows.push(window(3));
+        desktop.identities.push("test:3".into());
+        tick(&mut state, &mut desktop, &config, Some(2), &[]);
+        // Tree is [left=1, right=[top=2, bottom=3]]; growing 2 squeezes 3.
+        for _ in 0..3 {
+            control(&mut state.groups[0], &config, Action::SplitGrow, 2).unwrap();
+        }
+        let mut moves = Vec::new();
+        state
+            .reconcile(
+                &config,
+                &desktop,
+                Some(2),
+                &[],
+                constrained(&mut moves, |id, r| id == 3 && r.height < 300),
+            )
+            .unwrap();
+        assert!(state.floating.is_empty());
+        let tiles = state.groups[0].tree.layout(AREA, config.gaps).unwrap();
+        let rect = |id| tiles.iter().find(|(t, _)| *t == id).unwrap().1;
+        assert!(rect(3).height >= 300);
+        assert_eq!(rect(3).x, rect(1).x); // now shares the left column with 1
+        assert!(rect(2).height > rect(1).height); // the grow was kept
+    }
+
+    #[test]
+    fn resize_that_cannot_relocate_is_undone_instead_of_floating() {
+        let mut state = State::default();
+        let config = config();
+        let mut desktop = desktop(vec![window(1), window(2)]);
+        tick(&mut state, &mut desktop, &config, Some(1), &[]);
+        let before = state.clone();
+        for _ in 0..3 {
+            control(&mut state.groups[0], &config, Action::SplitGrow, 1).unwrap();
+        }
+        let mut moves = Vec::new();
+        let error = reflow(
+            &mut state,
+            before.clone(),
+            &config,
+            &desktop,
+            1,
+            &[],
+            constrained(&mut moves, |id, r| id == 2 && r.width < 500),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("can't get any smaller"));
+        assert_eq!(state, before);
+        // Both tiles are put back on the rectangles they accepted before the grow.
+        for member in &before.groups[0].members {
+            assert_eq!(
+                moves
+                    .iter()
+                    .rev()
+                    .find(|(id, _)| *id == member.handle)
+                    .unwrap()
+                    .1,
+                member.last
+            );
+        }
     }
 
     #[test]
