@@ -576,6 +576,9 @@ fn focus_candidates(
         let mut above = Vec::new();
         let mut candidates = Vec::new();
         let mut bounds = Vec::new();
+        // Entering a center group targets its topmost (active) member, never a
+        // geometrically nearer peer stacked behind it.
+        let mut entered = Vec::new();
         for window in windows {
             if glow::is_glow(window)
                 || window == GetDesktopWindow()
@@ -602,7 +605,15 @@ fn focus_candidates(
             };
             let rect = from_rect(rect);
             let is_middle = middle_members.contains(&(window.0 as usize as u64));
+            let behind_group_top = is_middle && window != selected && {
+                let monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+                entered.contains(&monitor) || {
+                    entered.push(monitor);
+                    false
+                }
+            };
             let selectable = window != selected
+                && !behind_group_top
                 && ((!snapped_only && group.is_empty())
                     || (!group.contains(&(window.0 as usize as u64))
                         && MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST)

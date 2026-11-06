@@ -277,10 +277,20 @@ fn candidates(
     let mut above = Vec::new();
     let mut handles = Vec::new();
     let mut bounds = Vec::new();
+    // Entering a center group targets its topmost (active) member, never a
+    // geometrically nearer peer stacked behind it.
+    let mut entered = Vec::new();
     for window in windows {
         let is_middle = middle_members.contains(&window.handle);
+        let behind_group_top = is_middle
+            && window.handle != selected.handle
+            && (entered.contains(&window.monitor) || {
+                entered.push(window.monitor);
+                false
+            });
         let selectable = window.handle != selected.handle
             && window.application
+            && !behind_group_top
             && ((!snapped_only && group.is_empty())
                 || (!group.contains(&window.handle) && window.monitor == selected.monitor));
         let work_area = (selectable
@@ -426,5 +436,30 @@ mod tests {
         let (_, handles, _) =
             candidates(1, &windows, &[], FocusVisibility::IncludeHidden, &[1], &[1]).unwrap();
         assert_eq!(handles, [2]);
+    }
+
+    #[test]
+    fn hold_enters_center_group_at_its_topmost_member() {
+        let right = Action::Right.target(AREA, AREA);
+        let center = Action::Center.target(AREA, AREA);
+        // Topmost first. Peer 3 is offset toward the right panel, so it is
+        // geometrically nearer than the active member 2 stacked above it.
+        let peer = Rect {
+            x: center.x + center.width / 4,
+            ..center
+        };
+        let windows = [
+            window(1, right),
+            window(2, center),
+            window(3, peer),
+            window(4, Action::Left.target(AREA, AREA)),
+        ];
+        let (current, handles, bounds) =
+            candidates(1, &windows, &[], FocusVisibility::Hold, &[], &[2, 3]).unwrap();
+        assert_eq!(handles, [2]);
+        assert_eq!(
+            crate::geometry::focus_neighbor(current, &bounds, Action::FocusLeft),
+            Some(0)
+        );
     }
 }
