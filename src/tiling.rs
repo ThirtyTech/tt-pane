@@ -420,7 +420,7 @@ pub(crate) fn action(
     let handle = handle.or_else(platform::foreground_handle);
     let mut centers = crate::centered::Group::load(path)?;
     centers.prune();
-    let centered = centers.handles();
+    let mut centered = centers.handles();
     // Synchronize topology before interpreting the action, including CLI-only use.
     let result = state.reconcile(
         config,
@@ -454,10 +454,6 @@ pub(crate) fn action(
             state.float(&live.workspace, &live.snapshot.id);
         } else {
             ensure!(
-                !centered.contains(&handle),
-                "Use a snap shortcut to leave the centered group before retiling"
-            );
-            ensure!(
                 !config
                     .tiling
                     .float_apps
@@ -465,6 +461,13 @@ pub(crate) fn action(
                     .any(|app| app.eq_ignore_ascii_case(&live.app)),
                 "Remove this app from float_apps before retiling"
             );
+            // Retiling a centered member leaves its group, as another snap would.
+            if centered.contains(&handle) {
+                centers.remove(&live.snapshot.id);
+                centers.refresh(config.center_layout)?;
+                centers.save(path)?;
+                centered.retain(|h| *h != handle);
+            }
             state.floating.retain(|f| f.id != live.snapshot.id);
         }
     } else if let Some(index) = group_index {

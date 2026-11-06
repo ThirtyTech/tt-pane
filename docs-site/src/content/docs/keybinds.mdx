@@ -99,6 +99,6 @@ Windows reserves Win + Shift + S, T, P, R, and X, and Win + L always locks the P
 
 On tiled windows, H/J/K/L uses tree geometry (including deep tiles); horizontal hold gestures also navigate tiles. `shrink-width`/`expand-width` act like `split-shrink`/`split-grow`, and `resize-up`/`resize-down` moves the nearest horizontal split boundary. A lone tile has no split to adjust. Ratios stay between 10% and 90%.
 
-Snap/center/fill-gap actions float a tiled window before normal placement. Floating windows keep ordinary positioning behavior. To retile a centered group member, first use a non-center snap to leave the group, then `toggle-float`. Apps listed in `float_apps` must be removed from that list before retiling. All tiling actions other than `toggle-tiling` require active tiling; GNOME skips registering them until its backend is implemented.
+Snap/center/fill-gap actions float a tiled window before normal placement. Floating windows keep ordinary positioning behavior. `toggle-float` on a centered group member removes it from the group (the remaining members rearrange) and retiles it. Apps listed in `float_apps` must be removed from that list before retiling. All tiling actions other than `toggle-tiling` require active tiling; GNOME skips registering them until its backend is implemented.
 
 The runtime toggle persists in the shared sidecar. Saving Settings makes the saved toggle authoritative again. See [configuration](/tt-pane/configuration/#tiling-experimental-windows) for the full behavior.
