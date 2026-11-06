@@ -14,6 +14,45 @@ pub enum Direction {
     Right,
 }
 
+/// A snap position a tile can be docked into. Quarters dock their column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dock {
+    Left,
+    Right,
+    Top,
+    Bottom,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl Dock {
+    fn axis(self) -> Axis {
+        match self {
+            Self::Top | Self::Bottom => Axis::Rows,
+            _ => Axis::Columns,
+        }
+    }
+
+    /// Whether the docked side is the root's first (left/top) child.
+    fn leading(self) -> bool {
+        matches!(
+            self,
+            Self::Left | Self::Top | Self::TopLeft | Self::BottomLeft
+        )
+    }
+
+    /// For quarters, whether the window takes the top of its column.
+    fn vertical(self) -> Option<bool> {
+        match self {
+            Self::TopLeft | Self::TopRight => Some(true),
+            Self::BottomLeft | Self::BottomRight => Some(false),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum Axis {
     Columns,
@@ -283,6 +322,119 @@ impl Dwindle {
         Ok(())
     }
 
+    /// The window's share of the docked side when the root already docks it there.
+    pub fn docked_share(&self, window: u64, dock: Dock) -> Option<f64> {
+        let Some(Node::Split {
+            axis,
+            ratio,
+            first,
+            second,
+        }) = &self.root
+        else {
+            return None;
+        };
+        let (side_first, side) = if dock.leading() {
+            (true, first)
+        } else {
+            (false, second)
+        };
+        let share = if side_first { *ratio } else { 1.0 - *ratio };
+        let alone = matches!(**side, Node::Window(w) if w == window);
+        let ok = *axis == dock.axis()
+            && match dock.vertical() {
+                None => alone,
+                // A quarter docked without a partner tile is a half.
+                Some(top) => {
+                    alone
+                        || matches!(&**side, Node::Split { axis: Axis::Rows, first, second, .. }
+                    if matches!(if top { &**first } else { &**second }, Node::Window(w) if *w == window))
+                }
+            };
+        ok.then_some(share)
+    }
+
+    /// Rebuild the root so `window` occupies the snap position with `share` of the
+    /// docked axis, and every other tile fills the remaining space. A quarter pairs
+    /// the window with the tile nearest the rest of its column; with no spare tile
+    /// it docks the half instead. Requires preserve_split so axes stay as placed.
+    pub fn dock(
+        &mut self,
+        window: u64,
+        dock: Dock,
+        share: f64,
+        area: Rect,
+    ) -> Result<(), LayoutError> {
+        if !self.preserve_split || !share.is_finite() {
+            return Err(LayoutError::InvalidOptions);
+        }
+        let share = share.clamp(0.1, 0.9);
+        let mut candidate = self.clone();
+        candidate.remove(window);
+        let Some(mut rest) = candidate.root.take() else {
+            return Err(LayoutError::MissingWindow);
+        };
+        let mut side = Node::Window(window);
+        if let Some(top) = dock.vertical()
+            && matches!(rest, Node::Split { .. })
+        {
+            // Pick the remaining tile closest to the other half of the docked column.
+            let mut column = area;
+            column.width /= 2;
+            if !dock.leading() {
+                column.x += area.width - column.width;
+            }
+            let target = (
+                i64::from(column.x) + i64::from(column.width) / 2,
+                i64::from(column.y)
+                    + if top {
+                        i64::from(column.height) * 3 / 4
+                    } else {
+                        i64::from(column.height) / 4
+                    },
+            );
+            let tiles = Self {
+                root: Some(rest.clone()),
+                ..self.clone()
+            }
+            .layout(area, SnapGaps { inner: 0, outer: 0 })?;
+            let partner = tiles
+                .iter()
+                .min_by_key(|(_, r)| {
+                    let cx = i64::from(r.x) + i64::from(r.width) / 2;
+                    let cy = i64::from(r.y) + i64::from(r.height) / 2;
+                    (cx - target.0).pow(2) + (cy - target.1).pow(2)
+                })
+                .map(|(id, _)| *id)
+                .ok_or(LayoutError::MissingWindow)?;
+            rest = rest.remove(partner).ok_or(LayoutError::MissingWindow)?;
+            let (first, second) = if top {
+                (Node::Window(window), Node::Window(partner))
+            } else {
+                (Node::Window(partner), Node::Window(window))
+            };
+            side = Node::Split {
+                axis: Axis::Rows,
+                ratio: 0.5,
+                first: Box::new(first),
+                second: Box::new(second),
+            };
+        }
+        let (first, second, ratio) = if dock.leading() {
+            (side, rest, share)
+        } else {
+            (rest, side, 1.0 - share)
+        };
+        candidate.root = Some(Node::Split {
+            axis: dock.axis(),
+            ratio,
+            first: Box::new(first),
+            second: Box::new(second),
+        });
+        candidate.layout(area, SnapGaps { inner: 0, outer: 0 })?;
+        *self = candidate;
+        Ok(())
+    }
+
     /// Toggle the immediate parent. Requires preserve_split to retain the change.
     pub fn toggle_split(&mut self, window: u64) -> Result<(), LayoutError> {
         let Node::Split { axis, .. } = self.parent_mut(window)? else {
@@ -482,6 +634,96 @@ mod tests {
         tree.insert(2, Some(1), AREA).unwrap();
         tree.insert(3, Some(2), AREA).unwrap();
         tree
+    }
+
+    #[test]
+    fn docking_places_the_window_and_tiles_the_rest_around_it() {
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 1200,
+            height: 800,
+        };
+        let rect = |tree: &Dwindle, id| {
+            tree.layout(area, ZERO)
+                .unwrap()
+                .into_iter()
+                .find(|(t, _)| *t == id)
+                .unwrap()
+                .1
+        };
+        // Halves: 1 takes the right half, 2 and 3 share the left half.
+        let mut tree = three();
+        tree.dock(1, Dock::Right, 0.5, area).unwrap();
+        assert_eq!(
+            rect(&tree, 1),
+            Rect {
+                x: 600,
+                y: 0,
+                width: 600,
+                height: 800
+            }
+        );
+        for id in [2, 3] {
+            let r = rect(&tree, id);
+            assert!(r.x + r.width <= 600);
+        }
+        assert_eq!(tree.docked_share(1, Dock::Right), Some(0.5));
+        assert_eq!(tree.docked_share(1, Dock::Left), None);
+        tree.dock(1, Dock::Right, 0.6, area).unwrap();
+        assert_eq!(rect(&tree, 1).width, 720);
+        tree.dock(1, Dock::Bottom, 0.5, area).unwrap();
+        assert_eq!(
+            rect(&tree, 1),
+            Rect {
+                x: 0,
+                y: 400,
+                width: 1200,
+                height: 400
+            }
+        );
+        // Quarter: 1 is top-left, its nearest neighbor fills bottom-left, the rest the right.
+        tree.dock(1, Dock::TopLeft, 0.5, area).unwrap();
+        assert_eq!(
+            rect(&tree, 1),
+            Rect {
+                x: 0,
+                y: 0,
+                width: 600,
+                height: 400
+            }
+        );
+        assert_eq!(tree.layout(area, ZERO).unwrap().len(), 3);
+        assert!(tree.docked_share(1, Dock::TopLeft).is_some());
+        // With one other tile, a quarter docks the half instead.
+        let mut pair = Dwindle::default();
+        pair.insert(1, None, area).unwrap();
+        pair.insert(2, Some(1), area).unwrap();
+        pair.dock(2, Dock::TopLeft, 0.5, area).unwrap();
+        assert_eq!(
+            rect(&pair, 2),
+            Rect {
+                x: 0,
+                y: 0,
+                width: 600,
+                height: 800
+            }
+        );
+        assert_eq!(pair.docked_share(2, Dock::TopLeft), Some(0.5));
+        // A lone window has nothing to arrange; adaptive axes cannot hold a dock.
+        let mut lone = Dwindle::default();
+        lone.insert(1, None, area).unwrap();
+        assert_eq!(
+            lone.dock(1, Dock::Left, 0.5, area),
+            Err(LayoutError::MissingWindow)
+        );
+        let mut adaptive = Dwindle::new(0.5, 1.0, false).unwrap();
+        adaptive.insert(1, None, area).unwrap();
+        adaptive.insert(2, None, area).unwrap();
+        assert_eq!(
+            adaptive.dock(1, Dock::Top, 0.5, area),
+            Err(LayoutError::InvalidOptions)
+        );
     }
 
     #[test]

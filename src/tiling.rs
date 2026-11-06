@@ -6,7 +6,7 @@ use crate::{
     positioning::{near, sidecar},
 };
 use anyhow::{Context, Result, ensure};
-use platform::tiling::Dwindle;
+use platform::tiling::{Dock, Dwindle};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{File, OpenOptions},
@@ -92,6 +92,11 @@ impl State {
     }
 
     fn configure(&mut self, settings: &Tiling) {
+        // Snap behavior does not change existing layouts, so toggling it keeps them.
+        let settings = &Tiling {
+            snap_rearranges: false,
+            ..settings.clone()
+        };
         if self.settings.as_ref() != Some(settings) {
             self.settings = Some(settings.clone());
             self.override_enabled = None;
@@ -446,6 +451,38 @@ pub(crate) fn action(
         return Ok(false);
     };
     let handle = live.snapshot.handle;
+    if config.tiling.snap_rearranges
+        && let Some(dock) = dock_for(action)
+        && !config
+            .tiling
+            .float_apps
+            .iter()
+            .any(|app| app.eq_ignore_ascii_case(&live.app))
+    {
+        let before = state.clone();
+        if dock_window(&mut state, config, live, dock) {
+            // Docking a centered member leaves its group, as another snap would.
+            if centered.contains(&handle) {
+                centers.remove(&live.snapshot.id);
+                centers.refresh(config.center_layout)?;
+                centers.save(path)?;
+                centered.retain(|h| *h != handle);
+            }
+            let desktop = platform::tiling_desktop()?;
+            let result = reflow(
+                &mut state,
+                before,
+                config,
+                &desktop,
+                handle,
+                &centered,
+                platform::move_tiling_window,
+            );
+            state.save(path)?;
+            result?;
+            return Ok(true);
+        }
+    }
     let group_index = state.groups.iter().position(|g| {
         g.workspace == live.workspace && g.area == live.snapshot.area && g.tree.contains(handle)
     });
@@ -532,6 +569,67 @@ pub(crate) fn action(
     state.save(path)?;
     result?;
     Ok(true)
+}
+
+fn dock_for(action: Action) -> Option<Dock> {
+    Some(match action {
+        Action::Left => Dock::Left,
+        Action::Right => Dock::Right,
+        Action::Top => Dock::Top,
+        Action::Bottom => Dock::Bottom,
+        Action::TopLeft => Dock::TopLeft,
+        Action::TopRight => Dock::TopRight,
+        Action::BottomLeft => Dock::BottomLeft,
+        Action::BottomRight => Dock::BottomRight,
+        _ => return None,
+    })
+}
+
+/// Dock a tiled or floating window into its monitor's tree at a snap position.
+/// Repeating the same snap grows its share through the configured growth steps,
+/// then returns to half. Returns false, leaving state untouched, when there is no
+/// other tile to arrange around it or the tree cannot hold the dock.
+fn dock_window(
+    state: &mut State,
+    config: &Config,
+    live: &platform::TilingWindow,
+    dock: Dock,
+) -> bool {
+    let handle = live.snapshot.handle;
+    let Some(index) = state.groups.iter().position(|g| {
+        g.workspace == live.workspace
+            && g.area == live.snapshot.area
+            && g.members.iter().any(|m| m.handle != handle)
+    }) else {
+        return false;
+    };
+    let group = &mut state.groups[index];
+    let growth = config.growth;
+    let shares: Vec<f64> = (0..=growth.steps)
+        .map(|step| (0.5 * (1.0 + f64::from(growth.percent) / 100.0).powi(step as i32)).min(0.9))
+        .collect();
+    let share = group
+        .tree
+        .docked_share(handle, dock)
+        .and_then(|current| shares.iter().position(|s| (s - current).abs() < 0.01))
+        .map_or(shares[0], |step| shares[(step + 1) % shares.len()]);
+    let mut tree = group.tree.clone();
+    if tree.dock(handle, dock, share, group.area).is_err()
+        || tree.layout(group.area, config.gaps).is_err()
+    {
+        return false;
+    }
+    group.tree = tree;
+    group.focused = Some(handle);
+    if !group.members.iter().any(|m| m.handle == handle) {
+        group.members.push(Member {
+            handle,
+            id: live.snapshot.id.clone(),
+            last: live.snapshot.bounds,
+        });
+    }
+    state.floating.retain(|f| f.id != live.snapshot.id);
+    true
 }
 
 /// Apply a resize/swap. If a tile that was already tiled could not be relocated
@@ -1006,6 +1104,78 @@ mod tests {
                 member.last
             );
         }
+    }
+
+    #[test]
+    fn snaps_dock_into_the_layout_grow_on_repeat_and_skip_lone_windows() {
+        let mut state = State::default();
+        let mut config = config();
+        config.tiling.snap_rearranges = true;
+        let mut desktop = desktop(vec![window(1), window(2), window(3)]);
+        tick(&mut state, &mut desktop, &config, Some(2), &[]);
+        let work = config.gaps.work_area(AREA);
+        let tile = |state: &State, id| {
+            state.groups[0]
+                .tree
+                .layout(AREA, config.gaps)
+                .unwrap()
+                .into_iter()
+                .find(|(t, _)| *t == id)
+                .unwrap()
+                .1
+        };
+        // Ctrl+Alt+2 on tile 1: it takes the right half, the others share the left.
+        assert!(dock_window(
+            &mut state,
+            &config,
+            &desktop.windows[0],
+            Dock::Right
+        ));
+        tick(&mut state, &mut desktop, &config, Some(1), &[]);
+        let right = tile(&state, 1);
+        assert_eq!(right.x + right.width, work.x + work.width);
+        assert_eq!(right.height, work.height);
+        for id in [2, 3] {
+            assert!(tile(&state, id).x + tile(&state, id).width < right.x);
+        }
+        assert!(state.floating.is_empty());
+        // Repeating grows through the growth steps, then returns to half.
+        let mut widths = vec![right.width];
+        for _ in 0..=config.growth.steps {
+            assert!(dock_window(
+                &mut state,
+                &config,
+                &desktop.windows[0],
+                Dock::Right
+            ));
+            widths.push(tile(&state, 1).width);
+        }
+        assert!(widths.windows(2).take(3).all(|w| w[1] > w[0]));
+        assert_eq!(widths.last(), widths.first());
+        // A floating window docks into the tree too.
+        state.float("desktop-a", "test:3");
+        tick(&mut state, &mut desktop, &config, Some(1), &[]);
+        assert!(!state.groups[0].tree.contains(3));
+        assert!(dock_window(
+            &mut state,
+            &config,
+            &desktop.windows[2],
+            Dock::Left
+        ));
+        assert!(state.groups[0].tree.contains(3) && state.floating.is_empty());
+        assert_eq!(tile(&state, 3).x, work.x);
+        // A window alone on its monitor keeps the normal snap.
+        let mut lone = State::default();
+        let mut single = self::desktop(vec![window(9)]);
+        tick(&mut lone, &mut single, &config, Some(9), &[]);
+        let before = lone.clone();
+        assert!(!dock_window(
+            &mut lone,
+            &config,
+            &single.windows[0],
+            Dock::Right
+        ));
+        assert_eq!(lone, before);
     }
 
     #[test]

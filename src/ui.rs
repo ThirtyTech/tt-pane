@@ -624,7 +624,13 @@ impl Render for Settings {
                                 this.draft.tiling.enabled = !this.draft.tiling.enabled;
                                 this.message("Automatic tiling updated. Save to activate.", false, cx);
                             })))
-                        .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Dwindle tiles existing and new restored windows on the current desktop. Moving or snapping a tile floats it. Turning off leaves windows in place. Save to activate.")))
+                        .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Dwindle tiles existing and new restored windows on the current desktop. Moving or snapping a tile floats it. Turning off leaves windows in place. Save to activate."))
+                        .child(button("tiling-snap-rearranges", if self.draft.tiling.snap_rearranges { "Snaps rearrange tiles: On" } else { "Snaps rearrange tiles: Off" })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.draft.tiling.snap_rearranges = !this.draft.tiling.snap_rearranges;
+                                this.message("Snap behavior updated. Save to activate.", false, cx);
+                            })))
+                        .child(div().text_xs().text_color(rgb(0x91a4bb)).child("When on, half and quarter snaps place the window into the layout and move the other tiles into the remaining space instead of covering them. Repeat to grow. Center and Fill still float.")))
                     .when(!cfg!(windows), |el| el.child(div().text_xs().text_color(rgb(0x91a4bb)).child("Automatic tiling is currently available on Windows only.")))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("Position preview"))
                     .child(div().relative().flex_shrink_0().w(px(PREVIEW_AREA.width as f32)).h(px(PREVIEW_AREA.height as f32)).rounded_md().overflow_hidden().bg(rgb(0x090f19)).border_1().border_color(rgb(0x354961))

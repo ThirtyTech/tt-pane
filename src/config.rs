@@ -59,6 +59,8 @@ pub struct Tiling {
     pub default_split_ratio: f64,
     pub split_width_multiplier: f64,
     pub preserve_split: bool,
+    /// Half/quarter snaps dock the window into the layout instead of floating it.
+    pub snap_rearranges: bool,
     /// Exact executable basenames, matched without ASCII case sensitivity.
     pub float_apps: Vec<String>,
 }
@@ -71,6 +73,7 @@ impl Default for Tiling {
             default_split_ratio: 0.5,
             split_width_multiplier: 1.0,
             preserve_split: true,
+            snap_rearranges: false,
             float_apps: Vec::new(),
         }
     }
