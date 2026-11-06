@@ -93,12 +93,14 @@ impl Cycle {
                 && g.target.intersection(actual).is_none()
                 && !(self.action == Action::FillGap && g.area == self.area)
         });
-        if self.action.adjusts_width()
-            && let Some(target) = self
-                .base
-                .freed_width_gap(actual)
-                .and_then(|r| r.intersection(self.area))
-        {
+        let freed = if self.action.adjusts_width() {
+            self.base.freed_width_gap(actual)
+        } else if self.action.sizes_alone() {
+            freed_strip(self.base, actual)
+        } else {
+            None
+        };
+        if let Some(target) = freed.and_then(|r| r.intersection(self.area)) {
             self.gaps.retain(|g| g.area != self.area);
             self.gaps.push(Gap {
                 middle: self.middle,
@@ -106,12 +108,50 @@ impl Cycle {
                 area: self.area,
                 base: self.base,
                 source_bounds: actual,
-                anchor: self.width_anchor.unwrap(),
+                anchor: self
+                    .width_anchor
+                    .unwrap_or_else(|| HorizontalAnchor::for_window(self.area, actual)),
                 target,
             });
         }
         if self.gaps.len() > 16 {
             self.gaps.drain(..self.gaps.len() - 16);
+        }
+    }
+
+    /// Individual sizing keeps the first size as its base, so repeated presses
+    /// free one growing strip that fill-gap can use.
+    fn size_alone(
+        previous: Option<&Self>,
+        window: &str,
+        action: Action,
+        area: Rect,
+        current: Rect,
+        config: &Config,
+    ) -> Self {
+        let previous = previous.filter(|p| {
+            p.version == 1
+                && p.window == window
+                && p.area == area
+                && p.action.sizes_alone()
+                && near(p.last, current)
+        });
+        let base = previous.map_or(current, |p| p.base);
+        Self {
+            version: 1,
+            window: window.to_owned(),
+            action,
+            area,
+            base,
+            middle: previous.map_or_else(
+                || !platform::is_edge_snapped(base, area, config.gaps),
+                |p| p.middle,
+            ),
+            last: action.sized_alone(area, current),
+            step: 0,
+            growth: config.growth,
+            width_anchor: None,
+            gaps: Vec::new(),
         }
     }
 
@@ -217,6 +257,43 @@ impl Cycle {
             gaps: Vec::new(),
         }
     }
+}
+
+/// The largest strip of `base` that `actual` no longer covers, when the window
+/// shrank inside its original bounds.
+fn freed_strip(base: Rect, actual: Rect) -> Option<Rect> {
+    let (base_end, actual_end) = (base.x + base.width, actual.x + actual.width);
+    let (base_bottom, actual_bottom) = (base.y + base.height, actual.y + actual.height);
+    if actual.x < base.x
+        || actual.y < base.y
+        || actual_end > base_end
+        || actual_bottom > base_bottom
+    {
+        return None;
+    }
+    [
+        Rect {
+            width: actual.x - base.x,
+            ..base
+        },
+        Rect {
+            x: actual_end,
+            width: base_end - actual_end,
+            ..base
+        },
+        Rect {
+            height: actual.y - base.y,
+            ..base
+        },
+        Rect {
+            y: actual_bottom,
+            height: base_bottom - actual_bottom,
+            ..base
+        },
+    ]
+    .into_iter()
+    .filter(|r| r.width > 0 && r.height > 0)
+    .max_by_key(|r| i64::from(r.width) * i64::from(r.height))
 }
 
 // Fractional scaling and decoration rounding can differ by a pixel across reads.
@@ -367,12 +444,6 @@ fn apply_inner(
         return result;
     }
     let state_path = sidecar(&path, ".cycle.json");
-    if action.sizes_alone() {
-        platform::apply_with(window, &mut |_, area, current| {
-            Ok(action.sized_alone(area, current))
-        })?;
-        return Ok(());
-    }
     if action.adjusts_pair() {
         platform::resize_pair(window, action == Action::ResizeUp)?;
         #[cfg(any(windows, target_os = "linux"))]
@@ -409,6 +480,8 @@ fn apply_inner(
             Cycle::fill_gap(previous.as_ref(), id, area, config.growth)?
         } else if action.adjusts_width() {
             Cycle::adjust_width(previous.as_ref(), id, action, area, current, config)
+        } else if action.sizes_alone() {
+            Cycle::size_alone(previous.as_ref(), id, action, area, current, config)
         } else {
             Cycle::next(previous.as_ref(), id, action, area, current, config.growth)
         };
@@ -424,8 +497,13 @@ fn apply_inner(
                 && platform::is_edge_snapped(gap.source_bounds, area, config.gaps)
             {
                 let spacing = config.gaps.inner * 2;
-                cycle.last = if gap.target.x >= gap.source_bounds.x + gap.source_bounds.width {
+                let source = gap.source_bounds;
+                cycle.last = if gap.target.x >= source.x + source.width {
                     crate::geometry::inset_rect(cycle.last, spacing, 0, 0, 0)
+                } else if gap.target.y >= source.y + source.height {
+                    crate::geometry::inset_rect(cycle.last, 0, spacing, 0, 0)
+                } else if gap.target.y + gap.target.height <= source.y {
+                    crate::geometry::inset_rect(cycle.last, 0, 0, 0, spacing)
                 } else {
                     crate::geometry::inset_rect(cycle.last, 0, 0, spacing, 0)
                 };
@@ -490,6 +568,40 @@ mod tests {
         );
         cycle.record_result(previous, cycle.last);
         cycle
+    }
+
+    #[test]
+    fn sizing_a_window_alone_leaves_a_gap_to_fill() {
+        let size = |previous: Option<&Cycle>, action, current| {
+            let mut cycle = Cycle::size_alone(
+                previous,
+                "source",
+                action,
+                AREA,
+                current,
+                &Config::default(),
+            );
+            cycle.record_result(previous, cycle.last);
+            cycle
+        };
+        // Bottom-left window: narrowing keeps its left edge, freeing its right side.
+        let base = Action::BottomLeft.target(AREA, CURRENT);
+        let first = size(None, Action::SizeNarrower, base);
+        let second = size(Some(&first), Action::SizeNarrower, first.last);
+        assert_eq!(second.base, base);
+        let gap = second.gaps[0].target;
+        assert_eq!(gap.x, second.last.x + second.last.width);
+        assert_eq!(gap.x + gap.width, base.x + base.width);
+        assert_eq!((gap.y, gap.height), (base.y, base.height));
+        let filled = Cycle::fill_gap(Some(&second), "destination", AREA, Growth::default());
+        assert_eq!(filled.unwrap().last, gap);
+        // Shorter frees the top strip of a bottom window.
+        let shorter = size(None, Action::SizeShorter, base);
+        let gap = shorter.gaps[0].target;
+        assert_eq!((gap.y, gap.y + gap.height), (base.y, shorter.last.y));
+        // Growing back to the original size leaves nothing to fill.
+        let wider = size(Some(&first), Action::SizeWider, first.last);
+        assert!(wider.gaps.is_empty());
     }
 
     #[test]
