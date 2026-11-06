@@ -420,8 +420,10 @@ pub(crate) fn action(
             return Ok(true);
         }
     } else if !state.active {
-        // Without tiling, swaps still trade places with the nearest window.
-        if let Some(direction) = swap_direction(action) {
+        // Without tiling, swaps still trade places with the nearest window and
+        // left/right move the edge shared with neighboring windows.
+        let free = matches!(action, Action::ResizeLeft | Action::ResizeRight);
+        if swap_direction(action).is_some() || free {
             let desktop = platform::tiling_desktop()?;
             ensure!(
                 !desktop.interacting,
@@ -430,7 +432,16 @@ pub(crate) fn action(
             let handle = handle
                 .or_else(platform::foreground_handle)
                 .context("Select a window first")?;
-            swap_windows(&desktop, handle, direction, platform::move_tiling_window)?;
+            if free {
+                move_shared_edge(
+                    &desktop,
+                    handle,
+                    action == Action::ResizeRight,
+                    platform::move_tiling_window,
+                )?;
+            } else if let Some(direction) = swap_direction(action) {
+                swap_windows(&desktop, handle, direction, platform::move_tiling_window)?;
+            }
             return Ok(true);
         }
         ensure!(!action.is_tiling(), "Enable experimental tiling first");
@@ -786,6 +797,155 @@ fn swap_windows(
     Ok(())
 }
 
+/// Move the vertical edge the selected window shares with its neighbors by 5%
+/// of the work area, resizing every window along that edge together. The edge
+/// in the key's direction wins; at a screen edge the opposite edge moves.
+fn move_shared_edge(
+    desktop: &platform::TilingDesktop,
+    handle: u64,
+    right: bool,
+    mut move_window: impl FnMut(&platform::TilingWindow, Rect) -> Result<Rect>,
+) -> Result<()> {
+    // Edges count as shared within this many pixels, which covers gaps.
+    const SLACK: i32 = 8;
+    const MAX_GAP: i32 = 64;
+    let live = desktop
+        .windows
+        .iter()
+        .find(|w| w.snapshot.handle == handle)
+        .context("Select a restored application window")?;
+    let area = live.snapshot.area;
+    let peers: Vec<_> = desktop
+        .windows
+        .iter()
+        .filter(|w| w.workspace == live.workspace && w.snapshot.area == area)
+        .collect();
+    let end = |r: Rect| r.x + r.width;
+    let overlaps = |a: Rect, b: Rect| a.y.max(b.y) < (a.y + a.height).min(b.y + b.height);
+    let edges = if right { [true, false] } else { [false, true] };
+    for use_right in edges {
+        // `before` ends at the edge, `after` starts past it.
+        let (mut before, mut after) = (Vec::new(), Vec::new());
+        let (mut close, mut open) = (None, None);
+        if use_right {
+            before.push(live);
+            close = Some(end(live.snapshot.bounds));
+        } else {
+            after.push(live);
+            open = Some(live.snapshot.bounds.x);
+        }
+        loop {
+            let mut grew = false;
+            for window in &peers {
+                let r = window.snapshot.bounds;
+                if before
+                    .iter()
+                    .chain(&after)
+                    .any(|w| std::ptr::eq(*w, *window))
+                {
+                    continue;
+                }
+                let ends_here = match (close, open) {
+                    (Some(close), _) => (end(r) - close).abs() <= SLACK,
+                    (None, Some(open)) => (0..=MAX_GAP).contains(&(open - end(r))),
+                    _ => false,
+                };
+                let starts_here = match (open, close) {
+                    (Some(open), _) => (r.x - open).abs() <= SLACK,
+                    (None, Some(close)) => (0..=MAX_GAP).contains(&(r.x - close)),
+                    _ => false,
+                };
+                if ends_here && after.iter().any(|w| overlaps(w.snapshot.bounds, r)) {
+                    close.get_or_insert(end(r));
+                    before.push(window);
+                    grew = true;
+                } else if starts_here && before.iter().any(|w| overlaps(w.snapshot.bounds, r)) {
+                    open.get_or_insert(r.x);
+                    after.push(window);
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        if before.is_empty() || after.is_empty() {
+            continue;
+        }
+        // Keep every window at least a tenth of the screen wide.
+        let minimum = area.width / 10;
+        let step = (area.width / 20).max(1);
+        let delta = if right {
+            step.min(
+                after
+                    .iter()
+                    .map(|w| w.snapshot.bounds.width - minimum)
+                    .min()
+                    .unwrap_or(0),
+            )
+        } else {
+            -step.min(
+                before
+                    .iter()
+                    .map(|w| w.snapshot.bounds.width - minimum)
+                    .min()
+                    .unwrap_or(0),
+            )
+        };
+        ensure!(
+            if right { delta > 0 } else { delta < 0 },
+            "Neighboring window can't get any smaller"
+        );
+        let mut plan: Vec<_> = before
+            .iter()
+            .map(|w| {
+                let r = w.snapshot.bounds;
+                (
+                    *w,
+                    Rect {
+                        width: r.width + delta,
+                        ..r
+                    },
+                )
+            })
+            .chain(after.iter().map(|w| {
+                let r = w.snapshot.bounds;
+                (
+                    *w,
+                    Rect {
+                        x: r.x + delta,
+                        width: r.width - delta,
+                        ..r
+                    },
+                )
+            }))
+            .collect();
+        // Shrink first so windows never overlap mid-move.
+        plan.sort_by_key(|(w, target)| target.width > w.snapshot.bounds.width);
+        let mut moved = Vec::new();
+        for &(window, target) in &plan {
+            let result = move_window(window, target);
+            let failed = match &result {
+                Ok(actual) => !crate::positioning::near(*actual, target),
+                Err(_) => true,
+            };
+            if let Ok(actual) = result {
+                moved.push((window, actual));
+            }
+            if failed {
+                for (window, actual) in moved.into_iter().rev() {
+                    let mut back = window.clone();
+                    back.snapshot.bounds = actual;
+                    let _ = move_window(&back, window.snapshot.bounds);
+                }
+                anyhow::bail!("A window refused that size, so nothing moved");
+            }
+        }
+        return Ok(());
+    }
+    anyhow::bail!("No neighboring window shares an edge with this one")
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum Control {
     Focus(u64),
@@ -920,6 +1080,52 @@ mod tests {
             },
             ..Config::default()
         }
+    }
+
+    #[test]
+    fn free_left_right_moves_the_edge_shared_with_every_neighbor() {
+        let at = |handle, x, y, width, height| {
+            let mut w = window(handle);
+            w.snapshot.bounds = Rect {
+                x,
+                y,
+                width,
+                height,
+            };
+            w
+        };
+        // Two stacked windows on the left, a terminal on the right, 10 px gaps.
+        let desktop = desktop(vec![
+            at(1, -1190, 10, 580, 385),
+            at(2, -1190, 405, 580, 385),
+            at(3, -600, 10, 590, 780),
+        ]);
+        let run = |handle, right| {
+            let mut moves = Vec::new();
+            let result = move_shared_edge(&desktop, handle, right, |w, r| {
+                moves.push((w.snapshot.handle, r.x, r.width));
+                Ok(r)
+            });
+            result.map(|()| {
+                moves.sort();
+                moves
+            })
+        };
+        // H on the terminal grows it left and shrinks both left windows.
+        assert_eq!(
+            run(3, false).unwrap(),
+            [(1, -1190, 520), (2, -1190, 520), (3, -660, 650)]
+        );
+        // L on the terminal has no right neighbor, so its left edge moves right.
+        assert_eq!(
+            run(3, true).unwrap(),
+            [(1, -1190, 640), (2, -1190, 640), (3, -540, 530)]
+        );
+        // From a left window, L moves the same edge right.
+        assert_eq!(run(1, true).unwrap(), run(3, true).unwrap());
+        // A lone window has nothing to share an edge with.
+        let alone = super::tests::desktop(vec![at(1, -1190, 10, 580, 385)]);
+        assert!(move_shared_edge(&alone, 1, true, |_, r| Ok(r)).is_err());
     }
 
     #[test]
@@ -1402,8 +1608,13 @@ mod tests {
         let path = dir.path().join("config.toml");
         for command in Action::TILING
             .into_iter()
-            // Swaps work without tiling, so they enumerate the live desktop.
-            .filter(|a| *a != Action::ToggleTiling && swap_direction(*a).is_none())
+            // Swaps and left/right edges work without tiling, so they enumerate
+            // the live desktop.
+            .filter(|a| {
+                *a != Action::ToggleTiling
+                    && swap_direction(*a).is_none()
+                    && !matches!(a, Action::ResizeLeft | Action::ResizeRight)
+            })
         {
             assert!(
                 action(&Config::default(), &path, command, Some(0))
