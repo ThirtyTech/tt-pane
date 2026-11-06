@@ -4,3 +4,4 @@
 *.cycle.json
 *.cycle.lock
 
+.playwright-mcp/
