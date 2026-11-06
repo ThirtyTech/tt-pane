@@ -259,8 +259,10 @@ pub fn apply_gesture(
     #[cfg(windows)]
     let source = window.or_else(platform::foreground_handle);
     let result = apply_inner(config, path, action, window, include_hidden);
+    // Focus always confirms where it landed, even when nothing lies in that
+    // direction and the already-selected window keeps focus.
     #[cfg(windows)]
-    if result.is_ok() && config.focus.glow_enabled {
+    if (result.is_ok() || action.focuses()) && config.focus.glow_enabled {
         let target = if action.focuses() {
             platform::foreground_handle()
         } else {

@@ -127,7 +127,7 @@ Windows always uses the color icon and ignores the setting.
 
 ## Focus glow — Windows
 
-On Windows, **Settings → Window focus → Focus glow** enables a soft, click-through gradient cue after moves/resizes and Vim-style focus navigation. It fades in and out over 480 ms. Click **Color** to open the color picker, then save. The default is enabled with neutral off-white (`#F2F0E8`); `glow_color` accepts `#RRGGBB`. Existing configurations inherit these defaults. CLI actions use the same cue and wait for it before exiting. Other platforms do not render the glow.
+On Windows, **Settings → Window focus → Focus glow** enables a soft, click-through gradient cue after moves/resizes and Vim-style focus navigation. When focus navigation has nowhere to go, the already-selected window still glows. It fades in and out over 480 ms. Click **Color** to open the color picker, then save. The default is enabled with neutral off-white (`#F2F0E8`); `glow_color` accepts `#RRGGBB`. Existing configurations inherit these defaults. CLI actions use the same cue and wait for it before exiting. Other platforms do not render the glow.
 
 ## Command line
 
