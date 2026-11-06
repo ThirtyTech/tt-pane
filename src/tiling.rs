@@ -482,6 +482,10 @@ pub(crate) fn action(
                 state.save(path)?;
                 return Ok(true);
             }
+            Control::Pass => {
+                state.save(path)?;
+                return Ok(false);
+            }
             Control::Float => {
                 state.float(&live.workspace, &live.snapshot.id);
                 let desktop = platform::tiling_desktop()?;
@@ -569,6 +573,8 @@ fn reflow(
 #[derive(Debug, PartialEq, Eq)]
 enum Control {
     Focus(u64),
+    /// Not handled by the tree; continue with regular positioning/focus.
+    Pass,
     Float,
     Reflow,
 }
@@ -595,8 +601,12 @@ fn control(group: &mut Group, config: &Config, action: Action, handle: u64) -> R
             .1;
         let peers: Vec<_> = tiles.into_iter().filter(|(id, _)| *id != handle).collect();
         let rects: Vec<_> = peers.iter().map(|(_, r)| *r).collect();
-        let neighbor = crate::geometry::focus_neighbor(current, &rects, direction)
-            .context("No tile in that direction")?;
+        let Some(neighbor) = crate::geometry::focus_neighbor(current, &rects, direction) else {
+            // At the tree's edge, focus falls through to regular spatial navigation,
+            // which reaches other monitors. Swaps stay within one tree.
+            ensure!(action.focuses(), "No tile in that direction");
+            return Ok(Control::Pass);
+        };
         let next = peers[neighbor].0;
         if action.focuses() {
             return Ok(Control::Focus(next));
@@ -819,6 +829,12 @@ mod tests {
         }
         let before = group.clone();
         assert!(control(group, &config, Action::SwapLeft, 1).is_err());
+        assert_eq!(*group, before);
+        // Focus past the tree's edge passes through to regular (cross-monitor) focus.
+        assert_eq!(
+            control(group, &config, Action::FocusLeft, 1).unwrap(),
+            Control::Pass
+        );
         assert_eq!(*group, before);
     }
 
