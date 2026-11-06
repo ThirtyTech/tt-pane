@@ -56,7 +56,7 @@ Install a recent stable Rust toolchain, then:
 cargo run --release
 ```
 
-tt-pane starts in the system tray without a settings window. Open **Settings…** from its tray menu, click a shortcut to record a replacement, then **Save changes**. Escape cancels recording; Backspace disables an action. Changes are validated for duplicate actions and shortcuts. Native registration conflicts appear in the settings screen, and a failed registration preserves the previous bindings. Saving uses a temporary file in the same directory followed by replacement.
+tt-pane starts in the system tray without a settings window. Open **Settings…** from its tray menu, click a shortcut to record a replacement, then **Save changes**. Escape cancels recording; **Clear** next to a shortcut (or Backspace while recording) unassigns it. Changes are validated for duplicate actions and shortcuts. Native registration conflicts appear in the settings screen, and a failed registration preserves the previous bindings. Saving uses a temporary file in the same directory followed by replacement.
 
 Closing Settings leaves the tray and shortcuts running. **Quit tt-pane** in the tray menu exits the app. `tt-pane settings` opens settings immediately when starting an instance. Start one tray instance at a time; general single-instance forwarding is not implemented. Reopening the macOS app from Finder, Launchpad, or Spotlight shows Settings in the running instance.
 

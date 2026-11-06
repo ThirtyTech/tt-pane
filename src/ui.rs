@@ -612,19 +612,40 @@ impl Render for Settings {
                     }))
                     .child(div().text_sm().child(binding.action.label()))
                     .child(
-                        button(
-                            ("binding", index),
-                            if active {
-                                "Recording…"
-                            } else if binding.shortcut.is_empty() {
-                                "Disabled"
-                            } else {
-                                &binding.shortcut
-                            },
-                        )
-                        .on_click(
-                            cx.listener(move |this, _, window, cx| this.record(index, window, cx)),
-                        ),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                button(
+                                    ("binding", index),
+                                    if active {
+                                        "Recording…"
+                                    } else if binding.shortcut.is_empty() {
+                                        "Disabled"
+                                    } else {
+                                        &binding.shortcut
+                                    },
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| this.record(index, window, cx),
+                                )),
+                            )
+                            .when(!active && !binding.shortcut.is_empty(), |el| {
+                                el.child(button(("unbind", index), "Clear").on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.draft.bindings[index].shortcut.clear();
+                                        this.message(
+                                            format!(
+                                                "{} unassigned. Save to activate.",
+                                                this.draft.bindings[index].action.label()
+                                            ),
+                                            false,
+                                            cx,
+                                        );
+                                    },
+                                )))
+                            }),
                     )
             })
             .collect::<Vec<_>>();
