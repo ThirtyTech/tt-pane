@@ -30,7 +30,7 @@ Change the shared percentage in **Advanced → Width adjustment → Width change
 1. Position a window, for example in the bottom-left quarter.
 2. Shrink its width with **Ctrl + Alt + -**.
 3. Select a **different window on the same monitor**.
-4. Press **Ctrl + Alt + Shift + 8** to fill the freed space.
+4. Press **Ctrl + Alt + .** (period) to fill the freed space.
 
 A 1000-pixel-wide slot reduced to 750 pixels leaves a 250-pixel-wide gap to its right. Repeated shrinking accumulates space in the original slot. One gap is remembered per monitor; successfully filling it consumes it. For a centered window, the larger gap wins, with the right side winning ties.
 

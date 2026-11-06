@@ -104,7 +104,7 @@ The new toggle-float, swap-left/down/up/right, toggle-split, split-grow/shrink, 
 | Ctrl+Alt+0 | Fill work area |
 | Ctrl+Alt+- | Shrink width by 25% |
 | Ctrl+Alt+= | Expand width by 25% |
-| Ctrl+Alt+Shift+8 (*) | Fill the last saved gap |
+| Ctrl+Alt+. (period) | Fill the last saved gap |
 | Ctrl+Alt+Up | Move shared horizontal boundary up |
 | Ctrl+Alt+Down | Move shared horizontal boundary down |
 | Ctrl+Alt+H | Focus left |
@@ -167,7 +167,7 @@ The actions are editable in Settings and available as `tt-pane apply resize-up` 
 
 ### Fill a freed gap
 
-After positioning and shrinking a window, select a **different window on the same monitor** and press **Ctrl+Alt+Shift+8** (`*` on the number row). tt-pane resizes and places that window into the space freed from the original position. For example, shrinking a 1000-pixel-wide bottom-left slot to 750 pixels leaves a 250-pixel-wide gap immediately to its right, at the same height. Repeated shrinking accumulates the freed space within that original slot.
+After positioning and shrinking a window, select a **different window on the same monitor** and press **Ctrl+Alt+.** (period). tt-pane resizes and places that window into the space freed from the original position. For example, shrinking a 1000-pixel-wide bottom-left slot to 750 pixels leaves a 250-pixel-wide gap immediately to its right, at the same height. Repeated shrinking accumulates the freed space within that original slot.
 
 One gap is remembered per monitor. Switching windows does not lose it; successfully filling it consumes it. If a centered window leaves two gaps, the larger side is selected, with the right side winning ties. A missing gap or selecting the source window reports an error without repositioning it. Use `tt-pane apply fill-gap --json` for the same operation from scripts or Herdr. The binding is editable in Settings; a numpad Multiply key can also be recorded.
 
@@ -249,7 +249,7 @@ shortcut = "Ctrl+Alt+="
 
 [[bindings]]
 action = "fill-gap"
-shortcut = "Ctrl+Alt+Shift+8"
+shortcut = "Ctrl+Alt+."
 ```
 
 ```sh

@@ -224,7 +224,7 @@ impl Default for Config {
             "0",
             "-",
             "=",
-            "Shift+8",
+            ".",
             "ArrowUp",
             "ArrowDown",
             "h",
@@ -588,7 +588,7 @@ mod tests {
     }
 
     #[test]
-    fn fill_gap_uses_shifted_number_row_8() {
+    fn fill_gap_uses_period() {
         let config = Config::default();
         let binding = config
             .bindings
@@ -596,9 +596,8 @@ mod tests {
             .find(|b| b.action == Action::FillGap)
             .unwrap();
         let actual: HotKey = binding.shortcut.parse().unwrap();
-        let expected: HotKey = "Ctrl+Alt+Shift+Digit8".parse().unwrap();
+        let expected: HotKey = "Ctrl+Alt+Period".parse().unwrap();
         assert_eq!(actual.id(), expected.id());
-        assert_ne!(actual.id(), "Ctrl+Alt+8".parse::<HotKey>().unwrap().id());
         config.validate().unwrap();
     }
 
