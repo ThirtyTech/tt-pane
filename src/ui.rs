@@ -657,37 +657,43 @@ impl Render for Settings {
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Your windows. A keystroke away.")))
                 .child(div().text_xs().text_color(rgb(0x6ee7c0)).child(platform::description())))
             .child(div().flex().flex_1().min_h_0().gap_6()
-                .child(div().id("bindings").flex().flex_col().gap_2().flex_1().overflow_y_scroll()
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).mb_2().child("HOVER TO PREVIEW · CLICK A SHORTCUT TO RECORD"))
-                    .children(rows))
-                .child(div().id("placement-options").w(px(264.)).flex_shrink_0().min_h_0().overflow_y_scroll().flex().flex_col().gap_4().p_4().rounded_lg().bg(rgb(0x131e2c))
-                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Experimental"))
-                    .when(cfg!(windows), |el| el
-                        .child(button("tiling-enabled", if self.draft.tiling.enabled { "Automatic tiling: On" } else { "Automatic tiling: Off" })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.draft.tiling.enabled = !this.draft.tiling.enabled;
-                                this.message("Automatic tiling updated. Save to activate.", false, cx);
-                            })))
-                        .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Dwindle tiles existing and new restored windows on the current desktop. Moving or snapping a tile floats it. Turning off leaves windows in place. Save to activate."))
-                        .child(button("tiling-snap-rearranges", if self.draft.tiling.snap_rearranges { "Snaps rearrange tiles: On" } else { "Snaps rearrange tiles: Off" })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.draft.tiling.snap_rearranges = !this.draft.tiling.snap_rearranges;
-                                this.message("Snap behavior updated. Save to activate.", false, cx);
-                            })))
-                        .child(div().text_xs().text_color(rgb(0x91a4bb)).child("When on, half and quarter snaps place the window into the layout and move the other tiles into the remaining space instead of covering them. Repeat to grow. Center and Fill still float.")))
-                    .when(!cfg!(windows), |el| el.child(div().text_xs().text_color(rgb(0x91a4bb)).child("Automatic tiling is currently available on Windows only.")))
-                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Position preview"))
-                    .child(div().relative().flex_shrink_0().w(px(PREVIEW_AREA.width as f32)).h(px(PREVIEW_AREA.height as f32)).rounded_md().overflow_hidden().bg(rgb(0x090f19)).border_1().border_color(rgb(0x354961))
-                        .when(selected.adjusts_pair(), |el| el.child(div().absolute().left(px(preview_x)).top(px(0.)).w(px(preview_width)).h(px(preview_y.max(0.))).bg(rgb(0x355b91)).border_1().border_color(rgb(0x8bb5ef))))
-                        .child(div().absolute().left(px(preview_x)).top(px(preview_y))
-                            .w(px(preview_width)).h(px(preview_height)).rounded_sm()
-                            .bg(rgb(0x258c78)).border_1().border_color(rgb(0x6ee7c0))))
-                    .child(div().text_sm().child(selected.label()))
-                    .when(selected.is_tiling(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Experimental Windows tiling action. Enable Automatic tiling at the top of this pane or use Toggle experimental tiling. These actions edit the live layout and have no fixed snap position.")))
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Hover a keybinding to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."))
+                // Left: experimental toggles stay fixed above the scrolling bindings.
+                .child(div().flex().flex_col().flex_1().min_h_0().gap_3()
+                    .when(cfg!(windows), |el| el.child(div().flex_shrink_0().flex().gap_4().p_3().rounded_lg().bg(rgb(0x131e2c))
+                        .child(div().flex().flex_col().gap_2().flex_1()
+                            .child(button("tiling-enabled", if self.draft.tiling.enabled { "Automatic tiling: On" } else { "Automatic tiling: Off" })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.draft.tiling.enabled = !this.draft.tiling.enabled;
+                                    this.message("Automatic tiling updated. Save to activate.", false, cx);
+                                })))
+                            .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Experimental. Dwindle tiles restored windows on the current desktop. Moving or snapping a tile floats it.")))
+                        .child(div().flex().flex_col().gap_2().flex_1()
+                            .child(button("tiling-snap-rearranges", if self.draft.tiling.snap_rearranges { "Snaps rearrange tiles: On" } else { "Snaps rearrange tiles: Off" })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.draft.tiling.snap_rearranges = !this.draft.tiling.snap_rearranges;
+                                    this.message("Snap behavior updated. Save to activate.", false, cx);
+                                })))
+                            .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Half and quarter snaps move the other tiles into the remaining space instead of covering them.")))))
+                    .child(div().flex_shrink_0().text_xs().text_color(rgb(0x91a4bb)).child("HOVER TO PREVIEW · CLICK A SHORTCUT TO RECORD"))
+                    .child(div().id("bindings").flex().flex_col().gap_2().flex_1().min_h_0().overflow_y_scroll()
+                        .children(rows)))
+                // Right: the preview stays fixed above the scrolling options.
+                .child(div().w(px(264.)).flex_shrink_0().min_h_0().flex().flex_col().gap_4()
+                    .child(div().flex_shrink_0().flex().flex_col().gap_2().p_4().rounded_lg().bg(rgb(0x131e2c))
+                        .child(div().text_sm().font_weight(FontWeight::BOLD).child("Position preview"))
+                        .child(div().relative().flex_shrink_0().w(px(PREVIEW_AREA.width as f32)).h(px(PREVIEW_AREA.height as f32)).rounded_md().overflow_hidden().bg(rgb(0x090f19)).border_1().border_color(rgb(0x354961))
+                            .when(selected.adjusts_pair(), |el| el.child(div().absolute().left(px(preview_x)).top(px(0.)).w(px(preview_width)).h(px(preview_y.max(0.))).bg(rgb(0x355b91)).border_1().border_color(rgb(0x8bb5ef))))
+                            .child(div().absolute().left(px(preview_x)).top(px(preview_y))
+                                .w(px(preview_width)).h(px(preview_height)).rounded_sm()
+                                .bg(rgb(0x258c78)).border_1().border_color(rgb(0x6ee7c0))))
+                        .child(div().text_sm().child(selected.label())))
+                .child(div().id("placement-options").flex_1().min_h_0().overflow_y_scroll().flex().flex_col().gap_4().p_4().rounded_lg().bg(rgb(0x131e2c))
+                    .when(selected.is_tiling(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Experimental Windows tiling action. Turn on Automatic tiling above the shortcuts or use Toggle experimental tiling. These actions edit the live layout and have no fixed snap position.")))
                     .when(selected.adjusts_pair(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Move the shared boundary by 25% of the selected window's current height, with a 50/50 stop when returning toward the middle. Blue shows the neighbor. Windows only; matching left and right edges required.")))
                     .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("H: left, J: down, K: up, L: right. Tap H/J/K/L to navigate background windows by default. Inside a centered group, H/L rotate continuously. Hold for 400 ms to enter covered middle windows from an edge, or exit a middle window to a background edge window. Holds are Windows only; centered groups rotate on Windows and GNOME on Wayland.")))
                     .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+Shift+8 (*).")))
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Hover a keybinding to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."))
+                    .when(!cfg!(windows), |el| el.child(div().text_xs().text_color(rgb(0x91a4bb)).child("Automatic tiling is currently available on Windows only.")))
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("General"))
                     .child(div().text_sm().child("Launch at login"))
@@ -855,7 +861,7 @@ impl Render for Settings {
                         "GNOME: saving registers these as GNOME keyboard shortcuts. The first time, log out and back in so GNOME loads the tt-pane extension."
                     } else if platform::is_wayland() {
                         "This Wayland compositor isn't supported yet. tt-pane runs on GNOME (Wayland) and in X11 sessions."
-                    } else { "Closing settings keeps tt-pane running in the tray. Use the tray menu to quit." }))))
+                    } else { "Closing settings keeps tt-pane running in the tray. Use the tray menu to quit." })))))
             .children({
                 #[cfg(windows)]
                 { Some(div().flex().flex_col().gap_2()
