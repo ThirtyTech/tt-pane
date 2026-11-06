@@ -175,3 +175,15 @@ id = "toggle-tiling"
 title = "Toggle experimental tiling"
 contexts = ["workspace"]
 command = ["./target/plugin/release/tt-pane", "apply", "toggle-tiling", "--json"]
+
+[[actions]]
+id = "resize-left"
+title = "Move tile boundary left"
+contexts = ["workspace"]
+command = ["./target/plugin/release/tt-pane", "apply", "resize-left", "--json"]
+
+[[actions]]
+id = "resize-right"
+title = "Move tile boundary right"
+contexts = ["workspace"]
+command = ["./target/plugin/release/tt-pane", "apply", "resize-right", "--json"]

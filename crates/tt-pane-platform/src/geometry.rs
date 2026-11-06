@@ -131,6 +131,11 @@ pub enum Action {
     SplitGrow,
     SplitShrink,
     ToggleTiling,
+    ResizeLeft,
+    ResizeRight,
+    /// A shortcut-only mode: H/J/K/L move dividers until Escape or Enter.
+    #[value(skip)]
+    ResizeMode,
 }
 
 impl Action {
@@ -147,7 +152,7 @@ impl Action {
         Self::Maximize,
     ];
 
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 31] = [
         Self::Left,
         Self::Right,
         Self::Top,
@@ -176,9 +181,12 @@ impl Action {
         Self::SplitGrow,
         Self::SplitShrink,
         Self::ToggleTiling,
+        Self::ResizeLeft,
+        Self::ResizeRight,
+        Self::ResizeMode,
     ];
 
-    pub const TILING: [Self; 9] = [
+    pub const TILING: [Self; 11] = [
         Self::ToggleFloat,
         Self::SwapLeft,
         Self::SwapDown,
@@ -188,6 +196,8 @@ impl Action {
         Self::SplitGrow,
         Self::SplitShrink,
         Self::ToggleTiling,
+        Self::ResizeLeft,
+        Self::ResizeRight,
     ];
 
     pub fn is_tiling(self) -> bool {
@@ -233,7 +243,10 @@ impl Action {
             | Self::ToggleSplit
             | Self::SplitGrow
             | Self::SplitShrink
-            | Self::ToggleTiling => None,
+            | Self::ToggleTiling
+            | Self::ResizeLeft
+            | Self::ResizeRight
+            | Self::ResizeMode => None,
         }
     }
 
@@ -266,6 +279,9 @@ impl Action {
             Self::SplitGrow => "split-grow",
             Self::SplitShrink => "split-shrink",
             Self::ToggleTiling => "toggle-tiling",
+            Self::ResizeLeft => "resize-left",
+            Self::ResizeRight => "resize-right",
+            Self::ResizeMode => "resize-mode",
 
             Self::ResizeDown => "resize-down",
         }
@@ -300,6 +316,9 @@ impl Action {
             Self::SplitGrow => "Grow tile split",
             Self::SplitShrink => "Shrink tile split",
             Self::ToggleTiling => "Toggle experimental tiling",
+            Self::ResizeLeft => "Move tile boundary left",
+            Self::ResizeRight => "Move tile boundary right",
+            Self::ResizeMode => "Resize mode (H/J/K/L)",
 
             Self::ResizeDown => "Move shared boundary down",
         }
@@ -326,7 +345,10 @@ impl Action {
             | Self::ToggleSplit
             | Self::SplitGrow
             | Self::SplitShrink
-            | Self::ToggleTiling => return current,
+            | Self::ToggleTiling
+            | Self::ResizeLeft
+            | Self::ResizeRight
+            | Self::ResizeMode => return current,
             Self::ShrinkWidth | Self::ExpandWidth => {
                 return current.adjust_width(
                     area,

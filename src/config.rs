@@ -260,7 +260,7 @@ impl Default for Config {
 // Hyprland-style Super+Shift defaults. Windows only: tiling is Windows-only, and
 // Super+Shift letters belong to the shell on GNOME and to apps (Cmd) on macOS.
 // Windows reserves Win+Shift+S/T/P/R/X, so the split toggle uses O (orientation)
-// and toggle-tiling uses G (grid).
+// and toggle-tiling uses G (grid). Resize mode uses E, since R is taken.
 fn tiling_default_shortcut(action: Action) -> Option<&'static str> {
     if !cfg!(windows) {
         return None;
@@ -273,6 +273,7 @@ fn tiling_default_shortcut(action: Action) -> Option<&'static str> {
         Action::ToggleFloat => "Shift+Super+f",
         Action::ToggleSplit => "Shift+Super+o",
         Action::ToggleTiling => "Shift+Super+g",
+        Action::ResizeMode => "Shift+Super+e",
         _ => return None,
     })
 }
@@ -305,7 +306,9 @@ impl Config {
                     toml::from_str(&text).context("Invalid configuration TOML")?;
                 config.normalize_letter_keys();
                 config.validate()?;
-                config.add_missing_bindings(|action| action.focuses() || action.is_tiling());
+                config.add_missing_bindings(|action| {
+                    action.focuses() || action.is_tiling() || action == Action::ResizeMode
+                });
                 config.validate()?;
                 Ok(config)
             }

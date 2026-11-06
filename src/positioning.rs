@@ -283,6 +283,10 @@ fn apply_inner(
     include_hidden: bool,
 ) -> Result<()> {
     config.validate()?;
+    ensure!(
+        action != Action::ResizeMode,
+        "Resize mode is a shortcut mode; press its shortcut while tt-pane is running"
+    );
     #[cfg(not(windows))]
     ensure!(
         !action.is_tiling(),

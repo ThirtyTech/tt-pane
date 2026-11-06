@@ -109,11 +109,40 @@ impl FocusGesture {
     }
 }
 
+/// Resize mode ends by itself after this long without a key, so plain letters
+/// are never held hostage if the user walks away.
+const RESIZE_IDLE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Plain keys grabbed only while resize mode is on. None ends the mode.
+fn resize_keys() -> Vec<(HotKey, Option<Action>)> {
+    [
+        (Code::KeyH, Some(Action::ResizeLeft)),
+        (Code::ArrowLeft, Some(Action::ResizeLeft)),
+        (Code::KeyJ, Some(Action::ResizeDown)),
+        (Code::ArrowDown, Some(Action::ResizeDown)),
+        (Code::KeyK, Some(Action::ResizeUp)),
+        (Code::ArrowUp, Some(Action::ResizeUp)),
+        (Code::KeyL, Some(Action::ResizeRight)),
+        (Code::ArrowRight, Some(Action::ResizeRight)),
+        (Code::Escape, None),
+        (Code::Enter, None),
+    ]
+    .into_iter()
+    .map(|(code, action)| (HotKey::new(None, code), action))
+    .collect()
+}
+
+struct ResizeMode {
+    keys: Vec<(HotKey, Option<Action>)>,
+    last: std::time::Instant,
+}
+
 /// Lives on the GPUI event-loop thread (required by macOS and Windows).
 pub struct Shortcuts {
     manager: Option<GlobalHotKeyManager>,
     registered: Vec<(HotKey, Action)>,
     gesture: FocusGesture,
+    resize: Option<ResizeMode>,
 }
 
 impl Shortcuts {
@@ -126,7 +155,36 @@ impl Shortcuts {
             },
             registered: Vec::new(),
             gesture: FocusGesture::default(),
+            resize: None,
         })
+    }
+
+    pub fn resizing(&self) -> bool {
+        self.resize.is_some()
+    }
+
+    fn enter_resize(&mut self, now: std::time::Instant) {
+        let keys = resize_keys()
+            .into_iter()
+            // A user binding on the same key keeps working as configured.
+            .filter(|(key, _)| !self.registered.iter().any(|(own, _)| own == key))
+            .filter(|(key, _)| {
+                self.manager
+                    .as_ref()
+                    .is_none_or(|manager| manager.register(*key).is_ok())
+            })
+            .collect();
+        self.resize = Some(ResizeMode { keys, last: now });
+    }
+
+    fn leave_resize(&mut self) {
+        if let Some(mode) = self.resize.take()
+            && let Some(manager) = &self.manager
+        {
+            for (key, _) in mode.keys {
+                let _ = manager.unregister(key);
+            }
+        }
     }
 
     pub fn action(&self, id: u32) -> Option<Action> {
@@ -142,12 +200,50 @@ impl Shortcuts {
         state: HotKeyState,
         now: std::time::Instant,
     ) -> Option<Invocation> {
+        #[cfg(windows)]
+        let window = platform::foreground_handle();
+        #[cfg(not(windows))]
+        let window = None;
+        if let Some(mode) = &mut self.resize
+            && let Some(&(_, step)) = mode.keys.iter().find(|(key, _)| key.id() == id)
+        {
+            if state != HotKeyState::Pressed {
+                return None;
+            }
+            mode.last = now;
+            return match step {
+                Some(action) => Some(Invocation {
+                    action,
+                    window,
+                    include_hidden: false,
+                }),
+                None => {
+                    self.leave_resize();
+                    None
+                }
+            };
+        }
         let action = self.action(id)?;
+        if action == Action::ResizeMode {
+            if state != HotKeyState::Pressed {
+                return None;
+            }
+            if self.resize.is_some() {
+                self.leave_resize();
+                return None;
+            }
+            self.enter_resize(now);
+            return Some(Invocation {
+                action,
+                window,
+                include_hidden: false,
+            });
+        }
+        // Any other shortcut ends resize mode before doing its own thing.
+        if state == HotKeyState::Pressed {
+            self.leave_resize();
+        }
         if cfg!(windows) {
-            #[cfg(windows)]
-            let window = platform::foreground_handle();
-            #[cfg(not(windows))]
-            let window = None;
             self.gesture.event(id, action, state, now, window)
         } else {
             (state == HotKeyState::Pressed).then_some(Invocation {
@@ -159,11 +255,19 @@ impl Shortcuts {
     }
 
     pub fn poll(&mut self, now: std::time::Instant) -> Option<Invocation> {
+        if self
+            .resize
+            .as_ref()
+            .is_some_and(|mode| now.duration_since(mode.last) >= RESIZE_IDLE)
+        {
+            self.leave_resize();
+        }
         self.gesture.poll(now)
     }
 
     /// Register a complete set, rolling back on OS shortcut conflicts.
     pub fn replace(&mut self, config: &Config) -> Result<()> {
+        self.leave_resize();
         let next = configured_hotkeys(config)?;
         if let Some(manager) = &self.manager {
             // Keep shared keys registered, so swapping actions doesn't lose a grab.
@@ -209,6 +313,7 @@ impl Shortcuts {
 
 impl Drop for Shortcuts {
     fn drop(&mut self) {
+        self.leave_resize();
         if let Some(manager) = &self.manager {
             for (key, _) in &self.registered {
                 let _ = manager.unregister(*key);
@@ -363,12 +468,85 @@ mod tests {
             manager: None,
             registered: Vec::new(),
             gesture,
+            resize: None,
         };
         shortcuts
             .gesture
             .event(1, Action::FocusRight, HotKeyState::Pressed, start, Some(42));
         shortcuts.suspend().unwrap();
         assert_eq!(shortcuts.poll(start + HOLD_DURATION), None);
+    }
+
+    #[test]
+    fn resize_mode_maps_hjkl_until_escape_another_shortcut_or_idle() {
+        use std::time::Instant;
+        let config = Config::default();
+        let mut shortcuts = Shortcuts {
+            manager: None,
+            registered: configured_hotkeys(&config).unwrap(),
+            gesture: FocusGesture::default(),
+            resize: None,
+        };
+        let id = |code| HotKey::new(None, code).id();
+        let start = Instant::now();
+        // Plain letters mean nothing until the mode starts.
+        assert_eq!(
+            shortcuts.event(id(Code::KeyH), HotKeyState::Pressed, start),
+            None
+        );
+        let Some(toggle) = shortcuts
+            .registered
+            .iter()
+            .find(|(_, a)| *a == Action::ResizeMode)
+            .map(|(key, _)| key.id())
+        else {
+            return; // No default outside Windows.
+        };
+        let entered = shortcuts
+            .event(toggle, HotKeyState::Pressed, start)
+            .unwrap();
+        assert_eq!(entered.action, Action::ResizeMode);
+        for (code, action) in [
+            (Code::KeyH, Action::ResizeLeft),
+            (Code::KeyJ, Action::ResizeDown),
+            (Code::KeyK, Action::ResizeUp),
+            (Code::KeyL, Action::ResizeRight),
+            (Code::ArrowLeft, Action::ResizeLeft),
+        ] {
+            let step = shortcuts.event(id(code), HotKeyState::Pressed, start);
+            assert_eq!(step.unwrap().action, action);
+            assert_eq!(
+                shortcuts.event(id(code), HotKeyState::Released, start),
+                None
+            );
+        }
+        shortcuts.event(id(Code::Escape), HotKeyState::Pressed, start);
+        assert!(!shortcuts.resizing());
+        // Pressing the shortcut again, another shortcut, or idling also ends it.
+        shortcuts.event(toggle, HotKeyState::Pressed, start);
+        shortcuts.event(toggle, HotKeyState::Pressed, start);
+        assert!(!shortcuts.resizing());
+        let other = shortcuts
+            .registered
+            .iter()
+            .find(|(_, a)| *a == Action::Left)
+            .unwrap()
+            .0
+            .id();
+        shortcuts.event(toggle, HotKeyState::Pressed, start);
+        assert_eq!(
+            shortcuts
+                .event(other, HotKeyState::Pressed, start)
+                .unwrap()
+                .action,
+            Action::Left
+        );
+        assert!(!shortcuts.resizing());
+        shortcuts.event(toggle, HotKeyState::Pressed, start);
+        shortcuts.poll(start + RESIZE_IDLE / 2);
+        assert!(shortcuts.resizing());
+        shortcuts.poll(start + RESIZE_IDLE);
+        assert!(!shortcuts.resizing());
     }
 
     #[test]

@@ -309,6 +309,21 @@ impl Settings {
     }
 
     fn invoke(&mut self, invocation: crate::shortcuts::Invocation, cx: &mut Context<Self>) {
+        if invocation.action == Action::ResizeMode {
+            #[cfg(windows)]
+            if self.active.focus.glow_enabled
+                && let (Some(target), Some(color)) =
+                    (invocation.window, self.active.focus.glow_rgb())
+            {
+                platform::show_focus_glow(target, color);
+            }
+            self.message(
+                "Resize mode: H/J/K/L or arrows move dividers · Esc or Enter finishes",
+                false,
+                cx,
+            );
+            return;
+        }
         match crate::positioning::apply_gesture(
             &self.active,
             &self.path,

@@ -832,6 +832,8 @@ fn control(group: &mut Group, config: &Config, action: Action, handle: u64) -> R
             | Action::ExpandWidth
             | Action::ResizeUp
             | Action::ResizeDown
+            | Action::ResizeLeft
+            | Action::ResizeRight
     ) {
         let result = match action {
             Action::ToggleSplit => {
@@ -841,16 +843,19 @@ fn control(group: &mut Group, config: &Config, action: Action, handle: u64) -> R
                 );
                 tree.toggle_split(handle)
             }
-            Action::ResizeUp | Action::ResizeDown => tree.move_boundary(
-                handle,
-                true,
-                if action == Action::ResizeUp {
-                    -0.05
-                } else {
-                    0.05
-                },
-                group.area,
-            ),
+            // The divider moves the way the key points, whichever side the window is on.
+            Action::ResizeUp | Action::ResizeDown | Action::ResizeLeft | Action::ResizeRight => {
+                tree.move_boundary(
+                    handle,
+                    matches!(action, Action::ResizeUp | Action::ResizeDown),
+                    if matches!(action, Action::ResizeUp | Action::ResizeLeft) {
+                        -0.05
+                    } else {
+                        0.05
+                    },
+                    group.area,
+                )
+            }
             _ => tree.grow(
                 handle,
                 if matches!(action, Action::SplitShrink | Action::ShrinkWidth) {
@@ -1064,6 +1069,13 @@ mod tests {
         control(group, &config, Action::ResizeUp, 3).unwrap();
         assert!(group.tree.layout(AREA, config.gaps).unwrap()[2].1.y < before[2].1.y);
         control(group, &config, Action::ResizeDown, 3).unwrap();
+        // Left/right move the same divider the way the key points from either side.
+        let level = group.tree.layout(AREA, config.gaps).unwrap();
+        control(group, &config, Action::ResizeLeft, 3).unwrap();
+        let moved = group.tree.layout(AREA, config.gaps).unwrap();
+        assert!(moved[0].1.width < level[0].1.width && moved[2].1.x < level[2].1.x);
+        control(group, &config, Action::ResizeRight, 1).unwrap();
+        assert_eq!(group.tree.layout(AREA, config.gaps).unwrap(), level);
         control(group, &config, Action::ToggleSplit, 3).unwrap();
         assert_eq!(
             group.tree.layout(AREA, config.gaps).unwrap()[2].1.height,
