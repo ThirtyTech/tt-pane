@@ -420,6 +420,19 @@ pub(crate) fn action(
             return Ok(true);
         }
     } else if !state.active {
+        // Without tiling, swaps still trade places with the nearest window.
+        if let Some(direction) = swap_direction(action) {
+            let desktop = platform::tiling_desktop()?;
+            ensure!(
+                !desktop.interacting,
+                "Finish moving or resizing the window first"
+            );
+            let handle = handle
+                .or_else(platform::foreground_handle)
+                .context("Select a window first")?;
+            swap_windows(&desktop, handle, direction, platform::move_tiling_window)?;
+            return Ok(true);
+        }
         ensure!(!action.is_tiling(), "Enable experimental tiling first");
         return Ok(false);
     }
@@ -730,6 +743,49 @@ fn reflow(
     anyhow::bail!("Neighboring tile can't get any smaller")
 }
 
+fn swap_direction(action: Action) -> Option<Action> {
+    match action {
+        Action::SwapLeft => Some(Action::FocusLeft),
+        Action::SwapDown => Some(Action::FocusDown),
+        Action::SwapUp => Some(Action::FocusUp),
+        Action::SwapRight => Some(Action::FocusRight),
+        _ => None,
+    }
+}
+
+/// Trade bounds with the nearest window in `direction` on the same virtual
+/// desktop, across monitors too. A failed second move puts the first back.
+fn swap_windows(
+    desktop: &platform::TilingDesktop,
+    handle: u64,
+    direction: Action,
+    mut move_window: impl FnMut(&platform::TilingWindow, Rect) -> Result<Rect>,
+) -> Result<()> {
+    let live = desktop
+        .windows
+        .iter()
+        .find(|w| w.snapshot.handle == handle)
+        .context("Select a restored application window")?;
+    let peers: Vec<_> = desktop
+        .windows
+        .iter()
+        .filter(|w| w.snapshot.handle != handle && w.workspace == live.workspace)
+        .collect();
+    let rects: Vec<_> = peers.iter().map(|w| w.snapshot.bounds).collect();
+    let other = peers[crate::geometry::focus_neighbor(live.snapshot.bounds, &rects, direction)
+        .context("No window in that direction")?];
+    let (first, second) = (live.snapshot.bounds, other.snapshot.bounds);
+    let moved = move_window(live, second)?;
+    if let Err(error) = move_window(other, first) {
+        let mut back = live.clone();
+        back.snapshot.bounds = moved;
+        back.snapshot.area = other.snapshot.area;
+        let _ = move_window(&back, first);
+        return Err(error);
+    }
+    Ok(())
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum Control {
     Focus(u64),
@@ -742,13 +798,7 @@ enum Control {
 /// Interpret tile commands without native calls so deep-tree navigation and
 /// split editing can be tested independently of the user's desktop.
 fn control(group: &mut Group, config: &Config, action: Action, handle: u64) -> Result<Control> {
-    let direction = match action {
-        Action::SwapLeft => Action::FocusLeft,
-        Action::SwapDown => Action::FocusDown,
-        Action::SwapUp => Action::FocusUp,
-        Action::SwapRight => Action::FocusRight,
-        other => other,
-    };
+    let direction = swap_direction(action).unwrap_or(action);
     let mut tree = group.tree.clone();
     if direction.focuses() {
         let tiles = tree
@@ -865,6 +915,41 @@ mod tests {
             },
             ..Config::default()
         }
+    }
+
+    #[test]
+    fn swaps_without_tiling_trade_places_with_the_nearest_window() {
+        let at = |handle, x, y| {
+            let mut w = window(handle);
+            w.snapshot.bounds = Rect {
+                x,
+                y,
+                width: 400,
+                height: 300,
+            };
+            w
+        };
+        let mut far = at(4, -1100, 0);
+        far.workspace = "desktop-b".into();
+        let desktop = desktop(vec![at(1, -1100, 0), at(2, -600, 0), at(3, -600, 400), far]);
+        let mut moves = Vec::new();
+        swap_windows(&desktop, 1, Action::FocusRight, |w, r| {
+            moves.push((w.snapshot.handle, r.x, r.y));
+            Ok(r)
+        })
+        .unwrap();
+        assert_eq!(moves, [(1, -600, 0), (2, -1100, 0)]);
+        // Other virtual desktops and empty directions are never touched.
+        assert!(swap_windows(&desktop, 1, Action::FocusLeft, |_, r| Ok(r)).is_err());
+        // A refused second move puts the first window back.
+        let mut moves = Vec::new();
+        let result = swap_windows(&desktop, 2, Action::FocusDown, |w, r| {
+            moves.push((w.snapshot.handle, r.y));
+            anyhow::ensure!(w.snapshot.handle != 3, "refused");
+            Ok(r)
+        });
+        assert!(result.is_err());
+        assert_eq!(moves, [(2, 400), (3, 0), (2, 0)]);
     }
 
     fn tick(
@@ -1305,7 +1390,8 @@ mod tests {
         let path = dir.path().join("config.toml");
         for command in Action::TILING
             .into_iter()
-            .filter(|a| *a != Action::ToggleTiling)
+            // Swaps work without tiling, so they enumerate the live desktop.
+            .filter(|a| *a != Action::ToggleTiling && swap_direction(*a).is_none())
         {
             assert!(
                 action(&Config::default(), &path, command, Some(0))
