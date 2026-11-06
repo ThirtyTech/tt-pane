@@ -85,15 +85,17 @@ Older configurations gain missing focus actions unless a default key is already 
 
 ## Experimental tiling actions (Windows)
 
-Available on `experimental/hypr-tiling`. All start **unbound**, including migrated configurations. Assign shortcuts in Settings or use `tt-pane apply ACTION` (also exposed in the Herdr manifest).
+Available on `experimental/hypr-tiling`. Defaults follow Hyprland's Super+Shift convention on **Win + Shift**. Configurations that predate an action gain its default unless that key is already taken; actions already present (including previously migrated unbound entries) keep their binding. Reassign shortcuts in Settings or use `tt-pane apply ACTION` (also exposed in the Herdr manifest).
 
-| Action | Behavior |
-| --- | --- |
-| `toggle-tiling` | Enable/disable shared runtime tiling; enabling tiles existing eligible windows |
-| `toggle-float` | Remove the selected tile from the tree, or reinsert a floating window |
-| `swap-left`, `swap-down`, `swap-up`, `swap-right` | Swap with the nearest tile in that direction on the same monitor |
-| `toggle-split` | Toggle the immediate parent's direction; requires `preserve_split = true` |
-| `split-grow`, `split-shrink` | Change the selected tile's share of its immediate parent by five percentage points |
+| Default | Action | Behavior |
+| --- | --- | --- |
+| Win + Shift + G | `toggle-tiling` | Enable/disable shared runtime tiling; enabling tiles existing eligible windows |
+| Win + Shift + F | `toggle-float` | Remove the selected tile from the tree, or reinsert a floating window |
+| Win + Shift + H / J / K / L | `swap-left`, `swap-down`, `swap-up`, `swap-right` | Swap with the nearest tile in that direction on the same monitor |
+| Win + Shift + O | `toggle-split` | Toggle the immediate parent's direction; requires `preserve_split = true` |
+| Unbound | `split-grow`, `split-shrink` | Change the selected tile's share of its immediate parent by five percentage points (Ctrl + Alt + = / - do the same on tiled windows) |
+
+Windows reserves Win + Shift + S, T, P, R, and X, and Win + L always locks the PC, so Hyprland's exact Super bindings cannot be reused.
 
 On tiled windows, H/J/K/L uses tree geometry (including deep tiles); horizontal hold gestures also navigate tiles. `shrink-width`/`expand-width` act like `split-shrink`/`split-grow`, and `resize-up`/`resize-down` moves the nearest horizontal split boundary. A lone tile has no split to adjust. Ratios stay between 10% and 90%.
 

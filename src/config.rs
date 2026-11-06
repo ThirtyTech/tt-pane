@@ -244,11 +244,34 @@ impl Default for Config {
                 .zip(keys.into_iter().map(Some).chain(std::iter::repeat(None)))
                 .map(|(action, key)| Binding {
                     action,
-                    shortcut: key.map_or_else(String::new, |key| format!("Ctrl+Alt+{key}")),
+                    shortcut: key.map_or_else(
+                        || tiling_default_shortcut(action).unwrap_or_default().into(),
+                        |key| format!("Ctrl+Alt+{key}"),
+                    ),
                 })
                 .collect(),
         }
     }
+}
+
+// Hyprland-style Super+Shift defaults. Windows only: tiling is Windows-only, and
+// Super+Shift letters belong to the shell on GNOME and to apps (Cmd) on macOS.
+// Windows reserves Win+Shift+S/T/P/R/X, so the split toggle uses O (orientation)
+// and toggle-tiling uses G (grid).
+fn tiling_default_shortcut(action: Action) -> Option<&'static str> {
+    if !cfg!(windows) {
+        return None;
+    }
+    Some(match action {
+        Action::SwapLeft => "Shift+Super+h",
+        Action::SwapDown => "Shift+Super+j",
+        Action::SwapUp => "Shift+Super+k",
+        Action::SwapRight => "Shift+Super+l",
+        Action::ToggleFloat => "Shift+Super+f",
+        Action::ToggleSplit => "Shift+Super+o",
+        Action::ToggleTiling => "Shift+Super+g",
+        _ => return None,
+    })
 }
 
 impl Config {
@@ -279,15 +302,7 @@ impl Config {
                     toml::from_str(&text).context("Invalid configuration TOML")?;
                 config.normalize_letter_keys();
                 config.validate()?;
-                config.add_missing_focus_bindings();
-                for action in Action::TILING {
-                    if !config.bindings.iter().any(|b| b.action == action) {
-                        config.bindings.push(Binding {
-                            action,
-                            shortcut: String::new(),
-                        });
-                    }
-                }
+                config.add_missing_bindings(|action| action.focuses() || action.is_tiling());
                 config.validate()?;
                 Ok(config)
             }
@@ -308,23 +323,24 @@ impl Config {
         }
     }
 
-    // Introduce new focus defaults without overriding custom or disabled actions.
+    // Introduce new defaults without overriding custom or disabled actions.
     // A default already assigned to another action stays unbound in Settings.
-    fn add_missing_focus_bindings(&mut self) {
+    fn add_missing_bindings(&mut self, include: impl Fn(Action) -> bool) {
         for mut binding in Self::default()
             .bindings
             .into_iter()
-            .filter(|b| b.action.focuses())
+            .filter(|b| include(b.action))
         {
             if self.bindings.iter().any(|b| b.action == binding.action) {
                 continue;
             }
-            let key = binding.shortcut.parse::<HotKey>().unwrap();
-            if self.bindings.iter().any(|b| {
-                b.shortcut
-                    .parse::<HotKey>()
-                    .is_ok_and(|k| k.id() == key.id())
-            }) {
+            if let Ok(key) = binding.shortcut.parse::<HotKey>()
+                && self.bindings.iter().any(|b| {
+                    b.shortcut
+                        .parse::<HotKey>()
+                        .is_ok_and(|k| k.id() == key.id())
+                })
+            {
                 binding.shortcut.clear();
             }
             self.bindings.push(binding);
@@ -432,11 +448,36 @@ mod tests {
         let mut config = Config::load(&path).unwrap();
         assert_eq!(config.tiling, Tiling::default());
         for action in Action::TILING {
+            let expected = tiling_default_shortcut(action).unwrap_or_default();
             assert!(
                 config
                     .bindings
                     .iter()
+                    .any(|b| b.action == action && b.shortcut == expected)
+            );
+        }
+        // Explicitly disabled tiling bindings and taken keys stay unbound.
+        std::fs::write(
+            &path,
+            "version = 1\n[[bindings]]\naction = 'swap-left'\nshortcut = ''\n\
+             [[bindings]]\naction = 'left'\nshortcut = 'Shift+Super+j'",
+        )
+        .unwrap();
+        let migrated = Config::load(&path).unwrap();
+        for action in [Action::SwapLeft, Action::SwapDown] {
+            assert!(
+                migrated
+                    .bindings
+                    .iter()
                     .any(|b| b.action == action && b.shortcut.is_empty())
+            );
+        }
+        if cfg!(windows) {
+            assert!(
+                Config::default()
+                    .bindings
+                    .iter()
+                    .all(|b| { b.shortcut.is_empty() || b.shortcut.parse::<HotKey>().is_ok() })
             );
         }
         config.tiling = Tiling {

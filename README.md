@@ -86,7 +86,7 @@ cargo build --release --no-default-features
 
 On `experimental/hypr-tiling`, enable **Settings > Experimental > Automatic tiling** and save. Dwindle tiles existing and newly opened eligible windows on the current virtual desktop, with a separate layout per monitor. It is off by default. Closing/minimizing a tile reflows its neighbors; moving or snapping a tile makes it floating. Turning tiling off leaves windows in place. Keep the tray running for automatic updates.
 
-The new toggle-float, swap-left/down/up/right, toggle-split, split-grow/shrink, and toggle-tiling actions start unbound and work through Settings shortcuts, `tt-pane apply`, and Herdr. On a tiled window, H/J/K/L navigates the tree, -/= changes the split ratio, and Up/Down moves the nearest horizontal boundary. See the [configuration reference](docs-site/src/content/docs/configuration.md) for options, runtime toggling, exclusions, and current limitations. Linux and macOS tiling remain future work.
+The new toggle-float, swap-left/down/up/right, toggle-split, split-grow/shrink, and toggle-tiling actions default to Win+Shift+H/J/K/L (swap), Win+Shift+F (float) and Win+Shift+O (split) and Win+Shift+G (toggle tiling), with grow/shrink unbound; all work through Settings shortcuts, `tt-pane apply`, and Herdr. On a tiled window, H/J/K/L navigates the tree, -/= changes the split ratio, and Up/Down moves the nearest horizontal boundary. See the [configuration reference](docs-site/src/content/docs/configuration.md) for options, runtime toggling, exclusions, and current limitations. Linux and macOS tiling remain future work.
 
 ## Default bindings
 
