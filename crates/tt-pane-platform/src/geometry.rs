@@ -611,6 +611,10 @@ impl Rect {
     }
 
     /// Reuse the initial rectangle's anchor to avoid half-pixel drift over many presses.
+    ///
+    /// Widths step along a ladder anchored at `reference`: below it each step
+    /// multiplies by `1 - p`, above it by `1 + p`. Shrinking then expanding
+    /// therefore returns to the reference width instead of compounding.
     pub fn adjust_width_from(
         self,
         area: Rect,
@@ -619,7 +623,11 @@ impl Rect {
         reference: Rect,
     ) -> Self {
         let current_width = i64::from(self.width.max(1));
-        let width = ((current_width * i64::from(100 + percent.clamp(-99, 100)) + 50) / 100).max(1);
+        let width = width_step(
+            i64::from(reference.width.max(1)),
+            current_width,
+            percent.clamp(-99, 100),
+        );
         let width = if percent < 0 {
             width.min((current_width - 1).max(1))
         } else if percent > 0 {
@@ -667,6 +675,42 @@ impl Rect {
             height,
         })
     }
+}
+
+/// The next width on the ladder through `base` in the direction of `percent`.
+/// The first rung at least half a step away from the current width is used,
+/// so rounding, minimum sizes, monitor clamps, and manual nudges never
+/// accumulate or produce a near-empty step.
+fn width_step(base: i64, current: i64, percent: i32) -> i64 {
+    if percent == 0 {
+        return current;
+    }
+    let p = f64::from(percent.unsigned_abs()) / 100.0;
+    let (down, up) = ((1.0 - p.min(0.99)).max(0.01), 1.0 + p);
+    let rung = |n: i32| -> f64 {
+        let factor = if n < 0 { down.powi(-n) } else { up.powi(n) };
+        base as f64 * factor
+    };
+    let current_f = current as f64;
+    let ratio = current_f / base as f64;
+    let mut n = if current < base {
+        -(ratio.ln() / down.ln()).round() as i32
+    } else {
+        (ratio.ln() / up.ln()).round() as i32
+    } - percent.signum();
+    for _ in 0..256 {
+        n += percent.signum();
+        let width = rung(n);
+        let far_enough = if percent < 0 {
+            width <= current_f * (1.0 - (1.0 - down) / 2.0)
+        } else {
+            width >= current_f * (1.0 + p / 2.0)
+        };
+        if far_enough {
+            return (width.round() as i64).max(1);
+        }
+    }
+    current
 }
 
 /// Largest overlap wins; windows completely off-screen use the nearest monitor.
@@ -1063,6 +1107,37 @@ mod tests {
             assert_eq!((max.x, max.width), (LEFT.x, LEFT.width));
             assert_eq!(max.adjust_width(LEFT, anchor, 25), max);
         }
+    }
+
+    #[test]
+    fn shrinking_then_expanding_returns_to_the_placed_width() {
+        for action in [Action::BottomLeft, Action::BottomRight, Action::Center] {
+            let base = action.target(LEFT, LEFT);
+            let anchor = action.horizontal_anchor().unwrap();
+            // Half-width placements reach the monitor edge on the third expand.
+            for (out, back, max_steps) in [(-25, 25, 4), (25, -25, 2)] {
+                for steps in 1..=max_steps {
+                    let mut window = base;
+                    for _ in 0..steps {
+                        window = window.adjust_width_from(LEFT, anchor, out, base);
+                    }
+                    assert_ne!(window.width, base.width);
+                    for _ in 0..steps {
+                        window = window.adjust_width_from(LEFT, anchor, back, base);
+                    }
+                    assert_eq!(window, base, "{action:?} {out}% x{steps}");
+                }
+            }
+        }
+        // A window that started 1000 wide goes 750 and then back to 1000.
+        let base = Rect {
+            width: 1000,
+            ..Action::BottomLeft.target(LEFT, LEFT)
+        };
+        let smaller = base.adjust_width_from(LEFT, HorizontalAnchor::Left, -25, base);
+        assert_eq!(smaller.width, 750);
+        let restored = smaller.adjust_width_from(LEFT, HorizontalAnchor::Left, 25, base);
+        assert_eq!(restored, base);
     }
 
     #[test]

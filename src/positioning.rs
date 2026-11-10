@@ -728,14 +728,15 @@ mod tests {
                 cycle.last,
                 &config,
             );
-            assert_eq!(cycle.last.width, 1500);
+            // Steps follow the ladder through the 1000px placement: 1000 * 1.25^2.
+            assert_eq!(cycle.last.width, 1563);
             assert_eq!(cycle.width_anchor, placement.horizontal_anchor());
             assert_eq!(
                 cycle.last.x,
                 match placement {
                     Action::BottomLeft => -2000,
-                    Action::BottomRight => -1500,
-                    _ => -1750,
+                    Action::BottomRight => -1563,
+                    _ => -1782,
                 }
             );
             let moved = Rect {
