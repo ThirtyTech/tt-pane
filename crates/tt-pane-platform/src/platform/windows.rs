@@ -83,6 +83,21 @@ pub fn window_snapshot(handle: u64) -> Result<Option<WindowSnapshot>> {
     }
 }
 
+/// The stable id of a window that still exists, even while it is minimized,
+/// maximized, hidden or cloaked. `None` once it is destroyed.
+pub fn window_identity(handle: u64) -> Option<String> {
+    let window = HWND(usize::try_from(handle).ok()? as *mut _);
+    // SAFETY: Win32 validates the opaque handle; the pid output is a live local.
+    unsafe {
+        if !IsWindow(Some(window)).as_bool() {
+            return None;
+        }
+        let mut pid = 0;
+        GetWindowThreadProcessId(window, Some(&mut pid));
+        (pid != 0).then(|| format!("win32:{pid}:{}", window.0 as usize))
+    }
+}
+
 /// Revalidate immediately before a group move. Never restore an unavailable window
 /// or overwrite a manual move since the coordinator's last observation.
 pub fn move_snapshot(expected: &WindowSnapshot, target: Rect) -> Result<Rect> {
@@ -490,13 +505,22 @@ pub fn set_window_icon(window: &impl raw_window_handle::HasWindowHandle) -> anyh
     Ok(())
 }
 
+struct Candidates {
+    current: Rect,
+    windows: Vec<HWND>,
+    bounds: Vec<Rect>,
+    /// Per candidate: a centered-group member to try before anything else.
+    /// Empty when no candidate takes precedence.
+    preferred: Vec<bool>,
+}
+
 /// Enumerate in Z-order, excluding hidden/minimized/cloaked and utility windows.
 fn focus_candidates(
     handle: Option<u64>,
     visibility: super::FocusVisibility,
     group: &[u64],
     middle_members: &[u64],
-) -> Result<(Rect, Vec<HWND>, Vec<Rect>)> {
+) -> Result<Candidates> {
     use windows::Win32::Foundation::LPARAM;
     use windows::core::BOOL;
     unsafe extern "system" fn collect(window: HWND, data: LPARAM) -> BOOL {
@@ -580,6 +604,7 @@ fn focus_candidates(
         let mut above = Vec::new();
         let mut candidates = Vec::new();
         let mut bounds = Vec::new();
+        let mut members = Vec::new();
         // Entering a center group targets its topmost (active) member, never a
         // geometrically nearer peer stacked behind it.
         let mut entered = Vec::new();
@@ -639,14 +664,20 @@ fn focus_candidates(
                 )
                 .as_bool())
             .then(|| from_rect(info.rcWork));
+            // A hold from a floating window outside the group may still enter
+            // the group; a hold out of the group itself only reaches edges.
+            let enters_group = is_middle && group.is_empty();
             if selectable
-                && (!snapped_only || (!is_middle && crate::visibility::is_snapped(rect, work_area)))
+                && (!snapped_only
+                    || enters_group
+                    || (!is_middle && crate::visibility::is_snapped(rect, work_area)))
                 && (!middle_only || is_middle || !crate::visibility::is_snapped(rect, work_area))
                 && (visibility != super::FocusVisibility::BackgroundOnly || !is_middle)
                 && crate::visibility::focus_eligible(rect, work_area, &screens, &above, visibility)
             {
                 candidates.push(window);
                 bounds.push(rect);
+                members.push(is_middle);
             }
             // Even the selected window, utilities, and rejected candidates cover
             // windows beneath them. EnumWindows visits topmost windows first.
@@ -654,13 +685,23 @@ fn focus_candidates(
                 above.push(rect);
             }
         }
-        Ok((current, candidates, bounds))
+        // A hold into the middle means "go to my centered windows": an
+        // unrelated floating window must not win just by being nearer.
+        if !(snapped_only || middle_only) {
+            members.clear();
+        }
+        Ok(Candidates {
+            current,
+            windows: candidates,
+            bounds,
+            preferred: members,
+        })
     }
 }
 
 pub fn focus_eligible_handles(handle: u64, visibility: super::FocusVisibility) -> Result<Vec<u64>> {
-    let (_, candidates, _) = focus_candidates(Some(handle), visibility, &[], &[])?;
-    Ok(candidates
+    Ok(focus_candidates(Some(handle), visibility, &[], &[])?
+        .windows
         .into_iter()
         .map(|window| window.0 as usize as u64)
         .collect())
@@ -673,15 +714,19 @@ pub fn focus_window(
     group: &[u64],
     middle_members: &[u64],
 ) -> Result<()> {
-    let (current, candidates, bounds) =
-        focus_candidates(handle, visibility, group, middle_members)?;
+    let found = focus_candidates(handle, visibility, group, middle_members)?;
     let neighbor = if group.is_empty() {
-        crate::geometry::focus_neighbor(current, &bounds, action)
+        crate::geometry::focus_neighbor_preferring(
+            found.current,
+            &found.bounds,
+            &found.preferred,
+            action,
+        )
     } else {
-        crate::geometry::focus_group_exit(current, &bounds, action)
+        crate::geometry::focus_group_exit(found.current, &found.bounds, action)
     };
     if let Some(index) = neighbor {
-        activate_window(candidates[index])?;
+        activate_window(found.windows[index])?;
     }
     Ok(())
 }

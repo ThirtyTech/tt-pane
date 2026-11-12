@@ -298,7 +298,9 @@ fn candidates(
             .then_some(window.area);
         let snapped = visibility::is_snapped(window.frame, work_area);
         if selectable
-            && (!snapped_only || (!is_middle && snapped))
+            // A hold from a floating window outside the group may still enter
+            // the group; a hold out of the group itself only reaches edges.
+            && (!snapped_only || (is_middle && group.is_empty()) || (!is_middle && snapped))
             && (!middle_only || is_middle || !snapped)
             && (visibility != FocusVisibility::BackgroundOnly || !is_middle)
             && visibility::focus_eligible(window.frame, work_area, screens, &above, visibility)
@@ -349,7 +351,13 @@ pub fn focus_window(
         middle_members,
     )?;
     let neighbor = if group.is_empty() {
-        crate::geometry::focus_neighbor(current, &bounds, action)
+        // A hold into the middle means "go to my centered windows": an
+        // unrelated floating window must not win just by being nearer.
+        let preferred: Vec<bool> = handles
+            .iter()
+            .map(|h| visibility == FocusVisibility::Hold && middle_members.contains(h))
+            .collect();
+        crate::geometry::focus_neighbor_preferring(current, &bounds, &preferred, action)
     } else {
         crate::geometry::focus_group_exit(current, &bounds, action)
     };

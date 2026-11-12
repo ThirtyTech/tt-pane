@@ -757,6 +757,23 @@ pub fn focus_group_exit(current: Rect, candidates: &[Rect], action: Action) -> O
         .map(|(index, _, _)| index)
 }
 
+/// Like [`focus_neighbor`], but a preferred candidate in that direction wins
+/// over any nearer one. Without a preferred candidate there, all compete.
+pub fn focus_neighbor_preferring(
+    current: Rect,
+    candidates: &[Rect],
+    preferred: &[bool],
+    action: Action,
+) -> Option<usize> {
+    let favored: Vec<usize> = (0..candidates.len())
+        .filter(|&i| preferred.get(i).copied().unwrap_or(false))
+        .collect();
+    let subset: Vec<Rect> = favored.iter().map(|&i| candidates[i]).collect();
+    focus_neighbor(current, &subset, action)
+        .map(|i| favored[i])
+        .or_else(|| focus_neighbor(current, candidates, action))
+}
+
 /// Rank windows by center distance in a 90-degree directional cone. This permits
 /// diagonal steps through a center window without jumping past it to a far edge.
 /// Equal scores retain native Z-order (the topmost candidate wins).
@@ -800,6 +817,51 @@ pub fn focus_neighbor(current: Rect, candidates: &[Rect], action: Action) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn holds_prefer_centered_members_over_nearer_floating_windows() {
+        let rect = |x, y, width, height| Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        // Right-snapped source; a stray floating window sits between it and
+        // the centered group's active member.
+        let source = rect(1920, 0, 1920, 2112);
+        let candidates = [
+            rect(650, 357, 2539, 1397), // centered member
+            rect(2100, 900, 500, 300),  // floating, nearer
+            rect(0, 0, 1920, 2112),     // left half
+        ];
+        let preferred = [true, false, false];
+        assert_eq!(
+            focus_neighbor(source, &candidates, Action::FocusLeft),
+            Some(1)
+        );
+        assert_eq!(
+            focus_neighbor_preferring(source, &candidates, &preferred, Action::FocusLeft),
+            Some(0)
+        );
+        // No member in that direction: everything competes as before.
+        assert_eq!(
+            focus_neighbor_preferring(source, &candidates, &preferred, Action::FocusRight),
+            None
+        );
+        let from_left = rect(0, 0, 640, 2112);
+        // The member lies behind the source, so the floating window wins.
+        let only_floating = [rect(0, 1500, 200, 200), rect(800, 900, 400, 300)];
+        assert_eq!(
+            focus_neighbor_preferring(
+                from_left,
+                &only_floating,
+                &[true, false],
+                Action::FocusRight
+            ),
+            Some(1)
+        );
+    }
+
     #[test]
     fn sizing_alone_keeps_the_screen_side_edge_and_stays_on_screen() {
         let area = Rect {

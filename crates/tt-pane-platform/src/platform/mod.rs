@@ -111,8 +111,16 @@ pub use windows::{TilingDesktop, TilingWindow, move_tiling_window, tiling_deskto
 #[cfg(windows)]
 pub use windows::{
     WindowSnapshot, choose_glow_color, focus_snapshot, foreground_handle, hold_focus_glow,
-    move_snapshot, release_focus_glow, show_focus_glow, wait_for_focus_glow, window_snapshot,
+    move_snapshot, release_focus_glow, show_focus_glow, wait_for_focus_glow, window_identity,
+    window_snapshot,
 };
+
+/// GNOME cannot tell a minimized window from a closed one, so unavailable
+/// members are released as before.
+#[cfg(target_os = "linux")]
+pub fn window_identity(_handle: u64) -> Option<String> {
+    None
+}
 
 /// Move the shared boundary of a window and its vertical neighbor.
 pub fn resize_pair(handle: Option<u64>, up: bool) -> Result<()> {

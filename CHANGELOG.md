@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- On Windows, holding Ctrl+Alt+H/L into the middle of the screen now goes to your centered windows, even when an unrelated floating window is nearer. Holding from a floating window can also reach the centered group.
+- On Windows, centered groups no longer forget a window that is briefly minimized, maximized, hidden, on another virtual desktop, or can't be read for a moment. It keeps its place and rejoins when it's back where tt-pane left it. Closing a window, or moving or resizing it yourself, still takes it out of the group. Each time a window leaves the group, the reason is written to `config.toml.centered.log` beside your configuration.
 - Windows: check for the latest stable release automatically at startup and every eight hours, or from the tray or Settings, then choose update and restart. Installer and portable copies verify downloads before exiting and preserve configuration; failures report an error and allow retry.
 - Choose a color or monochrome tray icon on macOS and Linux in **Settings → General** (`tray_icon = "color"` or `"monochrome"`). macOS defaults to monochrome, which follows the menu bar's appearance; Linux defaults to color, and its monochrome icon is white for dark panels.
 - On GNOME Wayland the Settings window has its own title bar, border and resize edges, so it can be moved, resized, minimized, maximized and closed. GNOME draws no window frame for apps.
