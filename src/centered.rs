@@ -22,16 +22,47 @@ struct Member {
 }
 
 impl Member {
-    fn matches(&self, live: &platform::WindowSnapshot) -> bool {
-        self.id == live.id
-            && self.area == live.area
-            && crate::positioning::near(self.last, live.bounds)
+    /// Only a deliberate change releases a member. A window that is briefly
+    /// unreadable, minimized, maximized, hidden or cloaked (another virtual
+    /// desktop) keeps its place and rejoins once it is back where we left it.
+    fn presence(
+        &self,
+        snapshot: Result<Option<platform::WindowSnapshot>>,
+        identity: impl FnOnce() -> Option<String>,
+    ) -> Presence {
+        match snapshot {
+            Ok(Some(live)) if live.id != self.id => Presence::Gone("window handle was reused"),
+            Ok(Some(live)) if live.area != self.area => Presence::Gone("moved to another monitor"),
+            Ok(Some(live)) if !crate::positioning::near(self.last, live.bounds) => {
+                Presence::Gone("moved or resized outside tt-pane")
+            }
+            Ok(Some(live)) => Presence::Live(live),
+            _ if identity().as_deref() == Some(self.id.as_str()) => Presence::Away,
+            _ => Presence::Gone("window closed"),
+        }
     }
+
+    fn probe(&self) -> Presence {
+        self.presence(platform::window_snapshot(self.handle), || {
+            platform::window_identity(self.handle)
+        })
+    }
+}
+
+#[derive(Debug)]
+enum Presence {
+    Live(platform::WindowSnapshot),
+    /// Still open, but not currently arrangeable.
+    Away,
+    Gone(&'static str),
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Group {
     members: Vec<Member>,
+    /// Why members left since the last load, appended to a log on save.
+    #[serde(skip)]
+    released: Vec<String>,
 }
 
 impl Group {
@@ -56,20 +87,69 @@ impl Group {
         file.persist(crate::positioning::sidecar(path, ".centered.json"))
             .map_err(|e| e.error)
             .context("Save centered window groups")?;
+        // Diagnostics only: a failed log write never fails the group update.
+        let _ = self.append_log(path);
         Ok(())
     }
 
-    pub fn prune(&mut self) {
-        self.members.retain(|m| {
-            platform::window_snapshot(m.handle)
-                .ok()
-                .flatten()
-                .is_some_and(|live| m.matches(&live))
-        });
+    fn append_log(&self, path: &Path) -> std::io::Result<()> {
+        const LIMIT: u64 = 64 * 1024;
+        if self.released.is_empty() {
+            return Ok(());
+        }
+        let log = crate::positioning::sidecar(path, ".centered.log");
+        let full = std::fs::metadata(&log).is_ok_and(|m| m.len() > LIMIT);
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(!full)
+            .write(true)
+            .truncate(full)
+            .open(log)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        for line in &self.released {
+            writeln!(file, "{now} {line}")?;
+        }
+        Ok(())
     }
 
-    pub fn remove(&mut self, id: &str) {
+    fn release(&mut self, id: &str, reason: &str) {
+        let before = self.members.len();
         self.members.retain(|m| m.id != id);
+        if self.members.len() != before {
+            self.released.push(format!("released {id}: {reason}"));
+        }
+    }
+
+    /// Releases closed or manually moved members and keeps temporarily
+    /// unavailable ones. Returns the members that can be arranged right now.
+    fn live_members(&mut self) -> Vec<(Member, platform::WindowSnapshot)> {
+        self.live_members_with(&Member::probe)
+    }
+
+    fn live_members_with(
+        &mut self,
+        probe: &dyn Fn(&Member) -> Presence,
+    ) -> Vec<(Member, platform::WindowSnapshot)> {
+        let mut live = Vec::new();
+        for member in self.members.clone() {
+            match probe(&member) {
+                Presence::Live(snapshot) => live.push((member, snapshot)),
+                Presence::Away => {}
+                Presence::Gone(reason) => self.release(&member.id, reason),
+            }
+        }
+        live
+    }
+
+    pub fn prune(&mut self) {
+        self.live_members();
+    }
+
+    /// Positioning a member with any other action deliberately takes it out.
+    pub fn remove(&mut self, id: &str) {
+        self.release(id, "positioned with another action");
     }
 
     pub fn register(&mut self, id: &str, bounds: Rect) {
@@ -144,25 +224,21 @@ impl Group {
         {
             return Ok(false);
         }
-        let eligible = if visibility == platform::FocusVisibility::IncludeHidden {
-            None
-        } else {
-            Some(platform::focus_eligible_handles(handle, visibility)?)
-        };
-        let Some(next) = self.neighbor_filtered(handle, action, eligible.as_deref()) else {
+        // Minimized or cloaked members keep their place but are skipped.
+        let live = self.live_members();
+        let mut eligible: Vec<u64> = live.iter().map(|(m, _)| m.handle).collect();
+        if visibility != platform::FocusVisibility::IncludeHidden {
+            let visible = platform::focus_eligible_handles(handle, visibility)?;
+            eligible.retain(|handle| visible.contains(handle));
+        }
+        let Some(next) = self.neighbor_filtered(handle, action, Some(&eligible)) else {
             // A singleton carousel stays put; only a hold (or J/K) leaves it.
             return Ok(true);
         };
-        let Some(live) = platform::window_snapshot(next)? else {
+        let Some((_, snapshot)) = live.iter().find(|(m, _)| m.handle == next) else {
             return Ok(false);
         };
-        let Some(member) = self.members.iter().find(|m| m.handle == next) else {
-            return Ok(false);
-        };
-        if !member.matches(&live) {
-            return Ok(false);
-        }
-        platform::focus_snapshot(&live)?;
+        platform::focus_snapshot(snapshot)?;
         self.arrange(next, layout)?;
         Ok(true)
     }
@@ -193,20 +269,32 @@ impl Group {
     }
 
     pub fn arrange(&mut self, handle: u64, layout: CenterLayout) -> Result<()> {
-        let selected = self.members.iter().find(|m| m.handle == handle);
-        let peers: Vec<_> = self
-            .members
+        self.arrange_with(handle, layout, &Member::probe)
+    }
+
+    fn arrange_with(
+        &mut self,
+        handle: u64,
+        layout: CenterLayout,
+        probe: &dyn Fn(&Member) -> Presence,
+    ) -> Result<()> {
+        // Only members that are on screen take a slot; away ones keep theirs.
+        let live = self.live_members_with(probe);
+        let selected = live
             .iter()
-            .filter(|m| selected.is_some_and(|selected| m.area == selected.area))
-            .cloned()
+            .find(|(m, _)| m.handle == handle)
+            .map(|(m, _)| m.area);
+        let peers: Vec<_> = live
+            .iter()
+            .filter(|(m, _)| Some(m.area) == selected)
+            .map(|(m, _)| m.clone())
             .collect();
         let selected_index = peers.iter().position(|m| m.handle == handle);
         // Move background members first, keeping their native Z order and focus.
         // Unrelated focus changes leave each monitor's current layout intact.
-        let members = self.members.clone();
-        let mut moves: Vec<_> = members
+        let mut moves: Vec<_> = live
             .iter()
-            .map(|member| {
+            .map(|(member, snapshot)| {
                 let bounds = match (
                     selected_index,
                     peers.iter().position(|m| m.handle == member.handle),
@@ -214,35 +302,39 @@ impl Group {
                     (Some(selected), Some(index)) => layout_target(&peers, index, selected, layout),
                     _ => member.last,
                 };
-                (member, bounds)
+                (member, snapshot, bounds)
             })
             .collect();
-        moves.sort_by_key(|(m, _)| m.handle == handle);
+        moves.sort_by_key(|(m, _, _)| m.handle == handle);
         let mut failure = None;
-        for (member, target) in moves {
+        for (member, snapshot, target) in moves {
             if crate::positioning::near(member.last, target) {
                 continue;
             }
-            let result = (|| -> Result<Rect> {
-                let live = platform::window_snapshot(member.handle)?
-                    .context("Grouped window disappeared")?;
-                anyhow::ensure!(member.matches(&live), "Grouped window was manually moved");
-                let actual = platform::move_snapshot(&live, target)?;
-                anyhow::ensure!(
-                    crate::positioning::near(actual, target),
-                    "Application rejected centered group placement"
-                );
-                Ok(actual)
-            })();
-            match result {
-                Ok(actual) => {
+            match platform::move_snapshot(snapshot, target) {
+                Ok(actual) if crate::positioning::near(actual, target) => {
                     if let Some(saved) = self.members.iter_mut().find(|m| m.id == member.id) {
                         saved.last = actual;
                     }
                 }
+                Ok(_) => {
+                    // Do not retry and fight an app's size constraints.
+                    self.release(&member.id, "application rejected the group placement");
+                    failure = Some(anyhow::anyhow!(
+                        "Application rejected centered group placement"
+                    ));
+                }
                 Err(error) => {
-                    // Do not retry and fight a manual move or an app's constraints.
-                    self.remove(&member.id);
+                    // The window may have just been minimized or closed. Re-check
+                    // instead of forgetting it, and release it only if it stayed
+                    // put and still refused (for example an elevated window).
+                    match probe(member) {
+                        Presence::Away => {}
+                        Presence::Gone(reason) => self.release(&member.id, reason),
+                        Presence::Live(_) => {
+                            self.release(&member.id, &format!("could not be moved: {error:#}"))
+                        }
+                    }
                     failure = Some(error);
                 }
             }
@@ -588,6 +680,16 @@ mod tests {
             // Close/unavailable windows are pruned by the same live validation.
         });
     }
+    /// Every member is open and exactly where it was left.
+    fn on_screen(m: &Member) -> Presence {
+        Presence::Live(platform::WindowSnapshot {
+            handle: m.handle,
+            id: m.id.clone(),
+            area: m.area,
+            bounds: m.last,
+        })
+    }
+
     fn member(handle: u64) -> Member {
         Member {
             handle,
@@ -666,6 +768,7 @@ mod tests {
     fn stacked_cycle_stays_centered_and_preserves_offset_sizing() {
         let mut group = Group {
             members: (1..=3).map(member).collect(),
+            ..Default::default()
         };
         group.members[0].centered = Rect {
             x: -1520,
@@ -728,6 +831,7 @@ mod tests {
         for count in [2, 3, 6, 12] {
             let mut group = Group {
                 members: (1..=count).map(member).collect(),
+                ..Default::default()
             };
             group.members[0].centered = Rect {
                 x: -1520,
@@ -781,13 +885,16 @@ mod tests {
         m.last = m.centered;
         let mut group = Group {
             members: vec![m, member(2), member(3)],
+            ..Default::default()
         };
         for index in 1..group.members.len() {
             group.members[index].last = target(&group.members, index, 0);
         }
         let before = group.clone();
         // An unregistered window can be snapped behind the center or on any screen.
-        group.arrange(u64::MAX, CenterLayout::Offset).unwrap();
+        group
+            .arrange_with(u64::MAX, CenterLayout::Offset, &on_screen)
+            .unwrap();
         assert_eq!(group, before);
     }
 
@@ -807,10 +914,13 @@ mod tests {
         other.last = other.centered;
         let mut group = Group {
             members: vec![first, member(2), other],
+            ..Default::default()
         };
         group.members[1].last = target(&group.members[..2], 1, 0);
         let before = group.clone();
-        group.arrange(3, CenterLayout::Offset).unwrap();
+        group
+            .arrange_with(3, CenterLayout::Offset, &on_screen)
+            .unwrap();
         assert_eq!(group, before);
     }
 
@@ -851,6 +961,7 @@ mod tests {
         other.area.x = 0;
         let group = Group {
             members: vec![member(1), other, member(2), member(3)],
+            ..Default::default()
         };
         assert_eq!(group.neighbor(1, Action::FocusLeft), Some(3));
         assert_eq!(group.neighbor(1, Action::FocusRight), Some(2));
@@ -879,6 +990,7 @@ mod tests {
     fn group_navigation_skips_ineligible_peers_but_hold_keeps_them() {
         let group = Group {
             members: (1..=4).map(member).collect(),
+            ..Default::default()
         };
         assert_eq!(
             group.neighbor_filtered(1, Action::FocusRight, Some(&[3, 4])),
@@ -908,22 +1020,67 @@ mod tests {
             area: m.area,
             bounds: m.last,
         };
-        assert!(m.matches(&live));
+        let same = || Some(m.id.clone());
+        let check =
+            |snapshot: &platform::WindowSnapshot| m.presence(Ok(Some(snapshot.clone())), same);
+        assert!(matches!(check(&live), Presence::Live(_)));
         let mut changed = live.clone();
         changed.bounds.x += 3;
-        assert!(!m.matches(&changed));
+        assert!(matches!(check(&changed), Presence::Gone(_)));
         changed = live.clone();
         changed.bounds.height += 3;
-        assert!(!m.matches(&changed));
+        assert!(matches!(check(&changed), Presence::Gone(_)));
         changed = live.clone();
         changed.area.x = 0;
-        assert!(!m.matches(&changed));
+        assert!(matches!(check(&changed), Presence::Gone(_)));
         changed = live.clone();
         changed.id = "win32:11:1".into();
-        assert!(!m.matches(&changed));
+        assert!(matches!(check(&changed), Presence::Gone(_)));
         changed = live.clone();
         changed.bounds.x += 1;
-        assert!(m.matches(&changed));
+        assert!(matches!(check(&changed), Presence::Live(_)));
+    }
+
+    #[test]
+    fn briefly_unavailable_members_are_kept_and_closed_ones_released() {
+        let m = member(1);
+        // Minimized, maximized, hidden, cloaked, or a failed read: still open.
+        assert!(matches!(
+            m.presence(Ok(None), || Some(m.id.clone())),
+            Presence::Away
+        ));
+        assert!(matches!(
+            m.presence(Err(anyhow::anyhow!("transient")), || Some(m.id.clone())),
+            Presence::Away
+        ));
+        // Closed, or the handle now belongs to another process.
+        assert!(matches!(m.presence(Ok(None), || None), Presence::Gone(_)));
+        assert!(matches!(
+            m.presence(Ok(None), || Some("win32:11:1".into())),
+            Presence::Gone(_)
+        ));
+    }
+
+    #[test]
+    fn releases_are_logged_with_their_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut group = Group {
+            members: vec![member(1), member(2)],
+            ..Default::default()
+        };
+        group.remove("win32:10:1");
+        group.remove("win32:10:9");
+        group.save(&path).unwrap();
+        let log =
+            std::fs::read_to_string(crate::positioning::sidecar(&path, ".centered.log")).unwrap();
+        assert_eq!(log.lines().count(), 1);
+        assert!(log.contains("released win32:10:1: positioned with another action"));
+        // A reloaded group starts with nothing pending, so nothing repeats.
+        Group::load(&path).unwrap().save(&path).unwrap();
+        let again =
+            std::fs::read_to_string(crate::positioning::sidecar(&path, ".centered.log")).unwrap();
+        assert_eq!(again, log);
     }
 
     #[test]
@@ -933,6 +1090,7 @@ mod tests {
         assert_eq!(Group::load(&path).unwrap(), Group::default());
         let mut group = Group {
             members: vec![member(2), member(1), member(3)],
+            ..Default::default()
         };
         group.save(&path).unwrap();
         assert_eq!(Group::load(&path).unwrap(), group);
