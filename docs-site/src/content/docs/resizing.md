@@ -21,7 +21,7 @@ In **Settings → Advanced → Repeat shortcut to grow**, adjust **Growth per pr
 
 The last matching placement supplies the anchor: left positions keep the left edge, right positions keep the right edge, and centered positions keep the midpoint. A manually placed window’s horizontal position determines its anchor.
 
-Width adjustments do not cycle or reset. Expansion stops at the monitor boundary; application minimum widths can stop shrinking. Each change uses the current width, so shrinking and expanding are not inverse operations: **1000 → 750 → 938 pixels**.
+Width adjustments do not cycle or reset. Expansion stops at the monitor boundary; application minimum widths can stop shrinking. Steps are measured from the placed width, so shrinking and expanding undo each other: **1000 → 750 → 1000 pixels**.
 
 Change the shared percentage in **Advanced → Width adjustment → Width change per press** (1–99%). It is separate from repeated-placement growth.
 
@@ -30,7 +30,7 @@ Change the shared percentage in **Advanced → Width adjustment → Width change
 1. Position a window, for example in the bottom-left quarter.
 2. Shrink its width with **Ctrl + Alt + -**.
 3. Select a **different window on the same monitor**.
-4. Press **Ctrl + Alt + Shift + 8** to fill the freed space.
+4. Press **Ctrl + Alt + .** (period) to fill the freed space.
 
 A 1000-pixel-wide slot reduced to 750 pixels leaves a 250-pixel-wide gap to its right. Repeated shrinking accumulates space in the original slot. One gap is remembered per monitor; successfully filling it consumes it. For a centered window, the larger gap wins, with the right side winning ties.
 

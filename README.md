@@ -56,7 +56,7 @@ Install a recent stable Rust toolchain, then:
 cargo run --release
 ```
 
-tt-pane starts in the system tray without a settings window. Open **Settings…** from its tray menu, click a shortcut to record a replacement, then **Save changes**. Escape cancels recording; Backspace disables an action. Changes are validated for duplicate actions and shortcuts. Native registration conflicts appear in the settings screen, and a failed registration preserves the previous bindings. Saving uses a temporary file in the same directory followed by replacement.
+tt-pane starts in the system tray without a settings window. Open **Settings…** from its tray menu, click a shortcut to record a replacement, then **Save changes**. Escape cancels recording; **Clear** next to a shortcut (or Backspace while recording) unassigns it. Changes are validated for duplicate actions and shortcuts. Native registration conflicts appear in the settings screen, and a failed registration preserves the previous bindings. Saving uses a temporary file in the same directory followed by replacement.
 
 Closing Settings leaves the tray and shortcuts running. **Quit tt-pane** in the tray menu exits the app. `tt-pane settings` opens settings immediately when starting an instance. Start one tray instance at a time; general single-instance forwarding is not implemented. Reopening the macOS app from Finder, Launchpad, or Spotlight shows Settings in the running instance.
 
@@ -82,6 +82,12 @@ The command-line positioning tool can be built independently of GPUI:
 cargo build --release --no-default-features
 ```
 
+## Experimental automatic tiling (Windows)
+
+On `experimental/hypr-tiling`, enable **Settings > Experimental > Automatic tiling** and save. Dwindle tiles existing and newly opened eligible windows on the current virtual desktop, with a separate layout per monitor. It is off by default. Closing/minimizing a tile reflows its neighbors; moving or snapping a tile makes it floating. Turning tiling off leaves windows in place. Keep the tray running for automatic updates.
+
+The new toggle-float, swap-left/down/up/right, toggle-split, split-grow/shrink, and toggle-tiling actions default to Win+Shift+H/J/K/L (swap), Win+Shift+F (float) and Win+Shift+O (split) and Win+Shift+G (toggle tiling), with grow/shrink unbound; all work through Settings shortcuts, `tt-pane apply`, and Herdr. On a tiled window, H/J/K/L navigates the tree (then other monitors), -/= changes the split ratio, and Up/Down moves the nearest horizontal boundary. Win+Shift+E enters resize mode: H/J/K/L or the arrows move the divider next to the focused tile in that direction (or the shared window edge with tiling off), I switches to sizing the focused window alone, and Esc or Enter finishes. With tiling off, Win+Shift+H/J/K/L still swaps the focused window with its nearest neighbor in that direction. See the [configuration reference](docs-site/src/content/docs/configuration.md) for options, runtime toggling, exclusions, and current limitations. Linux and macOS tiling remain future work.
+
 ## Default bindings
 
 | Shortcut | Action |
@@ -98,7 +104,7 @@ cargo build --release --no-default-features
 | Ctrl+Alt+0 | Fill work area |
 | Ctrl+Alt+- | Shrink width by 25% |
 | Ctrl+Alt+= | Expand width by 25% |
-| Ctrl+Alt+Shift+8 (*) | Fill the last saved gap |
+| Ctrl+Alt+. (period) | Fill the last saved gap |
 | Ctrl+Alt+Up | Move shared horizontal boundary up |
 | Ctrl+Alt+Down | Move shared horizontal boundary down |
 | Ctrl+Alt+H | Focus left |
@@ -112,7 +118,7 @@ The digit shortcuts use number-row keys (Digit0 through Digit9). The minus short
 
 **Ctrl+Alt+-** reduces the current width by 25%; **Ctrl+Alt+=** increases it by 25%. Both preserve height and vertical position. The last matching placement supplies the anchor: left positions keep their left edge, right positions keep their right edge, and centered positions keep their midpoint. For a manually placed window, its horizontal position on the current monitor determines the anchor. Shrinking a bottom-left window moves only its right edge inward.
 
-Repeated presses keep resizing, with no reset cycle. Expansion stops at the available monitor boundary for that anchor, and shrinking stops at the application's minimum width (at least one pixel). Percentages apply to the current width, so shrinking and expanding once are not inverse operations: 1000 → 750 → 938 pixels. Adjust the shared percentage under **Advanced → Width adjustment → Width change per press** in Settings (1–99%, default 25%). The two-dimensional growth controls below it apply only to repeated positioning shortcuts.
+Repeated presses keep resizing, with no reset cycle. Expansion stops at the available monitor boundary for that anchor, and shrinking stops at the application's minimum width (at least one pixel). Steps are measured from the placed width, so shrinking and expanding undo each other: 1000 → 750 → 1000 pixels (and 1000 → 1250 → 1000). Adjust the shared percentage under **Advanced → Width adjustment → Width change per press** in Settings (1–99%, default 25%). The two-dimensional growth controls below it apply only to repeated positioning shortcuts.
 
 In Position preview, hover a placement first, then Shrink width or Expand width to see how the width changes for that placement. The preview uses the configured width percentage.
 
@@ -161,7 +167,7 @@ The actions are editable in Settings and available as `tt-pane apply resize-up` 
 
 ### Fill a freed gap
 
-After positioning and shrinking a window, select a **different window on the same monitor** and press **Ctrl+Alt+Shift+8** (`*` on the number row). tt-pane resizes and places that window into the space freed from the original position. For example, shrinking a 1000-pixel-wide bottom-left slot to 750 pixels leaves a 250-pixel-wide gap immediately to its right, at the same height. Repeated shrinking accumulates the freed space within that original slot.
+After positioning and shrinking a window, select a **different window on the same monitor** and press **Ctrl+Alt+.** (period). tt-pane resizes and places that window into the space freed from the original position. For example, shrinking a 1000-pixel-wide bottom-left slot to 750 pixels leaves a 250-pixel-wide gap immediately to its right, at the same height. Repeated shrinking accumulates the freed space within that original slot.
 
 One gap is remembered per monitor. Switching windows does not lose it; successfully filling it consumes it. If a centered window leaves two gaps, the larger side is selected, with the right side winning ties. A missing gap or selecting the source window reports an error without repositioning it. Use `tt-pane apply fill-gap --json` for the same operation from scripts or Herdr. The binding is editable in Settings; a numpad Multiply key can also be recorded.
 
@@ -243,7 +249,7 @@ shortcut = "Ctrl+Alt+="
 
 [[bindings]]
 action = "fill-gap"
-shortcut = "Ctrl+Alt+Shift+8"
+shortcut = "Ctrl+Alt+."
 ```
 
 ```sh
@@ -302,6 +308,7 @@ The lifecycle test briefly creates its own settings window, closes it with a nat
 ## Structure and validation
 
 - `crates/tt-pane-platform/src/geometry.rs`: shared placement math and monitor selection.
+- `crates/tt-pane-platform/src/tiling.rs`: pure dwindle/BSP layout engine; `src/tiling.rs`: Windows polling, shared state, and tiling actions.
 - `config.rs`: versioned TOML, validation, atomic save.
 - `positioning.rs`: shared repeated-action cycles, persisted baseline and cross-process locking.
 - `shortcuts.rs`: native shortcut lifetime, conflict handling, and GNOME accelerator conversion.

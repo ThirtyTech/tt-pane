@@ -33,11 +33,11 @@ Every placement targets the active window on its current monitor. A window spann
 | --- | --- |
 | Ctrl + Alt + - | Shrink current width by 25% |
 | Ctrl + Alt + = | Expand current width by 25% |
-| Ctrl + Alt + Shift + 8 | Fill the last saved gap with a different window |
+| Ctrl + Alt + . (period) | Fill the last saved gap with a different window |
 | Ctrl + Alt + ↑ | Move the shared horizontal boundary up (Windows) |
 | Ctrl + Alt + ↓ | Move the shared horizontal boundary down (Windows) |
 
-Expansion uses the `=` / `+` key **without Shift**. Ctrl + Alt + Shift + = also expands unless assigned to another action. Gap filling uses Shift + 8 (`*` on the number row). Numpad keys can be recorded separately.
+Expansion uses the `=` / `+` key **without Shift**. Ctrl + Alt + Shift + = also expands unless assigned to another action. Gap filling uses the period key. Numpad keys can be recorded separately.
 
 Read [Resize & refine](/tt-pane/resizing/) for anchoring, growth cycles, and neighboring-window behavior.
 
@@ -76,9 +76,32 @@ CLI Center/focus actions share the same saved groups. Mouse and Alt+Tab observat
 
 1. Open **Settings…** from the tray menu.
 2. Click a shortcut and press your replacement combination.
-3. Press **Escape** to cancel recording, or **Backspace** to disable that action.
+3. Press **Escape** to cancel recording, or **Backspace** to disable that action. **Clear** next to a shortcut unassigns it without recording.
 4. Select **Save changes**.
 
 Duplicate shortcuts are rejected. Native registration conflicts appear in Settings; failed registration preserves the previous bindings. On GNOME Wayland, saving re-registers the GNOME shortcuts. See [platform setup](/tt-pane/platforms/).
 
 Older configurations gain missing focus actions unless a default key is already taken. Existing custom or disabled bindings are preserved. Older configurations may need the two boundary shortcuts recorded manually, or defaults reset and saved.
+
+## Experimental tiling actions (Windows)
+
+Available on `experimental/hypr-tiling`. Defaults follow Hyprland's Super+Shift convention on **Win + Shift**. Configurations that predate an action gain its default unless that key is already taken; actions already present (including previously migrated unbound entries) keep their binding. Reassign shortcuts in Settings or use `tt-pane apply ACTION` (also exposed in the Herdr manifest).
+
+| Default | Action | Behavior |
+| --- | --- | --- |
+| Win + Shift + G | `toggle-tiling` | Enable/disable shared runtime tiling; enabling tiles existing eligible windows |
+| Win + Shift + F | `toggle-float` | Remove the selected tile from the tree, or reinsert a floating window |
+| Win + Shift + H / J / K / L | `swap-left`, `swap-down`, `swap-up`, `swap-right` | Swap with the nearest tile in that direction on the same monitor. With tiling off, trade places with the nearest window in that direction, on any monitor |
+| Win + Shift + O | `toggle-split` | Toggle the immediate parent's direction; requires `preserve_split = true` |
+| Win + Shift + E | `resize-mode` | Enter resize mode (the focus glow stays on the focused window until it ends): H/J/K/L (or arrows) move the divider next to the focused tile in that direction, so H/L always change widths and J/K heights. Hold a key to keep moving. Press I to size only the focused window instead (H/L narrower/wider, K/J shorter/taller, keeping the edge nearest the screen edge); press I again to go back to shared edges. Esc, Enter, Win + Shift + E, any other shortcut or 10 seconds idle ends it. Shortcut only, not a CLI action |
+| Unbound | `resize-left`, `resize-right` | Move the nearest vertical split boundary left/right by five percentage points (what H/L do in resize mode). With tiling off, they move the edge the focused window shares with its neighbors, resizing every window along it by 5% of the screen |
+| Unbound | `size-narrower`, `size-wider`, `size-shorter`, `size-taller` | Resize only the focused window by 5% of the screen (what H/L/K/J do after I in resize mode). Neighbors don't move; space freed by shrinking becomes the saved gap for Ctrl + Alt + . |
+| Unbound | `split-grow`, `split-shrink` | Change the selected tile's share of its immediate parent by five percentage points (Ctrl + Alt + = / - do the same on tiled windows) |
+
+Windows reserves Win + Shift + S, T, P, R, and X (so resize mode uses E), and Win + L always locks the PC, so Hyprland's exact Super bindings cannot be reused.
+
+On tiled windows, H/J/K/L uses tree geometry (including deep tiles), then falls back to regular navigation (including other monitors) past the tree's edge; horizontal hold gestures also navigate tiles. `shrink-width`/`expand-width` act like `split-shrink`/`split-grow`, and `resize-up`/`resize-down` moves the nearest horizontal split boundary. Split grow/shrink and `-`/`=` act on the tile's immediate parent, whose direction depends on the tree; resize mode is the predictable way to pick an axis. A lone tile has no split to adjust. Ratios stay between 10% and 90%.
+
+Snap/center/fill-gap actions float a tiled window before normal placement. Floating windows keep ordinary positioning behavior. `toggle-float` on a centered group member removes it from the group (the remaining members rearrange) and retiles it. Apps listed in `float_apps` must be removed from that list before retiling. All tiling actions other than `toggle-tiling` and swaps require active tiling (with tiling off, H/L in resize mode move a shared window edge and J/K move a shared boundary between stacked windows); GNOME skips registering them until its backend is implemented.
+
+The runtime toggle persists in the shared sidecar. Saving Settings makes the saved toggle authoritative again. See [configuration](/tt-pane/configuration/#tiling-experimental-windows) for the full behavior.

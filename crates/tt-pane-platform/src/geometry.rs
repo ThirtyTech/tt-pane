@@ -122,6 +122,24 @@ pub enum Action {
     FocusDown,
     FocusUp,
     FocusRight,
+    ToggleFloat,
+    SwapLeft,
+    SwapDown,
+    SwapUp,
+    SwapRight,
+    ToggleSplit,
+    SplitGrow,
+    SplitShrink,
+    ToggleTiling,
+    ResizeLeft,
+    ResizeRight,
+    /// A shortcut-only mode: H/J/K/L move dividers until Escape or Enter.
+    #[value(skip)]
+    ResizeMode,
+    SizeNarrower,
+    SizeWider,
+    SizeShorter,
+    SizeTaller,
 }
 
 impl Action {
@@ -138,7 +156,7 @@ impl Action {
         Self::Maximize,
     ];
 
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 35] = [
         Self::Left,
         Self::Right,
         Self::Top,
@@ -158,7 +176,41 @@ impl Action {
         Self::FocusDown,
         Self::FocusUp,
         Self::FocusRight,
+        Self::ToggleFloat,
+        Self::SwapLeft,
+        Self::SwapDown,
+        Self::SwapUp,
+        Self::SwapRight,
+        Self::ToggleSplit,
+        Self::SplitGrow,
+        Self::SplitShrink,
+        Self::ToggleTiling,
+        Self::ResizeLeft,
+        Self::ResizeRight,
+        Self::ResizeMode,
+        Self::SizeNarrower,
+        Self::SizeWider,
+        Self::SizeShorter,
+        Self::SizeTaller,
     ];
+
+    pub const TILING: [Self; 11] = [
+        Self::ToggleFloat,
+        Self::SwapLeft,
+        Self::SwapDown,
+        Self::SwapUp,
+        Self::SwapRight,
+        Self::ToggleSplit,
+        Self::SplitGrow,
+        Self::SplitShrink,
+        Self::ToggleTiling,
+        Self::ResizeLeft,
+        Self::ResizeRight,
+    ];
+
+    pub fn is_tiling(self) -> bool {
+        Self::TILING.contains(&self)
+    }
 
     pub fn focuses(self) -> bool {
         matches!(
@@ -169,6 +221,46 @@ impl Action {
 
     pub fn adjusts_pair(self) -> bool {
         matches!(self, Self::ResizeUp | Self::ResizeDown)
+    }
+
+    pub fn sizes_alone(self) -> bool {
+        matches!(
+            self,
+            Self::SizeNarrower | Self::SizeWider | Self::SizeShorter | Self::SizeTaller
+        )
+    }
+
+    /// Resize one window by 5% of the work area. The edge nearer the screen edge
+    /// stays put, so a left window narrows toward the left and a right one
+    /// toward the right. Sizes stay between a tenth and all of the work area.
+    pub fn sized_alone(self, area: Rect, current: Rect) -> Rect {
+        fn axis(start: i32, size: i32, area_start: i32, area_size: i32, delta: i32) -> (i32, i32) {
+            let next = (size + delta).clamp((area_size / 10).max(1), area_size.max(1));
+            let before = start - area_start;
+            let after = area_start + area_size - (start + size);
+            let start = if before <= after {
+                start
+            } else {
+                start + size - next
+            };
+            (start.clamp(area_start, area_start + area_size - next), next)
+        }
+        let (dx, dy) = (area.width / 20, area.height / 20);
+        let (dx, dy) = match self {
+            Self::SizeNarrower => (-dx, 0),
+            Self::SizeWider => (dx, 0),
+            Self::SizeShorter => (0, -dy),
+            Self::SizeTaller => (0, dy),
+            _ => return current,
+        };
+        let mut target = current;
+        if dx != 0 {
+            (target.x, target.width) = axis(current.x, current.width, area.x, area.width, dx);
+        }
+        if dy != 0 {
+            (target.y, target.height) = axis(current.y, current.height, area.y, area.height, dy);
+        }
+        target
     }
 
     pub fn adjusts_width(self) -> bool {
@@ -190,7 +282,23 @@ impl Action {
             | Self::FocusLeft
             | Self::FocusDown
             | Self::FocusUp
-            | Self::FocusRight => None,
+            | Self::FocusRight
+            | Self::ToggleFloat
+            | Self::SwapLeft
+            | Self::SwapDown
+            | Self::SwapUp
+            | Self::SwapRight
+            | Self::ToggleSplit
+            | Self::SplitGrow
+            | Self::SplitShrink
+            | Self::ToggleTiling
+            | Self::ResizeLeft
+            | Self::ResizeRight
+            | Self::ResizeMode
+            | Self::SizeNarrower
+            | Self::SizeWider
+            | Self::SizeShorter
+            | Self::SizeTaller => None,
         }
     }
 
@@ -214,6 +322,23 @@ impl Action {
             Self::FocusDown => "focus-down",
             Self::FocusUp => "focus-up",
             Self::FocusRight => "focus-right",
+            Self::ToggleFloat => "toggle-float",
+            Self::SwapLeft => "swap-left",
+            Self::SwapDown => "swap-down",
+            Self::SwapUp => "swap-up",
+            Self::SwapRight => "swap-right",
+            Self::ToggleSplit => "toggle-split",
+            Self::SplitGrow => "split-grow",
+            Self::SplitShrink => "split-shrink",
+            Self::ToggleTiling => "toggle-tiling",
+            Self::ResizeLeft => "resize-left",
+            Self::ResizeRight => "resize-right",
+            Self::ResizeMode => "resize-mode",
+            Self::SizeNarrower => "size-narrower",
+            Self::SizeWider => "size-wider",
+            Self::SizeShorter => "size-shorter",
+            Self::SizeTaller => "size-taller",
+
             Self::ResizeDown => "resize-down",
         }
     }
@@ -238,6 +363,23 @@ impl Action {
             Self::FocusDown => "Focus down",
             Self::FocusUp => "Focus up",
             Self::FocusRight => "Focus right",
+            Self::ToggleFloat => "Toggle floating",
+            Self::SwapLeft => "Swap tile left",
+            Self::SwapDown => "Swap tile down",
+            Self::SwapUp => "Swap tile up",
+            Self::SwapRight => "Swap tile right",
+            Self::ToggleSplit => "Toggle tile split",
+            Self::SplitGrow => "Grow tile split",
+            Self::SplitShrink => "Shrink tile split",
+            Self::ToggleTiling => "Toggle experimental tiling",
+            Self::ResizeLeft => "Move tile boundary left",
+            Self::ResizeRight => "Move tile boundary right",
+            Self::ResizeMode => "Resize mode (H/J/K/L)",
+            Self::SizeNarrower => "Make window narrower",
+            Self::SizeWider => "Make window wider",
+            Self::SizeShorter => "Make window shorter",
+            Self::SizeTaller => "Make window taller",
+
             Self::ResizeDown => "Move shared boundary down",
         }
     }
@@ -254,7 +396,23 @@ impl Action {
             | Self::FocusLeft
             | Self::FocusDown
             | Self::FocusUp
-            | Self::FocusRight => return current,
+            | Self::FocusRight
+            | Self::ToggleFloat
+            | Self::SwapLeft
+            | Self::SwapDown
+            | Self::SwapUp
+            | Self::SwapRight
+            | Self::ToggleSplit
+            | Self::SplitGrow
+            | Self::SplitShrink
+            | Self::ToggleTiling
+            | Self::ResizeLeft
+            | Self::ResizeRight
+            | Self::ResizeMode
+            | Self::SizeNarrower
+            | Self::SizeWider
+            | Self::SizeShorter
+            | Self::SizeTaller => return current,
             Self::ShrinkWidth | Self::ExpandWidth => {
                 return current.adjust_width(
                     area,
@@ -453,6 +611,10 @@ impl Rect {
     }
 
     /// Reuse the initial rectangle's anchor to avoid half-pixel drift over many presses.
+    ///
+    /// Widths step along a ladder anchored at `reference`: below it each step
+    /// multiplies by `1 - p`, above it by `1 + p`. Shrinking then expanding
+    /// therefore returns to the reference width instead of compounding.
     pub fn adjust_width_from(
         self,
         area: Rect,
@@ -461,7 +623,11 @@ impl Rect {
         reference: Rect,
     ) -> Self {
         let current_width = i64::from(self.width.max(1));
-        let width = ((current_width * i64::from(100 + percent.clamp(-99, 100)) + 50) / 100).max(1);
+        let width = width_step(
+            i64::from(reference.width.max(1)),
+            current_width,
+            percent.clamp(-99, 100),
+        );
         let width = if percent < 0 {
             width.min((current_width - 1).max(1))
         } else if percent > 0 {
@@ -509,6 +675,42 @@ impl Rect {
             height,
         })
     }
+}
+
+/// The next width on the ladder through `base` in the direction of `percent`.
+/// The first rung at least half a step away from the current width is used,
+/// so rounding, minimum sizes, monitor clamps, and manual nudges never
+/// accumulate or produce a near-empty step.
+fn width_step(base: i64, current: i64, percent: i32) -> i64 {
+    if percent == 0 {
+        return current;
+    }
+    let p = f64::from(percent.unsigned_abs()) / 100.0;
+    let (down, up) = ((1.0 - p.min(0.99)).max(0.01), 1.0 + p);
+    let rung = |n: i32| -> f64 {
+        let factor = if n < 0 { down.powi(-n) } else { up.powi(n) };
+        base as f64 * factor
+    };
+    let current_f = current as f64;
+    let ratio = current_f / base as f64;
+    let mut n = if current < base {
+        -(ratio.ln() / down.ln()).round() as i32
+    } else {
+        (ratio.ln() / up.ln()).round() as i32
+    } - percent.signum();
+    for _ in 0..256 {
+        n += percent.signum();
+        let width = rung(n);
+        let far_enough = if percent < 0 {
+            width <= current_f * (1.0 - (1.0 - down) / 2.0)
+        } else {
+            width >= current_f * (1.0 + p / 2.0)
+        };
+        if far_enough {
+            return (width.round() as i64).max(1);
+        }
+    }
+    current
 }
 
 /// Largest overlap wins; windows completely off-screen use the nearest monitor.
@@ -598,6 +800,62 @@ pub fn focus_neighbor(current: Rect, candidates: &[Rect], action: Action) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sizing_alone_keeps_the_screen_side_edge_and_stays_on_screen() {
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 1000,
+            height: 800,
+        };
+        let left = Rect {
+            x: 0,
+            y: 0,
+            width: 500,
+            height: 400,
+        };
+        let right = Rect {
+            x: 500,
+            y: 400,
+            width: 500,
+            height: 400,
+        };
+        assert_eq!(
+            Action::SizeNarrower.sized_alone(area, left),
+            Rect { width: 450, ..left }
+        );
+        assert_eq!(
+            Action::SizeNarrower.sized_alone(area, right),
+            Rect {
+                x: 550,
+                width: 450,
+                ..right
+            }
+        );
+        assert_eq!(
+            Action::SizeTaller.sized_alone(area, right),
+            Rect {
+                y: 360,
+                height: 440,
+                ..right
+            }
+        );
+        assert_eq!(
+            Action::SizeShorter.sized_alone(area, left),
+            Rect {
+                height: 360,
+                ..left
+            }
+        );
+        // Never past the work area or below a tenth of it.
+        let full = Rect {
+            width: 1000,
+            ..left
+        };
+        assert_eq!(Action::SizeWider.sized_alone(area, full), full);
+        let thin = Rect { width: 100, ..left };
+        assert_eq!(Action::SizeNarrower.sized_alone(area, thin), thin);
+    }
     #[test]
     fn centered_vertical_exit_reaches_wide_screen_corners_left_first() {
         let area = Rect {
@@ -849,6 +1107,37 @@ mod tests {
             assert_eq!((max.x, max.width), (LEFT.x, LEFT.width));
             assert_eq!(max.adjust_width(LEFT, anchor, 25), max);
         }
+    }
+
+    #[test]
+    fn shrinking_then_expanding_returns_to_the_placed_width() {
+        for action in [Action::BottomLeft, Action::BottomRight, Action::Center] {
+            let base = action.target(LEFT, LEFT);
+            let anchor = action.horizontal_anchor().unwrap();
+            // Half-width placements reach the monitor edge on the third expand.
+            for (out, back, max_steps) in [(-25, 25, 4), (25, -25, 2)] {
+                for steps in 1..=max_steps {
+                    let mut window = base;
+                    for _ in 0..steps {
+                        window = window.adjust_width_from(LEFT, anchor, out, base);
+                    }
+                    assert_ne!(window.width, base.width);
+                    for _ in 0..steps {
+                        window = window.adjust_width_from(LEFT, anchor, back, base);
+                    }
+                    assert_eq!(window, base, "{action:?} {out}% x{steps}");
+                }
+            }
+        }
+        // A window that started 1000 wide goes 750 and then back to 1000.
+        let base = Rect {
+            width: 1000,
+            ..Action::BottomLeft.target(LEFT, LEFT)
+        };
+        let smaller = base.adjust_width_from(LEFT, HorizontalAnchor::Left, -25, base);
+        assert_eq!(smaller.width, 750);
+        let restored = smaller.adjust_width_from(LEFT, HorizontalAnchor::Left, 25, base);
+        assert_eq!(restored, base);
     }
 
     #[test]

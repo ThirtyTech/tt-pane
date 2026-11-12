@@ -66,14 +66,12 @@ impl PositionPreview {
     }
 
     fn select(&mut self, action: Action, percent: u32, now: Instant) {
-        if !action.focuses()
-            && !action.adjusts_width()
-            && !action.adjusts_pair()
-            && action != Action::FillGap
-        {
+        // Only fixed placements have an anchor. Contextual actions must never
+        // replace the remembered snap used by width and gap previews.
+        if Action::POSITIONS.contains(&action) {
             self.placement = action;
         }
-        let target = if action.focuses() {
+        let target = if action.focuses() || action.is_tiling() {
             Self::target(self.placement)
         } else if action.adjusts_pair() {
             let base = Action::BottomLeft.target(PREVIEW_AREA, PREVIEW_AREA);
@@ -123,6 +121,29 @@ impl PositionPreview {
             self.action = action;
             self.to = target;
             self.started = Some(now);
+        }
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::{Action, Instant, PositionPreview};
+
+    #[test]
+    fn tiling_hover_preserves_snap_anchor_for_width_and_gap_previews() {
+        let now = Instant::now();
+        for placement in Action::POSITIONS {
+            for tiling in Action::TILING {
+                for next in [Action::ShrinkWidth, Action::ExpandWidth, Action::FillGap] {
+                    let mut preview = PositionPreview::new(placement);
+                    preview.select(tiling, 25, now);
+                    preview.select(next, 25, now);
+                    let mut expected = PositionPreview::new(placement);
+                    expected.select(next, 25, now);
+                    assert_eq!(preview.placement, placement);
+                    assert_eq!(preview.to, expected.to);
+                }
+            }
         }
     }
 }
@@ -288,6 +309,23 @@ impl Settings {
     }
 
     fn invoke(&mut self, invocation: crate::shortcuts::Invocation, cx: &mut Context<Self>) {
+        if invocation.action == Action::ResizeMode {
+            // Shortcuts holds the glow for as long as the mode lasts.
+            let individual = self
+                .shortcuts
+                .as_ref()
+                .is_some_and(|s| s.resizing_individually());
+            self.message(
+                if individual {
+                    "Resize mode, this window only: H/L narrower/wider, K/J shorter/taller · I shares edges · Esc finishes"
+                } else {
+                    "Resize mode: H/J/K/L or arrows move shared edges · I sizes this window only · Esc finishes"
+                },
+                false,
+                cx,
+            );
+            return;
+        }
         match crate::positioning::apply_gesture(
             &self.active,
             &self.path,
@@ -439,6 +477,15 @@ impl Settings {
         }
         let tray_changed = self.active.tray_icon != self.draft.tray_icon;
         self.active = self.draft.clone();
+        #[cfg(windows)]
+        if let Err(error) = crate::tiling::saved_settings(&self.active, &self.path) {
+            self.message(
+                format!("Saved, but could not update tiling: {error:#}"),
+                true,
+                cx,
+            );
+            return;
+        }
         if tray_changed
             && let Err(error) = crate::tray::set_style(&self._tray.icon, self.active.tray_icon)
         {
@@ -559,19 +606,40 @@ impl Render for Settings {
                     }))
                     .child(div().text_sm().child(binding.action.label()))
                     .child(
-                        button(
-                            ("binding", index),
-                            if active {
-                                "Recording…"
-                            } else if binding.shortcut.is_empty() {
-                                "Disabled"
-                            } else {
-                                &binding.shortcut
-                            },
-                        )
-                        .on_click(
-                            cx.listener(move |this, _, window, cx| this.record(index, window, cx)),
-                        ),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                button(
+                                    ("binding", index),
+                                    if active {
+                                        "Recording…"
+                                    } else if binding.shortcut.is_empty() {
+                                        "Disabled"
+                                    } else {
+                                        &binding.shortcut
+                                    },
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| this.record(index, window, cx),
+                                )),
+                            )
+                            .when(!active && !binding.shortcut.is_empty(), |el| {
+                                el.child(button(("unbind", index), "Clear").on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.draft.bindings[index].shortcut.clear();
+                                        this.message(
+                                            format!(
+                                                "{} unassigned. Save to activate.",
+                                                this.draft.bindings[index].action.label()
+                                            ),
+                                            false,
+                                            cx,
+                                        );
+                                    },
+                                )))
+                            }),
                     )
             })
             .collect::<Vec<_>>();
@@ -583,21 +651,43 @@ impl Render for Settings {
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Your windows. A keystroke away.")))
                 .child(div().text_xs().text_color(rgb(0x6ee7c0)).child(platform::description())))
             .child(div().flex().flex_1().min_h_0().gap_6()
-                .child(div().id("bindings").flex().flex_col().gap_2().flex_1().overflow_y_scroll()
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).mb_2().child("HOVER TO PREVIEW · CLICK A SHORTCUT TO RECORD"))
-                    .children(rows))
-                .child(div().id("placement-options").w(px(264.)).flex_shrink_0().min_h_0().overflow_y_scroll().flex().flex_col().gap_4().p_4().rounded_lg().bg(rgb(0x131e2c))
-                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Position preview"))
-                    .child(div().relative().flex_shrink_0().w(px(PREVIEW_AREA.width as f32)).h(px(PREVIEW_AREA.height as f32)).rounded_md().overflow_hidden().bg(rgb(0x090f19)).border_1().border_color(rgb(0x354961))
-                        .when(selected.adjusts_pair(), |el| el.child(div().absolute().left(px(preview_x)).top(px(0.)).w(px(preview_width)).h(px(preview_y.max(0.))).bg(rgb(0x355b91)).border_1().border_color(rgb(0x8bb5ef))))
-                        .child(div().absolute().left(px(preview_x)).top(px(preview_y))
-                            .w(px(preview_width)).h(px(preview_height)).rounded_sm()
-                            .bg(rgb(0x258c78)).border_1().border_color(rgb(0x6ee7c0))))
-                    .child(div().text_sm().child(selected.label()))
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Hover a keybinding to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."))
+                // Left: experimental toggles stay fixed above the scrolling bindings.
+                .child(div().flex().flex_col().flex_1().min_w_0().min_h_0().gap_3()
+                    .when(cfg!(windows), |el| el.child(div().flex_shrink_0().flex().gap_4().p_3().rounded_lg().bg(rgb(0x131e2c))
+                        .child(div().flex().flex_col().gap_2().flex_1().min_w_0()
+                            .child(button("tiling-enabled", if self.draft.tiling.enabled { "Automatic tiling: On" } else { "Automatic tiling: Off" })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.draft.tiling.enabled = !this.draft.tiling.enabled;
+                                    this.message("Automatic tiling updated. Save to activate.", false, cx);
+                                })))
+                            .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Experimental. Dwindle tiles restored windows on the current desktop. Moving or snapping a tile floats it.")))
+                        .child(div().flex().flex_col().gap_2().flex_1().min_w_0()
+                            .child(button("tiling-snap-rearranges", if self.draft.tiling.snap_rearranges { "Snaps rearrange tiles: On" } else { "Snaps rearrange tiles: Off" })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.draft.tiling.snap_rearranges = !this.draft.tiling.snap_rearranges;
+                                    this.message("Snap behavior updated. Save to activate.", false, cx);
+                                })))
+                            .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Half and quarter snaps move the other tiles into the remaining space instead of covering them.")))))
+                    .child(div().flex_shrink_0().text_xs().text_color(rgb(0x91a4bb)).child("HOVER TO PREVIEW · CLICK A SHORTCUT TO RECORD"))
+                    .child(div().id("bindings").flex().flex_col().gap_2().flex_1().min_h_0().overflow_y_scroll()
+                        .children(rows)))
+                // Right: the preview stays fixed above the scrolling options.
+                .child(div().w(px(264.)).flex_shrink_0().min_h_0().flex().flex_col().gap_4()
+                    .child(div().flex_shrink_0().flex().flex_col().gap_2().p_4().rounded_lg().bg(rgb(0x131e2c))
+                        .child(div().text_sm().font_weight(FontWeight::BOLD).child("Position preview"))
+                        .child(div().relative().flex_shrink_0().w(px(PREVIEW_AREA.width as f32)).h(px(PREVIEW_AREA.height as f32)).rounded_md().overflow_hidden().bg(rgb(0x090f19)).border_1().border_color(rgb(0x354961))
+                            .when(selected.adjusts_pair(), |el| el.child(div().absolute().left(px(preview_x)).top(px(0.)).w(px(preview_width)).h(px(preview_y.max(0.))).bg(rgb(0x355b91)).border_1().border_color(rgb(0x8bb5ef))))
+                            .child(div().absolute().left(px(preview_x)).top(px(preview_y))
+                                .w(px(preview_width)).h(px(preview_height)).rounded_sm()
+                                .bg(rgb(0x258c78)).border_1().border_color(rgb(0x6ee7c0))))
+                        .child(div().text_sm().child(selected.label())))
+                .child(div().id("placement-options").flex_1().min_h_0().overflow_y_scroll().flex().flex_col().gap_4().p_4().rounded_lg().bg(rgb(0x131e2c))
+                    .when(selected.is_tiling(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Experimental Windows tiling action. Turn on Automatic tiling above the shortcuts or use Toggle experimental tiling. These actions edit the live layout and have no fixed snap position.")))
                     .when(selected.adjusts_pair(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Move the shared boundary by 25% of the selected window's current height, with a 50/50 stop when returning toward the middle. Blue shows the neighbor. Windows only; matching left and right edges required.")))
                     .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("H: left, J: down, K: up, L: right. Tap H/J/K/L to navigate background windows by default. Inside a centered group, H/L rotate continuously. Hold for 400 ms to enter covered middle windows from an edge, or exit a middle window to a background edge window. Holds are Windows only; centered groups rotate on Windows and GNOME on Wayland.")))
-                    .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+Shift+8 (*).")))
+                    .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+. (period).")))
+                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Hover a keybinding to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."))
+                    .when(!cfg!(windows), |el| el.child(div().text_xs().text_color(rgb(0x91a4bb)).child("Automatic tiling is currently available on Windows only.")))
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("General"))
                     .child(div().text_sm().child("Launch at login"))
@@ -765,7 +855,7 @@ impl Render for Settings {
                         "GNOME: saving registers these as GNOME keyboard shortcuts. The first time, log out and back in so GNOME loads the tt-pane extension."
                     } else if platform::is_wayland() {
                         "This Wayland compositor isn't supported yet. tt-pane runs on GNOME (Wayland) and in X11 sessions."
-                    } else { "Closing settings keeps tt-pane running in the tray. Use the tray menu to quit." }))))
+                    } else { "Closing settings keeps tt-pane running in the tray. Use the tray menu to quit." })))))
             .children({
                 #[cfg(windows)]
                 { Some(div().flex().flex_col().gap_2()
@@ -1243,6 +1333,10 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                                 && group_observed.elapsed() >= Duration::from_millis(100)
                             {
                                 group_observed = std::time::Instant::now();
+                                #[cfg(windows)]
+                                if let Err(e) = crate::tiling::observe(&this.active, &this.path) {
+                                    this.message(format!("Tiling: {e:#}"), true, cx);
+                                }
                                 if let Err(e) =
                                     crate::centered::observe(&this.path, this.active.center_layout)
                                 {

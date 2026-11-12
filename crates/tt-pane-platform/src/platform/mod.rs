@@ -15,7 +15,7 @@ pub fn apply(action: Action) -> Result<()> {
         return focus_window(None, action);
     }
     anyhow::ensure!(
-        action != Action::FillGap && !action.adjusts_pair(),
+        action != Action::FillGap && !action.adjusts_pair() && !action.is_tiling(),
         "This action requires the positioning coordinator"
     );
     apply_with(None, &mut |_, area, current| {
@@ -52,7 +52,7 @@ pub fn apply_to_window(action: Action, handle: u64) -> Result<()> {
         return focus_window(Some(handle), action);
     }
     anyhow::ensure!(
-        action != Action::FillGap && !action.adjusts_pair(),
+        action != Action::FillGap && !action.adjusts_pair() && !action.is_tiling(),
         "This action requires the positioning coordinator"
     );
     apply_with(Some(handle), &mut |_, area, current| {
@@ -107,9 +107,11 @@ pub use windows::attach_parent_console;
 #[cfg(all(windows, feature = "window-icon"))]
 pub use windows::set_window_icon;
 #[cfg(windows)]
+pub use windows::{TilingDesktop, TilingWindow, move_tiling_window, tiling_desktop};
+#[cfg(windows)]
 pub use windows::{
-    WindowSnapshot, choose_glow_color, focus_snapshot, foreground_handle, move_snapshot,
-    show_focus_glow, wait_for_focus_glow, window_snapshot,
+    WindowSnapshot, choose_glow_color, focus_snapshot, foreground_handle, hold_focus_glow,
+    move_snapshot, release_focus_glow, show_focus_glow, wait_for_focus_glow, window_snapshot,
 };
 
 /// Move the shared boundary of a window and its vertical neighbor.

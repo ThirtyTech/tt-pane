@@ -32,6 +32,8 @@ pub struct Config {
     #[serde(default)]
     pub center_layout: CenterLayout,
     #[serde(default)]
+    pub tiling: Tiling,
+    #[serde(default)]
     pub growth: Growth,
     #[serde(default)]
     pub width_resize: WidthResize,
@@ -42,6 +44,52 @@ pub struct Config {
 
 fn enabled() -> bool {
     true
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TilingLayout {
+    #[default]
+    Dwindle,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Tiling {
+    pub enabled: bool,
+    pub layout: TilingLayout,
+    pub default_split_ratio: f64,
+    pub split_width_multiplier: f64,
+    pub preserve_split: bool,
+    /// Half/quarter snaps dock the window into the layout instead of floating it.
+    pub snap_rearranges: bool,
+    /// Exact executable basenames, matched without ASCII case sensitivity.
+    pub float_apps: Vec<String>,
+}
+
+impl Default for Tiling {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            layout: TilingLayout::Dwindle,
+            default_split_ratio: 0.5,
+            split_width_multiplier: 1.0,
+            preserve_split: true,
+            snap_rearranges: false,
+            float_apps: Vec::new(),
+        }
+    }
+}
+
+impl Tiling {
+    pub fn tree(&self) -> Result<crate::platform::tiling::Dwindle> {
+        crate::platform::tiling::Dwindle::new(
+            self.default_split_ratio,
+            self.split_width_multiplier,
+            self.preserve_split,
+        )
+        .map_err(|_| anyhow::anyhow!("Invalid tiling split settings"))
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,7 +226,7 @@ impl Default for Config {
             "0",
             "-",
             "=",
-            "Shift+8",
+            ".",
             "ArrowUp",
             "ArrowDown",
             "h",
@@ -191,20 +239,45 @@ impl Default for Config {
             gaps: crate::geometry::SnapGaps::default(),
             launch_at_login: true,
             center_layout: CenterLayout::default(),
+            tiling: Tiling::default(),
             tray_icon: TrayIconStyle::default(),
             growth: Growth::default(),
             width_resize: WidthResize::default(),
             focus: Focus::default(),
             bindings: Action::ALL
                 .into_iter()
-                .zip(keys)
+                .zip(keys.into_iter().map(Some).chain(std::iter::repeat(None)))
                 .map(|(action, key)| Binding {
                     action,
-                    shortcut: format!("Ctrl+Alt+{key}"),
+                    shortcut: key.map_or_else(
+                        || tiling_default_shortcut(action).unwrap_or_default().into(),
+                        |key| format!("Ctrl+Alt+{key}"),
+                    ),
                 })
                 .collect(),
         }
     }
+}
+
+// Hyprland-style Super+Shift defaults. Windows only: tiling is Windows-only, and
+// Super+Shift letters belong to the shell on GNOME and to apps (Cmd) on macOS.
+// Windows reserves Win+Shift+S/T/P/R/X, so the split toggle uses O (orientation)
+// and toggle-tiling uses G (grid). Resize mode uses E, since R is taken.
+fn tiling_default_shortcut(action: Action) -> Option<&'static str> {
+    if !cfg!(windows) {
+        return None;
+    }
+    Some(match action {
+        Action::SwapLeft => "Shift+Super+h",
+        Action::SwapDown => "Shift+Super+j",
+        Action::SwapUp => "Shift+Super+k",
+        Action::SwapRight => "Shift+Super+l",
+        Action::ToggleFloat => "Shift+Super+f",
+        Action::ToggleSplit => "Shift+Super+o",
+        Action::ToggleTiling => "Shift+Super+g",
+        Action::ResizeMode => "Shift+Super+e",
+        _ => return None,
+    })
 }
 
 impl Config {
@@ -261,7 +334,9 @@ impl Config {
         );
         config.normalize_letter_keys();
         config.repair(&mut warnings);
-        config.add_missing_focus_bindings();
+        config.add_missing_bindings(|action| {
+            action.focuses() || action.is_tiling() || action == Action::ResizeMode
+        });
         config.validate()?;
         Ok((config, warnings))
     }
@@ -339,23 +414,24 @@ impl Config {
         }
     }
 
-    // Introduce new focus defaults without overriding custom or disabled actions.
+    // Introduce new defaults without overriding custom or disabled actions.
     // A default already assigned to another action stays unbound in Settings.
-    fn add_missing_focus_bindings(&mut self) {
+    fn add_missing_bindings(&mut self, include: impl Fn(Action) -> bool) {
         for mut binding in Self::default()
             .bindings
             .into_iter()
-            .filter(|b| b.action.focuses())
+            .filter(|b| include(b.action))
         {
             if self.bindings.iter().any(|b| b.action == binding.action) {
                 continue;
             }
-            let key = binding.shortcut.parse::<HotKey>().unwrap();
-            if self.bindings.iter().any(|b| {
-                b.shortcut
-                    .parse::<HotKey>()
-                    .is_ok_and(|k| k.id() == key.id())
-            }) {
+            if let Ok(key) = binding.shortcut.parse::<HotKey>()
+                && self.bindings.iter().any(|b| {
+                    b.shortcut
+                        .parse::<HotKey>()
+                        .is_ok_and(|k| k.id() == key.id())
+                })
+            {
                 binding.shortcut.clear();
             }
             self.bindings.push(binding);
@@ -363,6 +439,22 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        self.tiling.tree()?;
+        ensure!(
+            (0.1..=10.0).contains(&self.tiling.split_width_multiplier),
+            "Tiling split width multiplier must be between 0.1 and 10"
+        );
+        ensure!(
+            self.tiling.float_apps.len() <= 128
+                && self
+                    .tiling
+                    .float_apps
+                    .iter()
+                    .all(|app| !app.trim().is_empty()
+                        && app.len() <= 260
+                        && !app.contains(['/', '\\', '*', '?'])),
+            "Tiling float_apps must contain at most 128 executable basenames (no paths or wildcards)"
+        );
         ensure!(
             self.gaps.inner <= 100 && self.gaps.outer <= 100,
             "Window gaps must be between 0 and 100"
@@ -445,6 +537,75 @@ impl Config {
 mod tests {
     use super::*;
     #[test]
+    fn tiling_defaults_migrate_and_roundtrip_without_enabling_shortcuts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "version = 1\nbindings = []").unwrap();
+        let mut config = Config::load(&path).unwrap();
+        assert_eq!(config.tiling, Tiling::default());
+        for action in Action::TILING {
+            let expected = tiling_default_shortcut(action).unwrap_or_default();
+            assert!(
+                config
+                    .bindings
+                    .iter()
+                    .any(|b| b.action == action && b.shortcut == expected)
+            );
+        }
+        // Explicitly disabled tiling bindings and taken keys stay unbound.
+        std::fs::write(
+            &path,
+            "version = 1\n[[bindings]]\naction = 'swap-left'\nshortcut = ''\n\
+             [[bindings]]\naction = 'left'\nshortcut = 'Shift+Super+j'",
+        )
+        .unwrap();
+        let migrated = Config::load(&path).unwrap();
+        for action in [Action::SwapLeft, Action::SwapDown] {
+            assert!(
+                migrated
+                    .bindings
+                    .iter()
+                    .any(|b| b.action == action && b.shortcut.is_empty())
+            );
+        }
+        if cfg!(windows) {
+            assert!(
+                Config::default()
+                    .bindings
+                    .iter()
+                    .all(|b| { b.shortcut.is_empty() || b.shortcut.parse::<HotKey>().is_ok() })
+            );
+        }
+        config.tiling = Tiling {
+            enabled: true,
+            default_split_ratio: 0.6,
+            split_width_multiplier: 1.4,
+            preserve_split: false,
+            float_apps: vec!["notepad.exe".into()],
+            ..Tiling::default()
+        };
+        config.save(&path).unwrap();
+        assert_eq!(Config::load(&path).unwrap().tiling, config.tiling);
+        for ratio in [0.0, 1.0, f64::NAN, f64::INFINITY] {
+            let mut invalid = config.clone();
+            invalid.tiling.default_split_ratio = ratio;
+            assert!(invalid.validate().is_err());
+        }
+        for multiplier in [0.0, 11.0, f64::NAN, f64::INFINITY] {
+            let mut invalid = config.clone();
+            invalid.tiling.split_width_multiplier = multiplier;
+            assert!(invalid.validate().is_err());
+        }
+        for app in ["", " ", "C:\\app.exe", "*.exe"] {
+            let mut invalid = config.clone();
+            invalid.tiling.float_apps = vec![app.into()];
+            assert!(invalid.validate().is_err());
+        }
+        assert!(
+            toml::from_str::<Config>("version=1\nbindings=[]\n[tiling]\nlayout='master'").is_err()
+        );
+    }
+    #[test]
     fn existing_configs_keep_bindings_and_gain_default_growth() {
         let config: Config = toml::from_str(
             "version = 1\n[[bindings]]\naction = 'left'\nshortcut = 'Ctrl+Alt+Digit1'",
@@ -517,7 +678,7 @@ mod tests {
     }
 
     #[test]
-    fn fill_gap_uses_shifted_number_row_8() {
+    fn fill_gap_uses_period() {
         let config = Config::default();
         let binding = config
             .bindings
@@ -525,9 +686,8 @@ mod tests {
             .find(|b| b.action == Action::FillGap)
             .unwrap();
         let actual: HotKey = binding.shortcut.parse().unwrap();
-        let expected: HotKey = "Ctrl+Alt+Shift+Digit8".parse().unwrap();
+        let expected: HotKey = "Ctrl+Alt+Period".parse().unwrap();
         assert_eq!(actual.id(), expected.id());
-        assert_ne!(actual.id(), "Ctrl+Alt+8".parse::<HotKey>().unwrap().id());
         config.validate().unwrap();
     }
 
@@ -892,7 +1052,7 @@ action = "left"
 shortcut = "Ctrl+Alt+Digit1"
 
 [[bindings]]
-action = "toggle-float"
+action = "future-action"
 shortcut = "Ctrl+Alt+KeyF"
 
 [[bindings]]
@@ -910,7 +1070,7 @@ shortcut = "Ctrl+Alt+Digit1"
         for expected in [
             "`future_mode`",
             "`focus.glow_shape`",
-            "`toggle-float`",
+            "`future-action`",
             "`center_layout`",
             "`growth.steps`",
             "`gaps`",
@@ -956,7 +1116,7 @@ shortcut = "Ctrl+Alt+Digit1"
         let bindings = saved["bindings"].as_array().unwrap();
         let foreign: Vec<_> = bindings
             .iter()
-            .filter(|b| b["action"].as_str() == Some("toggle-float"))
+            .filter(|b| b["action"].as_str() == Some("future-action"))
             .collect();
         assert_eq!(foreign.len(), 1, "preserved once across repeated saves");
         assert_eq!(foreign[0]["shortcut"].as_str(), Some("Ctrl+Alt+KeyF"));
