@@ -125,29 +125,6 @@ impl PositionPreview {
     }
 }
 
-#[cfg(test)]
-mod preview_tests {
-    use super::{Action, Instant, PositionPreview};
-
-    #[test]
-    fn tiling_hover_preserves_snap_anchor_for_width_and_gap_previews() {
-        let now = Instant::now();
-        for placement in Action::POSITIONS {
-            for tiling in Action::TILING {
-                for next in [Action::ShrinkWidth, Action::ExpandWidth, Action::FillGap] {
-                    let mut preview = PositionPreview::new(placement);
-                    preview.select(tiling, 25, now);
-                    preview.select(next, 25, now);
-                    let mut expected = PositionPreview::new(placement);
-                    expected.select(next, 25, now);
-                    assert_eq!(preview.placement, placement);
-                    assert_eq!(preview.to, expected.to);
-                }
-            }
-        }
-    }
-}
-
 struct Settings {
     draft: Config,
     active: Config,
@@ -1372,5 +1349,28 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
     match result.borrow_mut().take() {
         Some(error) => Err(error),
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::{Action, Instant, PositionPreview};
+
+    #[test]
+    fn tiling_hover_preserves_snap_anchor_for_width_and_gap_previews() {
+        let now = Instant::now();
+        for placement in Action::POSITIONS {
+            for tiling in Action::TILING {
+                for next in [Action::ShrinkWidth, Action::ExpandWidth, Action::FillGap] {
+                    let mut preview = PositionPreview::new(placement);
+                    preview.select(tiling, 25, now);
+                    preview.select(next, 25, now);
+                    let mut expected = PositionPreview::new(placement);
+                    expected.select(next, 25, now);
+                    assert_eq!(preview.placement, placement);
+                    assert_eq!(preview.to, expected.to);
+                }
+            }
+        }
     }
 }
