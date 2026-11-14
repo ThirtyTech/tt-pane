@@ -54,7 +54,7 @@ Outside centered groups, focus moves to the nearest window by center distance wi
 
 **Include middle windows in H/J/K/L navigation** in Settings defaults to **Off**, including for existing configurations. Outside a centered group, regular H/J/K/L and CLI focus navigate background edge-snapped windows. Turn it On to include floating and centered windows. Inside a centered group, H/L always rotates through its members.
 
-When middle-window navigation is enabled, **Settings → Advanced → Filter middle windows by visibility** optionally requires more than the **Minimum middle-window visibility** percentage of a middle window's frame to be on-screen and uncovered. The filter defaults to Off and the percentage to 10% (range 0–99%). This applies to spatial navigation, not H/L rotation inside a group or hold-to-enter. Edge snaps remain reachable when covered. Minimized, hidden, cloaked, and utility windows stay excluded. Advanced starts collapsed and also contains width and growth controls.
+When middle-window navigation is enabled, **Settings → Focus → Filter middle windows by visibility** optionally requires more than the **Minimum visible** percentage of a middle window's frame to be on-screen and uncovered. The filter defaults to Off and the percentage to 10% (range 0–99%). This applies to spatial navigation, not H/L rotation inside a group or hold-to-enter. Edge snaps remain reachable when covered. Minimized, hidden, cloaked, and utility windows stay excluded.
 
 Tap **Ctrl+Alt+H/L** (release before **400 ms**) for regular navigation. Hold for **400 ms** from a background edge-snapped window to enter middle windows, including covered ones; when a centered group lies in that direction, the hold goes to its active member even if another floating window is nearer. From a floating window outside a group, a hold reaches background edge-snapped windows or a centered group. From a centered member, hold to exit to background edge-snapped windows on the same monitor. Holds fire once; release before holding again. If no candidate qualifies, focus stays put. Remapped horizontal focus shortcuts work the same way. Holds require the running tray app.
 
@@ -76,7 +76,7 @@ CLI Center/focus actions share the same saved groups. Mouse and Alt+Tab observat
 
 1. Open **Settings…** from the tray menu.
 2. Click a shortcut and press your replacement combination.
-3. Press **Escape** to cancel recording, or **Backspace** to disable that action. **Clear** next to a shortcut unassigns it without recording.
+3. Press **Escape** to cancel recording, or **Backspace** to disable that action. Hover a row and click the red ⊘ beside its shortcut to unassign it without recording.
 4. Select **Save changes**.
 
 Duplicate shortcuts are rejected. Native registration conflicts appear in Settings; failed registration preserves the previous bindings. On GNOME Wayland, saving re-registers the GNOME shortcuts. See [platform setup](/tt-pane/platforms/).

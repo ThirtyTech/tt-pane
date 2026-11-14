@@ -56,7 +56,7 @@ Install a recent stable Rust toolchain, then:
 cargo run --release
 ```
 
-tt-pane starts in the system tray without a settings window. Open **Settings…** from its tray menu, click a shortcut to record a replacement, then **Save changes**. Escape cancels recording; **Clear** next to a shortcut (or Backspace while recording) unassigns it. Changes are validated for duplicate actions and shortcuts. Native registration conflicts appear in the settings screen, and a failed registration preserves the previous bindings. Saving uses a temporary file in the same directory followed by replacement.
+tt-pane starts in the system tray without a settings window. Open **Settings…** from its tray menu, click a shortcut to record a replacement, then **Save changes**. Escape cancels recording; the red ⊘ that appears when you hover a shortcut's row (or Backspace while recording) unassigns it. Settings is split into **Shortcuts**, **Snapping**, **Tiling**, **Focus** and **General** tabs; a dot marks tabs with unsaved changes, and **Reset defaults** and **Save changes** at the bottom apply to every tab. Changes are validated for duplicate actions and shortcuts. Native registration conflicts appear in the settings screen, and a failed registration preserves the previous bindings. Saving uses a temporary file in the same directory followed by replacement.
 
 Closing Settings leaves the tray and shortcuts running. **Quit tt-pane** in the tray menu exits the app. `tt-pane settings` opens settings immediately when starting an instance. Start one tray instance at a time; general single-instance forwarding is not implemented. Reopening the macOS app from Finder, Launchpad, or Spotlight shows Settings in the running instance.
 
@@ -82,9 +82,9 @@ The command-line positioning tool can be built independently of GPUI:
 cargo build --release --no-default-features
 ```
 
-## Experimental automatic tiling (Windows)
+## Experimental automatic tiling
 
-Enable **Settings > Experimental > Automatic tiling** and save (Windows, macOS, GNOME on Wayland and X11). Dwindle tiles existing and newly opened eligible windows on the current virtual desktop, Space or workspace, with a separate layout per monitor. It is off by default. Closing/minimizing a tile reflows its neighbors; moving or snapping a tile makes it floating. Turning tiling off leaves windows in place. Keep the tray running for automatic updates.
+Turn on **Settings → Tiling → Tile windows automatically** and save (Windows, macOS, GNOME on Wayland and X11). Dwindle tiles existing and newly opened eligible windows on the current virtual desktop, Space or workspace, with a separate layout per monitor. It is off by default. Closing/minimizing a tile reflows its neighbors; moving or snapping a tile makes it floating. Turning tiling off leaves windows in place. Keep the tray running for automatic updates.
 
 The new toggle-float, swap-left/down/up/right, toggle-split, split-grow/shrink, and toggle-tiling actions default to Win+Shift+H/J/K/L (swap), Win+Shift+F (float) and Win+Shift+O (split) and Win+Shift+G (toggle tiling), with grow/shrink unbound; all work through Settings shortcuts, `tt-pane apply`, and Herdr. On a tiled window, H/J/K/L navigates the tree (then other monitors), -/= changes the split ratio, and Up/Down moves the nearest horizontal boundary. Win+Shift+E enters resize mode: H/J/K/L or the arrows move the divider next to the focused tile in that direction (or the shared window edge with tiling off), I switches to sizing the focused window alone, and Esc or Enter finishes. With tiling off, Win+Shift+H/J/K/L still swaps the focused window with its nearest neighbor in that direction. See the [configuration reference](docs-site/src/content/docs/configuration.md) for options, runtime toggling, exclusions, and current limitations. Tiling also runs on macOS, GNOME Wayland (extension version 4) and X11 with an EWMH window manager, with tiling shortcuts unbound by default there.
 
@@ -118,7 +118,7 @@ The digit shortcuts use number-row keys (Digit0 through Digit9). The minus short
 
 **Ctrl+Alt+-** reduces the current width by 25%; **Ctrl+Alt+=** increases it by 25%. Both preserve height and vertical position. The last matching placement supplies the anchor: left positions keep their left edge, right positions keep their right edge, and centered positions keep their midpoint. For a manually placed window, its horizontal position on the current monitor determines the anchor. Shrinking a bottom-left window moves only its right edge inward.
 
-Repeated presses keep resizing, with no reset cycle. Expansion stops at the available monitor boundary for that anchor, and shrinking stops at the application's minimum width (at least one pixel). Steps are measured from the placed width, so shrinking and expanding undo each other: 1000 → 750 → 1000 pixels (and 1000 → 1250 → 1000). Adjust the shared percentage under **Advanced → Width adjustment → Width change per press** in Settings (1–99%, default 25%). The two-dimensional growth controls below it apply only to repeated positioning shortcuts.
+Repeated presses keep resizing, with no reset cycle. Expansion stops at the available monitor boundary for that anchor, and shrinking stops at the application's minimum width (at least one pixel). Steps are measured from the placed width, so shrinking and expanding undo each other: 1000 → 750 → 1000 pixels (and 1000 → 1250 → 1000). Adjust the shared percentage under **Settings → Snapping → Width change per press** (1–99%, default 25%). The two-dimensional growth controls below it apply only to repeated positioning shortcuts.
 
 In Position preview, hover a placement first, then Shrink width or Expand width to see how the width changes for that placement. The preview uses the configured width percentage.
 
@@ -138,7 +138,7 @@ Tap **Ctrl+Alt+H/L** (release before **400 ms**) for regular navigation. Hold fo
 
 **Include middle windows in H/J/K/L navigation** in Settings defaults to **Off**, including for existing configurations. Outside a centered group, regular H/J/K/L and CLI focus navigate background edge-snapped windows. Turn it On to include floating and centered windows. Inside a centered group, H/L always rotates through its members. Spatial navigation chooses the nearest eligible window in a 90-degree cone and can cross monitors. Equal-distance ties prefer the topmost window. Edge snaps fit inside the work area and touch an edge within two pixels. Explicit Center members remain middle windows even when grown to an edge.
 
-When middle-window navigation is enabled, **Settings → Advanced → Filter middle windows by visibility** optionally requires more than the **Minimum middle-window visibility** percentage of a middle window's frame to be on-screen and uncovered. The filter defaults to Off and the percentage to 10% (range 0–99%). This applies to spatial navigation, not H/L rotation inside a group or hold-to-enter. Edge snaps remain reachable when covered. Minimized, hidden, cloaked, and utility windows stay excluded. Advanced starts collapsed and also contains width and growth controls.
+When middle-window navigation is enabled, **Settings → Focus → Filter middle windows by visibility** optionally requires more than the **Minimum visible** percentage of a middle window's frame to be on-screen and uncovered. The filter defaults to Off and the percentage to 10% (range 0–99%). This applies to spatial navigation, not H/L rotation inside a group or hold-to-enter. Edge snaps remain reachable when covered. Minimized, hidden, cloaked, and utility windows stay excluded.
 
 ```toml
 [focus]
@@ -151,7 +151,7 @@ Spatial navigation stays put when there is no candidate. Centered-group H/L wrap
 
 ### Focus glow (Windows)
 
-Moving/resizing a window or using Vim-style focus navigation briefly highlights the target with a soft gradient glow. The cue fades in and out over 480 ms without taking focus or intercepting clicks. Repeated tray shortcuts replace the previous cue. In **Settings → Window focus**, toggle **Focus glow** or click **Color** to choose any color, then **Save changes**. It defaults to On with neutral off-white (`#F2F0E8`), including existing configurations.
+Moving/resizing a window or using Vim-style focus navigation briefly highlights the target with a soft gradient glow. The cue fades in and out over 480 ms without taking focus or intercepting clicks. Repeated tray shortcuts replace the previous cue. In **Settings → Focus**, toggle **Highlight the focused window** or click **Glow color** to choose any color, then **Save changes**. It defaults to On with neutral off-white (`#F2F0E8`), including existing configurations.
 
 The `[focus]` section also accepts `glow_enabled = true` and `glow_color = "#F2F0E8"` (six hex digits). CLI actions use the same settings and wait for the brief animation before exiting. The cue ends early if focus changes, the target moves again, or it becomes hidden/minimized. Other platforms retain these settings but do not render the glow.
 
@@ -181,7 +181,7 @@ Press the same positioning shortcut again on the same window to grow it. By defa
 
 Corners stay anchored: bottom left grows upward and to the right. Left/right halves grow inward horizontally; top/bottom halves grow inward vertically. Center starts at 50% width and 50% height, grows equally in every direction, and resets to that centered size. For example, Center after a left-half snap reduces the full height to half height. Growth is capped at the current monitor's available work area, so an already full dimension stays full. Fill work area remains full throughout the cycle.
 
-In Settings, use **Growth per press** (1–100%) and **Growth steps before reset** (0–20), then **Save changes**. Zero steps disables growth. Changing the action, target window, monitor work area, or growth settings starts a new cycle. Moving or resizing the window externally also starts a new cycle (allowing two pixels for platform rounding). There is no timeout between presses.
+In **Settings → Snapping**, use **Growth per press** (1–100%) and **Steps before reset** (0–20), then **Save changes**. Zero steps disables growth. Changing the action, target window, monitor work area, or growth settings starts a new cycle. Moving or resizing the window externally also starts a new cycle (allowing two pixels for platform rounding). There is no timeout between presses.
 
 Tray shortcuts, `apply`, Herdr actions, and GNOME shortcuts share the same cycle for a configuration file. State is stored in `<config-path>.cycle.json`, with a separate `.cycle.lock` file to serialize concurrent invocations. Deleting the state file resets the cycle. Failed native requests do not advance it. Windows and macOS store observed bounds; X11/Wayland store requested bounds because their operations are asynchronous, so compositor-imposed bounds can restart a cycle.
 
@@ -199,7 +199,7 @@ Wayland does not offer a universal API to reposition another application's windo
 
 ### GNOME on Wayland
 
-GNOME doesn't let applications move other applications' windows, so tt-pane ships a small GNOME Shell extension (`packaging/gnome/tt-pane@thirtytech.net`) that reads and moves the focused window on request over the session bus. Click **Set up GNOME** or **Save changes** in Settings, or run:
+GNOME doesn't let applications move other applications' windows, so tt-pane ships a small GNOME Shell extension (`packaging/gnome/tt-pane@thirtytech.net`) that reads and moves the focused window on request over the session bus. Click **Set up GNOME** (Settings → General) or **Save changes** in Settings, or run:
 
 ```sh
 tt-pane gnome setup

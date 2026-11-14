@@ -48,7 +48,7 @@ Enable a StatusNotifierItem tray host: KDE, Waybar’s tray module, or GNOME’s
 
 Wayland has no universal API for repositioning other applications, and native Wayland windows cannot be managed through the X11 backend. On GNOME, tt-pane installs a small Shell extension that moves and focuses windows on request, and registers your bindings as GNOME custom shortcuts. Tiling compositors such as Sway and Hyprland manage placement and focus themselves and aren't supported.
 
-A release build sets this up at startup. You can also click **Set up GNOME** in Settings, or run:
+A release build sets this up at startup. You can also click **Set up GNOME** in Settings → General, or run:
 
 ```sh
 tt-pane gnome setup

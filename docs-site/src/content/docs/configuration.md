@@ -5,7 +5,7 @@ description: Customize shortcuts, growth, width changes, and scripted window pos
 
 ## Settings
 
-Open **Settings…** from the tray. Hover a keybinding row to see the position preview; click its shortcut to record a replacement. **Save changes** validates and applies your settings. Closing the window leaves tt-pane and its shortcuts running.
+Open **Settings…** from the tray. Settings has five tabs: **Shortcuts** (keybindings and the position preview), **Snapping** (center layout, gaps, width and growth steps), **Tiling**, **Focus** (focus glow and H/J/K/L navigation) and **General** (launch at login, tray icon, updates, GNOME setup). A dot on a tab marks unsaved changes there. Hover a keybinding row to see the position preview; click its shortcut to record a replacement. **Save changes** validates and applies the settings on every tab, and **Reset defaults** resets all of them. Closing the window leaves tt-pane and its shortcuts running.
 
 The settings screen displays the resolved configuration path:
 
@@ -58,17 +58,17 @@ shortcut = "Ctrl+Alt+2"
 
 **Include middle windows in H/J/K/L navigation** in Settings defaults to **Off**, including for existing configurations. Outside a centered group, regular H/J/K/L and CLI focus navigate background edge-snapped windows. Turn it On to include floating and centered windows. Inside a centered group, H/L always rotates through its members.
 
-When middle-window navigation is enabled, **Settings → Advanced → Filter middle windows by visibility** optionally requires more than the **Minimum middle-window visibility** percentage of a middle window's frame to be on-screen and uncovered. The filter defaults to Off and the percentage to 10% (range 0–99%). This applies to spatial navigation, not H/L rotation inside a group or hold-to-enter. Edge snaps remain reachable when covered. Minimized, hidden, cloaked, and utility windows stay excluded. Advanced starts collapsed and also contains width and growth controls.
+When middle-window navigation is enabled, **Settings → Focus → Filter middle windows by visibility** optionally requires more than the **Minimum visible** percentage of a middle window's frame to be on-screen and uncovered. The filter defaults to Off and the percentage to 10% (range 0–99%). This applies to spatial navigation, not H/L rotation inside a group or hold-to-enter. Edge snaps remain reachable when covered. Minimized, hidden, cloaked, and utility windows stay excluded.
 
 Tap **Ctrl+Alt+H/L** (release before **400 ms**) for regular navigation. Hold for **400 ms** from a background edge-snapped window to enter middle windows, including covered ones; when a centered group lies in that direction, the hold goes to its active member even if another floating window is nearer. From a floating window outside a group, a hold reaches background edge-snapped windows or a centered group. From a centered member, hold to exit to background edge-snapped windows on the same monitor. Holds fire once; release before holding again. If no candidate qualifies, focus stays put. Remapped horizontal focus shortcuts work the same way. Holds require the running tray app.
 
-Saved growth settings are preserved on upgrade. New configurations and files without growth settings default to 15% and three steps; reset defaults and save to adopt these values in an existing configuration. Width and growth controls are under **Advanced**, which starts collapsed.
+Saved growth settings are preserved on upgrade. New configurations and files without growth settings default to 15% and three steps; reset defaults and save to adopt these values in an existing configuration. Width and growth controls are on the **Snapping** tab.
 
 Old `include_obscured = false` settings migrate to 50%, and `true` or an omitted value migrates to 10%. An explicit `minimum_visible_percent` wins if both keys exist. Saving writes only the new percentage key.
 
 ## Tiling (experimental)
 
-**Settings → Experimental → Automatic tiling** enables dwindle tiling on Windows, macOS, GNOME on Wayland and X11 (see [platform notes](/tt-pane/platforms/)). It defaults to **Off**, including existing configurations. **Save changes** activates the setting and tiles already-open eligible windows on the current virtual desktop, Space or workspace. Turn it off and save to leave windows where they are. Keep the tray app running for automatic updates (polled every 100 ms); standalone CLI actions reconcile once.
+**Settings → Tiling → Tile windows automatically** enables dwindle tiling on Windows, macOS, GNOME on Wayland and X11 (see [platform notes](/tt-pane/platforms/)). It defaults to **Off**, including existing configurations. **Save changes** activates the setting and tiles already-open eligible windows on the current virtual desktop, Space or workspace. Turn it off and save to leave windows where they are. Keep the tray app running for automatic updates (polled every 100 ms); standalone CLI actions reconcile once.
 
 ```toml
 [tiling]
@@ -81,7 +81,7 @@ snap_rearranges = false
 float_apps = ["example.exe"]
 ```
 
-`default_split_ratio` is the left/top child's fraction, from 0.1 to 0.9. A node splits side-by-side when its width exceeds its height times `split_width_multiplier` (0.1–10); otherwise it splits top/bottom. `preserve_split = true` retains split directions; false recomputes directions as shapes change and disables the toggle-split action. `snap_rearranges = true` (Settings → Experimental → **Snaps rearrange tiles**) makes half and quarter snaps dock the window into the layout instead of floating it; it requires `preserve_split = true`. `float_apps` matches without case sensitivity: exact executable basenames on Windows (`example.exe`), application names on macOS (`Calculator`), and WM classes on GNOME and X11 (`org.gnome.Calculator`, `XTerm`); paths and wildcards are not supported. Edit these advanced values in the config and restart the app; configuration-file watching is not implemented.
+`default_split_ratio` is the left/top child's fraction, from 0.1 to 0.9. A node splits side-by-side when its width exceeds its height times `split_width_multiplier` (0.1–10); otherwise it splits top/bottom. `preserve_split = true` retains split directions; false recomputes directions as shapes change and disables the toggle-split action. `snap_rearranges = true` (Settings → Tiling → **Snaps rearrange tiles**) makes half and quarter snaps dock the window into the layout instead of floating it; it requires `preserve_split = true`. `float_apps` matches without case sensitivity: exact executable basenames on Windows (`example.exe`), application names on macOS (`Calculator`), and WM classes on GNOME and X11 (`org.gnome.Calculator`, `XTerm`); paths and wildcards are not supported. Edit these advanced values in the config and restart the app; configuration-file watching is not implemented.
 
 Each monitor/work-area and virtual desktop (Space on macOS, workspace on GNOME) has its own tree. New windows split the focused tile (or the last focused tile when the newly opened window has focus). Closed or minimized windows leave the tree and remaining tiles reflow; restored windows can rejoin. Existing inner and outer gap settings apply. Manually moving or resizing a tile, including moving it to another monitor, makes it floating. Snap, center, and fill-gap actions also float a tiled window, unless **Snaps rearrange tiles** is on: then a half snap (Ctrl+Alt+1/2/5/8) gives the window that half and tiles the others in the remaining half, and a quarter snap (4/6/7/9) gives it the quarter, the nearest tile the rest of that column, and the other tiles the opposite column (with only one other tile, a quarter docks the half). Repeating the snap grows the window through the configured growth steps, then returns to half. Floating windows dock the same way. A rearranging snap also pulls windows on that monitor that were floated by drags or earlier snaps back into the layout; windows floated with `toggle-float`, centered groups, and `float_apps` stay floating; a window alone on its monitor, Center, and Fill keep their normal behavior. Toggling the setting keeps the current layout. Centered groups and configured floating apps stay outside the tree; `toggle-float` on a centered member leaves its group and retiles it. A resize that squeezes a neighbor below its minimum size relocates that neighbor into the largest other tile, or is undone when no tile fits. Disabling and re-enabling tiling resets manual floating choices and split changes.
 
@@ -93,13 +93,13 @@ While a tiled window has focus, H/J/K/L navigates tiles on its monitor, includin
 
 ## Center window layout
 
-**Settings → Center windows → Layout** switches between **Offset** (the default, including existing configurations) and **Stack**. In Stack mode, all group members stay centered and H/L cycles through the same order, bringing the selected window to the front even when it was fully covered. Set `center_layout = "stack"` at the top level of the TOML file to enable it from the CLI.
+**Settings → Snapping → Center windows → Layout** switches between **Offset** (the default, including existing configurations) and **Stack**. In Stack mode, all group members stay centered and H/L cycles through the same order, bringing the selected window to the front even when it was fully covered. Set `center_layout = "stack"` at the top level of the TOML file to enable it from the CLI.
 
 Sizing is unchanged: the selected window restores its saved size, background members use the base center size, and growth and width adjustments continue to work as before. Save to activate; existing groups adopt the layout when a member is focused or the next center/group action runs.
 
 ## Snapped window gaps
 
-**Settings → Snapped window gaps** controls spacing for half, quarter, and fill-work-area placements. Defaults match [Hyprland](https://wiki.hypr.land/configuring/core/config-options/): `inner = 5` per window edge (10 total between adjacent tiles), and `outer = 20` at desktop work-area edges. Values use native desktop coordinates (pixels on Windows, points on macOS), range from 0–100, and zero disables the corresponding spacing. Existing configurations inherit these defaults.
+**Settings → Snapping → Snapped window gaps** (**Inner gap per window** and **Desktop edge gap**) controls spacing for half, quarter, and fill-work-area placements. Defaults match [Hyprland](https://wiki.hypr.land/configuring/core/config-options/): `inner = 5` per window edge (10 total between adjacent tiles), and `outer = 20` at desktop work-area edges. Values use native desktop coordinates (pixels on Windows, points on macOS), range from 0–100, and zero disables the corresponding spacing. Existing configurations inherit these defaults.
 
 Changes apply on the next placement; existing windows are not rearranged when saving unless experimental automatic tiling is active. Repeated growth retains margins, width expansion stops at the inset work-area edge, and filling a saved strip beside a snapped window leaves inner spacing. Center placement and floating center groups retain their existing geometry. Background focus navigation recognizes both inset tiles and native edge snaps.
 
@@ -128,7 +128,7 @@ Windows always uses the color icon and ignores the setting.
 
 ## Focus glow — Windows
 
-On Windows, **Settings → Window focus → Focus glow** enables a soft, click-through gradient cue after moves/resizes and Vim-style focus navigation. When focus navigation has nowhere to go, the already-selected window still glows. It fades in and out over 480 ms. Click **Color** to open the color picker, then save. The default is enabled with neutral off-white (`#F2F0E8`); `glow_color` accepts `#RRGGBB`. Existing configurations inherit these defaults. CLI actions use the same cue and wait for it before exiting. Other platforms do not render the glow.
+On Windows, **Settings → Focus → Highlight the focused window** enables a soft, click-through gradient cue after moves/resizes and Vim-style focus navigation. When focus navigation has nowhere to go, the already-selected window still glows. It fades in and out over 480 ms. Click **Glow color** to open the color picker, then save. The default is enabled with neutral off-white (`#F2F0E8`); `glow_color` accepts `#RRGGBB`. Existing configurations inherit these defaults. CLI actions use the same cue and wait for it before exiting. Other platforms do not render the glow.
 
 ## Command line
 
