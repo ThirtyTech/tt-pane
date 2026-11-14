@@ -1172,7 +1172,9 @@ impl Settings {
     fn tiling_tab(&self, cx: &mut Context<Self>) -> Vec<Div> {
         let tiling = &self.draft.tiling;
         let mut page = Vec::new();
-        if cfg!(windows) {
+        // Tiling runs wherever tt-pane can inspect windows: Windows, macOS,
+        // GNOME on Wayland (through the Shell extension) and X11.
+        if platform::tiling_supported() {
             page.push(section("Automatic tiling", [
                 setting(
                     "Tile windows automatically (experimental)",
