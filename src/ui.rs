@@ -138,11 +138,9 @@ struct Settings {
     advanced_expanded: bool,
     window: Option<WindowHandle<Settings>>,
     _tray: crate::tray::Tray,
-    #[cfg(windows)]
     update: UpdateState,
 }
 
-#[cfg(windows)]
 #[derive(Default)]
 struct UpdateState {
     schedule: crate::update::CheckSchedule,
@@ -152,14 +150,12 @@ struct UpdateState {
     message: String,
 }
 
-#[cfg(windows)]
 enum UpdateResult {
     Checked(Option<crate::update::Release>),
     Restart,
 }
 
 impl Settings {
-    #[cfg(windows)]
     fn check_update(&mut self, cx: &mut Context<Self>) {
         if self.update.pending.is_some() {
             return;
@@ -176,7 +172,6 @@ impl Settings {
         cx.notify();
     }
 
-    #[cfg(windows)]
     fn install_update(&mut self, cx: &mut Context<Self>) {
         if self.update.pending.is_some() {
             return;
@@ -216,7 +211,6 @@ impl Settings {
         cx.notify();
     }
 
-    #[cfg(windows)]
     fn poll_update(&mut self, cx: &mut Context<Self>) {
         use std::sync::mpsc::TryRecvError;
         if self
@@ -454,7 +448,6 @@ impl Settings {
         }
         let tray_changed = self.active.tray_icon != self.draft.tray_icon;
         self.active = self.draft.clone();
-        #[cfg(windows)]
         if let Err(error) = crate::tiling::saved_settings(&self.active, &self.path) {
             self.message(
                 format!("Saved, but could not update tiling: {error:#}"),
@@ -533,13 +526,18 @@ fn button(id: impl Into<ElementId>, text: &str) -> Stateful<Div> {
 
 impl Render for Settings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        #[cfg(windows)]
         if self.update.installing {
-            return div().size_full().bg(rgb(0x0e1724)).text_color(rgb(0xe8eef7))
-                .flex().flex_col().p_6().gap_4()
+            return div()
+                .size_full()
+                .bg(rgb(0x0e1724))
+                .text_color(rgb(0xe8eef7))
+                .flex()
+                .flex_col()
+                .p_6()
+                .gap_4()
                 .child(div().text_2xl().child("Updating tt-pane"))
                 .child(self.update.message.clone())
-                .child("Your saved settings will be kept. Window shortcuts remain available while downloading.")
+                .child(crate::update::RESTART_NOTE)
                 .into_any_element();
         }
         let selected = self.preview.action;
@@ -659,12 +657,12 @@ impl Render for Settings {
                                 .bg(rgb(0x258c78)).border_1().border_color(rgb(0x6ee7c0))))
                         .child(div().text_sm().child(selected.label())))
                 .child(div().id("placement-options").flex_1().min_h_0().overflow_y_scroll().flex().flex_col().gap_4().p_4().rounded_lg().bg(rgb(0x131e2c))
-                    .when(selected.is_tiling(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Experimental Windows tiling action. Turn on Automatic tiling above the shortcuts or use Toggle experimental tiling. These actions edit the live layout and have no fixed snap position.")))
+                    .when(selected.is_tiling(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Experimental tiling action (Windows, macOS, and GNOME on Wayland). Turn on Automatic tiling above the shortcuts or use Toggle experimental tiling. These actions edit the live layout and have no fixed snap position.")))
                     .when(selected.adjusts_pair(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Move the shared boundary by 25% of the selected window's current height, with a 50/50 stop when returning toward the middle. Blue shows the neighbor. Windows only; matching left and right edges required.")))
                     .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("H: left, J: down, K: up, L: right. Tap H/J/K/L to navigate background windows by default. Inside a centered group, H/L rotate continuously. Hold for 400 ms to enter covered middle windows from an edge, or exit a middle window to a background edge window. Holds are Windows only; centered groups rotate on Windows and GNOME on Wayland.")))
                     .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+. (period).")))
                     .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Hover a keybinding to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."))
-                    .when(!cfg!(windows), |el| el.child(div().text_xs().text_color(rgb(0x91a4bb)).child("Automatic tiling is currently available on Windows only.")))
+                    .when(!platform::tiling_supported(), |el| el.child(div().text_xs().text_color(rgb(0x91a4bb)).child("Automatic tiling is available on Windows, macOS, and GNOME on Wayland.")))
                     .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap."))
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child("General"))
                     .child(div().text_sm().child("Launch at login"))
@@ -833,17 +831,12 @@ impl Render for Settings {
                     } else if platform::is_wayland() {
                         "This Wayland compositor isn't supported yet. tt-pane runs on GNOME (Wayland) and in X11 sessions."
                     } else { "Closing settings keeps tt-pane running in the tray. Use the tray menu to quit." })))))
-            .children({
-                #[cfg(windows)]
-                { Some(div().flex().flex_col().gap_2()
+            .children(Some(div().flex().flex_col().gap_2()
                     .child(div().text_sm().child(format!("Updates · Version {}", env!("CARGO_PKG_VERSION"))))
                     .child(div().text_xs().child(self.update.message.clone()))
                     .child(div().flex().gap_3()
                         .when(self.update.pending.is_none(), |el| el.child(button("check-update", "Check for updates").on_click(cx.listener(|this, _, _, cx| this.check_update(cx)))))
-                        .when(self.update.pending.is_none() && self.update.release.is_some(), |el| el.child(button("install-update", "Update and restart").on_click(cx.listener(|this, _, _, cx| this.install_update(cx))))))) }
-                #[cfg(not(windows))]
-                { None::<Div> }
-            })
+                        .when(self.update.pending.is_none() && self.update.release.is_some(), |el| el.child(button("install-update", "Update and restart").on_click(cx.listener(|this, _, _, cx| this.install_update(cx))))))))
             .child(div().text_sm().text_color(rgb(if self.error { 0xffa59b } else { 0x91a4bb })).child(self.status.clone()))
             .child(div().flex().items_center().justify_between().gap_3()
                 .child(button("reset", "Reset defaults").on_click(cx.listener(|this, _, _, cx| {
@@ -1242,7 +1235,6 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             advanced_expanded: false,
             window: None,
             _tray: tray,
-            #[cfg(windows)]
             update: UpdateState::default(),
         });
         *reopened.borrow_mut() = Some(settings.clone());
@@ -1263,18 +1255,15 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             settings.update(cx, |this, cx| this.message(format!("{e:#}"), true, cx));
         }
         cx.spawn(async move |cx| {
-            #[cfg(any(windows, target_os = "linux"))]
             let mut group_observed = std::time::Instant::now();
-            // Centered groups need window inspection: native on Windows, the
-            // Shell extension on GNOME. Other Linux sessions have none.
-            #[cfg(any(windows, target_os = "linux"))]
-            let observe_groups = cfg!(windows) || platform::is_gnome_wayland();
+            // Tiling and centered groups need window inspection: native on Windows
+            // and macOS, the Shell extension on GNOME. Other Linux sessions have none.
+            let observe_groups = platform::tiling_supported();
             loop {
                 smol::Timer::after(Duration::from_millis(16)).await;
                 if cx
                     .update(|cx| {
                         while let Ok(event) = tray_icon::menu::MenuEvent::receiver().try_recv() {
-                            #[cfg(windows)]
                             if event.id.0 == crate::tray::UPDATE {
                                 if let Err(e) = show_settings(&settings, cx) {
                                     settings.update(cx, |this, cx| {
@@ -1303,17 +1292,15 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                             }
                         }
                         settings.update(cx, |this, cx| {
-                            #[cfg(windows)]
                             this.poll_update(cx);
-                            #[cfg(any(windows, target_os = "linux"))]
                             if observe_groups
                                 && group_observed.elapsed() >= Duration::from_millis(100)
                             {
                                 group_observed = std::time::Instant::now();
-                                #[cfg(windows)]
                                 if let Err(e) = crate::tiling::observe(&this.active, &this.path) {
                                     this.message(format!("Tiling: {e:#}"), true, cx);
                                 }
+                                #[cfg(any(windows, target_os = "linux"))]
                                 if let Err(e) =
                                     crate::centered::observe(&this.path, this.active.center_layout)
                                 {

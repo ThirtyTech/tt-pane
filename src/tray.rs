@@ -7,7 +7,6 @@ use tray_icon::{
 
 pub const SETTINGS: &str = "tt-pane.settings";
 pub const QUIT: &str = "tt-pane.quit";
-#[cfg(windows)]
 pub const UPDATE: &str = "tt-pane.update";
 
 const SIZE: u32 = 32;
@@ -17,14 +16,12 @@ const TEMPLATE: &[u8] = include_bytes!("../assets/tray-template.rgba");
 
 pub struct Tray {
     pub icon: TrayIcon,
-    #[cfg(windows)]
     pub update: MenuItem,
 }
 
 pub fn create(style: TrayIconStyle) -> Result<Tray> {
     let menu = Menu::new();
     menu.append(&MenuItem::with_id(SETTINGS, "Settings…", true, None))?;
-    #[cfg(windows)]
     let update = {
         let item = MenuItem::with_id(UPDATE, "Check for updates…", true, None);
         menu.append(&item)?;
@@ -48,7 +45,6 @@ pub fn create(style: TrayIconStyle) -> Result<Tray> {
     let builder = builder.with_icon(icon(style)?);
     Ok(Tray {
         icon: builder.build()?,
-        #[cfg(windows)]
         update,
     })
 }
