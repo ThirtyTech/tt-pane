@@ -83,9 +83,9 @@ Duplicate shortcuts are rejected. Native registration conflicts appear in Settin
 
 Older configurations gain missing focus actions unless a default key is already taken. Existing custom or disabled bindings are preserved. Older configurations may need the two boundary shortcuts recorded manually, or defaults reset and saved.
 
-## Experimental tiling actions (Windows)
+## Experimental tiling actions
 
-Available on `experimental/hypr-tiling`. Defaults follow Hyprland's Super+Shift convention on **Win + Shift**. Configurations that predate an action gain its default unless that key is already taken; actions already present (including previously migrated unbound entries) keep their binding. Reassign shortcuts in Settings or use `tt-pane apply ACTION` (also exposed in the Herdr manifest).
+Available on Windows, macOS, and GNOME on Wayland. Windows defaults follow Hyprland's Super+Shift convention on **Win + Shift**; macOS and Linux start unbound, because Super+Shift letters belong to GNOME and Cmd+Shift to macOS apps. Configurations that predate an action gain its default unless that key is already taken; actions already present (including previously migrated unbound entries) keep their binding. Reassign shortcuts in Settings or use `tt-pane apply ACTION` (also exposed in the Herdr manifest).
 
 | Default | Action | Behavior |
 | --- | --- | --- |
@@ -102,6 +102,6 @@ Windows reserves Win + Shift + S, T, P, R, and X (so resize mode uses E), and Wi
 
 On tiled windows, H/J/K/L uses tree geometry (including deep tiles), then falls back to regular navigation (including other monitors) past the tree's edge; horizontal hold gestures also navigate tiles. `shrink-width`/`expand-width` act like `split-shrink`/`split-grow`, and `resize-up`/`resize-down` moves the nearest horizontal split boundary. Split grow/shrink and `-`/`=` act on the tile's immediate parent, whose direction depends on the tree; resize mode is the predictable way to pick an axis. A lone tile has no split to adjust. Ratios stay between 10% and 90%.
 
-Snap/center/fill-gap actions float a tiled window before normal placement. Floating windows keep ordinary positioning behavior. `toggle-float` on a centered group member removes it from the group (the remaining members rearrange) and retiles it. Apps listed in `float_apps` must be removed from that list before retiling. All tiling actions other than `toggle-tiling` and swaps require active tiling (with tiling off, H/L in resize mode move a shared window edge and J/K move a shared boundary between stacked windows); GNOME skips registering them until its backend is implemented.
+Snap/center/fill-gap actions float a tiled window before normal placement. Floating windows keep ordinary positioning behavior. `toggle-float` on a centered group member removes it from the group (the remaining members rearrange) and retiles it. Apps listed in `float_apps` must be removed from that list before retiling. All tiling actions other than `toggle-tiling` and swaps require active tiling (with tiling off, H/L in resize mode move a shared window edge and J/K move a shared boundary between stacked windows). On GNOME they run as custom shortcuts like other actions; resize mode needs held keys, so it isn't available there.
 
-The runtime toggle persists in the shared sidecar. Saving Settings makes the saved toggle authoritative again. See [configuration](/tt-pane/configuration/#tiling-experimental-windows) for the full behavior.
+The runtime toggle persists in the shared sidecar. Saving Settings makes the saved toggle authoritative again. See [configuration](/tt-pane/configuration/#tiling-experimental) for the full behavior.

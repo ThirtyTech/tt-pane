@@ -15,16 +15,16 @@ Shared-boundary resizing is **Windows-only**. Centered window groups work on Win
 
 ## Windows
 
-Experimental automatic tiling is available on the `experimental/hypr-tiling` branch:
+Experimental automatic tiling:
 
 | Platform | Automatic tiling |
 | --- | --- |
 | Windows | Dwindle, opt-in; current virtual desktop, per monitor |
-| GNOME Wayland | Planned; tiling shortcuts are not registered |
-| Linux X11 | Planned |
-| macOS | Planned |
+| macOS | Dwindle, opt-in; per Space and monitor |
+| GNOME Wayland | Dwindle, opt-in; per workspace and monitor (extension version 3) |
+| Linux X11 | Planned; ordinary snaps keep working with tiling turned on |
 
-Windows tiling polls every 100 ms while the tray runs. It skips dialogs and minimized, maximized, fullscreen, hidden, utility, and non-resizable windows. Windows that reject moves become floating; elevated apps may reject control from an unelevated process. See [experimental tiling configuration](/tt-pane/configuration/#tiling-experimental-windows).
+Windows tiling polls every 100 ms while the tray runs. It skips dialogs and minimized, maximized, fullscreen, hidden, utility, and non-resizable windows. Windows that reject moves become floating; elevated apps may reject control from an unelevated process. See [experimental tiling configuration](/tt-pane/configuration/#tiling-experimental).
 
 Run normally. Elevated applications can reject positioning from an unelevated process. GUI launches do not allocate a console; terminal launches attach to the terminal, where Ctrl+C terminates tt-pane.
 
@@ -33,6 +33,8 @@ Run normally. Elevated applications can reject positioning from an unelevated pr
 Grant the executable access under **System Settings → Privacy & Security → Accessibility**. Moving or rebuilding the unsigned executable can require granting access again. Exit fullscreen before positioning. tt-pane uses a menu-bar icon without a Dock icon.
 
 Building requires Xcode and command-line tools, including Metal tooling.
+
+Automatic tiling on macOS arranges standard, resizable windows on the visible Spaces through Accessibility, so it needs the same permission as positioning. Each Space and monitor has its own layout; windows in native fullscreen, minimized windows and tt-pane itself stay out. `float_apps` matches the application's name as shown in the menu bar, such as `Calculator`. Holding the mouse button pauses tiling, so dragging or resizing a window is never fought. Space detection uses a private macOS interface; if a future macOS removes it, all Spaces share one layout per monitor.
 
 ## Linux
 
@@ -50,7 +52,9 @@ A release build sets this up at startup. You can also click **Set up GNOME** in 
 tt-pane gnome setup
 ```
 
-Log out and back in once after the first setup, and after an update changes the extension: GNOME only loads extension code at login. Saving Settings re-registers the shortcuts. Holding a focus key does nothing extra on GNOME, because GNOME shortcuts only report presses.
+Log out and back in once after the first setup, and after an update changes the extension: GNOME only loads extension code at login. Automatic tiling needs extension version 3; with an older extension running, tiling reports that the extension is out of date until you log out and back in.
+
+Tiling on GNOME follows the active workspace. Windows shown on every workspace (including other monitors when workspaces span only the primary display) share one layout per monitor. `float_apps` matches the window's WM class, such as `org.gnome.Nautilus` or `firefox`. Dragging or resizing a window pauses tiling until you let go. GNOME automatically maximizes a new window that opens at nearly the size of the screen, which apps often do after they were tiled large, and maximized windows stay out of the layout. Turn that off with `gsettings set org.gnome.mutter auto-maximize false` so new windows tile. Saving Settings re-registers the shortcuts. Holding a focus key does nothing extra on GNOME, because GNOME shortcuts only report presses.
 
 ## A shortcut does nothing
 

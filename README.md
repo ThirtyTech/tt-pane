@@ -84,9 +84,9 @@ cargo build --release --no-default-features
 
 ## Experimental automatic tiling (Windows)
 
-On `experimental/hypr-tiling`, enable **Settings > Experimental > Automatic tiling** and save. Dwindle tiles existing and newly opened eligible windows on the current virtual desktop, with a separate layout per monitor. It is off by default. Closing/minimizing a tile reflows its neighbors; moving or snapping a tile makes it floating. Turning tiling off leaves windows in place. Keep the tray running for automatic updates.
+Enable **Settings > Experimental > Automatic tiling** and save (Windows, macOS, and GNOME on Wayland). Dwindle tiles existing and newly opened eligible windows on the current virtual desktop, Space or workspace, with a separate layout per monitor. It is off by default. Closing/minimizing a tile reflows its neighbors; moving or snapping a tile makes it floating. Turning tiling off leaves windows in place. Keep the tray running for automatic updates.
 
-The new toggle-float, swap-left/down/up/right, toggle-split, split-grow/shrink, and toggle-tiling actions default to Win+Shift+H/J/K/L (swap), Win+Shift+F (float) and Win+Shift+O (split) and Win+Shift+G (toggle tiling), with grow/shrink unbound; all work through Settings shortcuts, `tt-pane apply`, and Herdr. On a tiled window, H/J/K/L navigates the tree (then other monitors), -/= changes the split ratio, and Up/Down moves the nearest horizontal boundary. Win+Shift+E enters resize mode: H/J/K/L or the arrows move the divider next to the focused tile in that direction (or the shared window edge with tiling off), I switches to sizing the focused window alone, and Esc or Enter finishes. With tiling off, Win+Shift+H/J/K/L still swaps the focused window with its nearest neighbor in that direction. See the [configuration reference](docs-site/src/content/docs/configuration.md) for options, runtime toggling, exclusions, and current limitations. Linux and macOS tiling remain future work.
+The new toggle-float, swap-left/down/up/right, toggle-split, split-grow/shrink, and toggle-tiling actions default to Win+Shift+H/J/K/L (swap), Win+Shift+F (float) and Win+Shift+O (split) and Win+Shift+G (toggle tiling), with grow/shrink unbound; all work through Settings shortcuts, `tt-pane apply`, and Herdr. On a tiled window, H/J/K/L navigates the tree (then other monitors), -/= changes the split ratio, and Up/Down moves the nearest horizontal boundary. Win+Shift+E enters resize mode: H/J/K/L or the arrows move the divider next to the focused tile in that direction (or the shared window edge with tiling off), I switches to sizing the focused window alone, and Esc or Enter finishes. With tiling off, Win+Shift+H/J/K/L still swaps the focused window with its nearest neighbor in that direction. See the [configuration reference](docs-site/src/content/docs/configuration.md) for options, runtime toggling, exclusions, and current limitations. Tiling also runs on macOS and on GNOME Wayland (extension version 3), with tiling shortcuts unbound by default there; X11 tiling remains future work.
 
 ## Default bindings
 
@@ -308,7 +308,7 @@ The lifecycle test briefly creates its own settings window, closes it with a nat
 ## Structure and validation
 
 - `crates/tt-pane-platform/src/geometry.rs`: shared placement math and monitor selection.
-- `crates/tt-pane-platform/src/tiling.rs`: pure dwindle/BSP layout engine; `src/tiling.rs`: Windows polling, shared state, and tiling actions.
+- `crates/tt-pane-platform/src/tiling.rs`: pure dwindle/BSP layout engine; `src/tiling.rs`: tiling polling, shared state, and tiling actions for Windows, macOS and GNOME Wayland.
 - `config.rs`: versioned TOML, validation, atomic save.
 - `positioning.rs`: shared repeated-action cycles, persisted baseline and cross-process locking.
 - `shortcuts.rs`: native shortcut lifetime, conflict handling, and GNOME accelerator conversion.
