@@ -155,6 +155,10 @@ impl Group {
     }
 
     pub fn register(&mut self, id: &str, bounds: Rect) {
+        // X11 can inspect windows for tiling, but groups also need directional focus.
+        if !platform::centered_groups_supported() {
+            return;
+        }
         let Some(handle) = id.rsplit(':').next().and_then(|s| s.parse().ok()) else {
             return;
         };

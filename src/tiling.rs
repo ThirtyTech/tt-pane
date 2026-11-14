@@ -412,11 +412,11 @@ pub(crate) fn action(
     if !config.tiling.enabled && !action.is_tiling() && !sidecar(path, ".tiling.json").exists() {
         return Ok(false);
     }
-    // Sessions without a backend (X11, other Wayland compositors) keep ordinary snaps.
+    // Sessions without a backend (other Wayland compositors, X11 without a display) keep ordinary snaps.
     if !platform::tiling_supported() {
         ensure!(
             !action.is_tiling(),
-            "Automatic tiling on Linux currently supports GNOME on Wayland only"
+            "Automatic tiling on Linux supports GNOME on Wayland and X11 sessions only"
         );
         return Ok(false);
     }
@@ -1665,7 +1665,7 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("config.toml");
             let error = action(&config(), &path, Action::ToggleTiling, None).unwrap_err();
-            assert!(error.to_string().contains("GNOME on Wayland only"));
+            assert!(error.to_string().contains("X11 sessions only"));
             assert!(!action(&config(), &path, Action::Left, None).unwrap());
             return;
         }

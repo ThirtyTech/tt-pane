@@ -95,9 +95,22 @@ pub fn description() -> &'static str {
     }
 }
 
-/// Whether this session has a tiling backend: Windows, macOS, and GNOME on Wayland.
+/// Whether this session has a tiling backend: Windows, macOS, GNOME on Wayland,
+/// and X11 (whose window manager must also implement EWMH).
 pub fn tiling_supported() -> bool {
-    cfg!(any(windows, target_os = "macos")) || is_gnome_wayland()
+    cfg!(any(windows, target_os = "macos")) || is_gnome_wayland() || x11_session()
+}
+
+/// Centered groups need directional focus, which Linux has on GNOME Wayland only.
+pub fn centered_groups_supported() -> bool {
+    cfg!(windows) || is_gnome_wayland()
+}
+
+#[cfg(target_os = "linux")]
+use linux::x11_session;
+#[cfg(not(target_os = "linux"))]
+fn x11_session() -> bool {
+    false
 }
 
 /// A window the tiling coordinator may arrange, on a workspace it can see.

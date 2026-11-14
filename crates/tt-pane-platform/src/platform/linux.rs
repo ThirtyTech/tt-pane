@@ -27,49 +27,72 @@ fn gnome_session() -> bool {
     super::is_gnome_wayland()
 }
 
+/// X11 sessions inspect and move windows through EWMH, for tiling.
+pub fn x11_session() -> bool {
+    !super::is_wayland() && std::env::var_os("DISPLAY").is_some()
+}
+
 const FOCUS_UNSUPPORTED: &str =
     "Directional window focus on Linux currently supports GNOME on Wayland only";
 
+const WINDOWS_UNSUPPORTED: &str =
+    "Window inspection on Linux supports GNOME on Wayland and X11 sessions only";
+
 pub fn foreground_handle() -> Option<u64> {
-    gnome_session().then(gnome::foreground_handle).flatten()
+    if gnome_session() {
+        gnome::foreground_handle()
+    } else if x11_session() {
+        x11::foreground_handle()
+    } else {
+        None
+    }
 }
 
 pub fn window_snapshot(handle: u64) -> Result<Option<WindowSnapshot>> {
-    if !gnome_session() {
-        return Ok(None);
+    if gnome_session() {
+        gnome::window_snapshot(handle)
+    } else if x11_session() {
+        x11::window_snapshot(handle)
+    } else {
+        Ok(None)
     }
-    gnome::window_snapshot(handle)
 }
 
 pub fn move_snapshot(expected: &WindowSnapshot, target: Rect) -> Result<Rect> {
-    if !gnome_session() {
-        bail!("Centered window groups on Linux currently support GNOME on Wayland only");
+    if gnome_session() {
+        gnome::move_snapshot(expected, target)
+    } else if x11_session() {
+        x11::move_snapshot(expected, target)
+    } else {
+        bail!(WINDOWS_UNSUPPORTED)
     }
-    gnome::move_snapshot(expected, target)
 }
 
 const TILING_UNSUPPORTED: &str =
-    "Automatic tiling on Linux currently supports GNOME on Wayland only";
+    "Automatic tiling on Linux supports GNOME on Wayland and X11 sessions only";
 
 pub fn tiling_desktop() -> Result<crate::TilingDesktop> {
-    if !gnome_session() {
-        bail!(TILING_UNSUPPORTED);
+    if gnome_session() {
+        gnome::tiling_desktop()
+    } else if x11_session() {
+        x11::tiling_desktop()
+    } else {
+        bail!(TILING_UNSUPPORTED)
     }
-    gnome::tiling_desktop()
 }
 
 pub fn move_tiling_window(expected: &crate::TilingWindow, target: Rect) -> Result<Rect> {
-    if !gnome_session() {
-        bail!(TILING_UNSUPPORTED);
-    }
-    gnome::move_snapshot(&expected.snapshot, target)
+    move_snapshot(&expected.snapshot, target)
 }
 
 pub fn focus_snapshot(expected: &WindowSnapshot) -> Result<()> {
-    if !gnome_session() {
-        bail!(FOCUS_UNSUPPORTED);
+    if gnome_session() {
+        gnome::focus_snapshot(expected)
+    } else if x11_session() {
+        x11::focus_snapshot(expected)
+    } else {
+        bail!(WINDOWS_UNSUPPORTED)
     }
-    gnome::focus_snapshot(expected)
 }
 
 pub fn focus_window(
