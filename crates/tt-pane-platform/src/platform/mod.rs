@@ -120,8 +120,11 @@ pub struct TilingWindow {
     pub snapshot: WindowSnapshot,
     pub workspace: String,
     /// Matched case-insensitively by `float_apps`: the executable basename on
-    /// Windows, the WM class on GNOME and the application name on macOS.
+    /// Windows, the WM class on GNOME and X11, and the application name on macOS.
     pub app: String,
+    /// Resize increments the window manager rounds sizes down to, such as a
+    /// terminal's character cell on X11; (1, 1) when sizes are exact.
+    pub size_step: (i32, i32),
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]

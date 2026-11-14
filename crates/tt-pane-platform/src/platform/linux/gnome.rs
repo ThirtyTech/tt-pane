@@ -215,6 +215,7 @@ fn tiling_window((handle, frame, area, workspace, app, _): WireTiling) -> crate:
         },
         workspace,
         app,
+        size_step: (1, 1),
     }
 }
 

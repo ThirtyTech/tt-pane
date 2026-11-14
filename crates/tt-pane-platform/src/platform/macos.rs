@@ -800,6 +800,7 @@ pub fn tiling_desktop() -> Result<super::TilingDesktop> {
                 },
                 workspace: space(number),
                 app: app.clone(),
+                size_step: (1, 1),
             });
         }
     }

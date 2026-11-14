@@ -261,13 +261,13 @@ impl State {
                         continue;
                     };
                     let original = live.snapshot.bounds;
-                    let result = if near(original, target) {
+                    let result = if fits(live, original, target) {
                         Ok(original)
                     } else {
                         move_window(live, target)
                     };
                     match result {
-                        Ok(actual) if near(actual, target) => {
+                        Ok(actual) if fits(live, actual, target) => {
                             live.snapshot.bounds = actual;
                             if let Some(member) =
                                 group.members.iter_mut().find(|m| m.handle == handle)
@@ -788,6 +788,18 @@ fn swap_direction(action: Action) -> Option<Action> {
 
 /// Trade bounds with the nearest window in `direction` on the same virtual
 /// desktop, across monitors too. A failed second move puts the first back.
+/// A window landed on its tile: within 2 px, or short of the tile by less than
+/// one resize increment (X11 terminals size in whole character cells).
+fn fits(window: &platform::TilingWindow, actual: Rect, target: Rect) -> bool {
+    let short =
+        |actual: i32, target: i32, step: i32| (0..step.max(1) + 2).contains(&(target - actual));
+    near(actual, target)
+        || (actual.x.abs_diff(target.x) <= 2
+            && actual.y.abs_diff(target.y) <= 2
+            && short(actual.width, target.width, window.size_step.0)
+            && short(actual.height, target.height, window.size_step.1))
+}
+
 fn swap_windows(
     desktop: &platform::TilingDesktop,
     handle: u64,
@@ -948,7 +960,7 @@ fn move_shared_edge(
         for &(window, target) in &plan {
             let result = move_window(window, target);
             let failed = match &result {
-                Ok(actual) => !crate::positioning::near(*actual, target),
+                Ok(actual) => !fits(window, *actual, target),
                 Err(_) => true,
             };
             if let Ok(actual) = result {
@@ -1082,6 +1094,7 @@ mod tests {
             },
             workspace: "desktop-a".into(),
             app: "app.exe".into(),
+            size_step: (1, 1),
         }
     }
 
@@ -1457,6 +1470,41 @@ mod tests {
     }
 
     #[test]
+    fn windows_sized_in_increments_stay_tiled() {
+        let mut state = State::default();
+        let config = config();
+        let mut desktop = desktop(vec![window(1), window(2)]);
+        for w in &mut desktop.windows {
+            w.size_step = (6, 13);
+        }
+        state.configure(&config.tiling);
+        // The window manager rounds each size down to whole 6x13 cells.
+        let round = |r: Rect| Rect {
+            width: r.width - r.width % 6,
+            height: r.height - r.height % 13,
+            ..r
+        };
+        state
+            .reconcile(&config, &desktop, Some(1), &[], |_, r| Ok(round(r)))
+            .unwrap();
+        assert!(state.floating.is_empty());
+        assert_eq!(state.groups[0].members.len(), 2);
+        // Without increments the same shortfall is a rejected tile.
+        let mut exact = State::default();
+        exact.configure(&config.tiling);
+        for w in &mut desktop.windows {
+            w.size_step = (1, 1);
+        }
+        let _ = exact.reconcile(&config, &desktop, Some(1), &[], |_, r| {
+            Ok(Rect {
+                width: r.width - 5,
+                ..r
+            })
+        });
+        assert!(!exact.floating.is_empty());
+    }
+
+    #[test]
     fn resize_that_cannot_relocate_is_undone_instead_of_floating() {
         let mut state = State::default();
         let config = config();
@@ -1712,6 +1760,7 @@ mod tests {
                             snapshot: platform::window_snapshot(*handle).unwrap().unwrap(),
                             workspace: "desktop-a".into(),
                             app: "fixture.exe".into(),
+                            size_step: (1, 1),
                         })
                         .collect(),
                 )

@@ -66,6 +66,8 @@ struct Client {
     desktop: u32,
     pid: Option<u32>,
     app: String,
+    /// WM_NORMAL_HINTS resize increments; (1, 1) when sizes are exact.
+    size_step: (i32, i32),
     /// A viewable, restored, resizable top-level application window.
     tileable: bool,
 }
@@ -219,7 +221,9 @@ impl X11 {
             .reply()
             .ok()
             .flatten();
-        let fixed = hints.is_some_and(|h| h.min_size.is_some_and(|min| h.max_size == Some(min)));
+        let fixed = hints
+            .as_ref()
+            .is_some_and(|h| h.min_size.is_some_and(|min| h.max_size == Some(min)));
         let (bounds, extents) = self.frame(window)?;
         let area = self.area_for(bounds, monitors, struts);
         let app = WmClass::get(&self.connection, window)?
@@ -252,6 +256,9 @@ impl X11 {
                 .unwrap_or(ALL_DESKTOPS),
             pid: self.property(window, "_NET_WM_PID")?.first().copied(),
             app,
+            size_step: hints
+                .and_then(|h| h.size_increment)
+                .map_or((1, 1), |(w, h)| (w.max(1), h.max(1))),
             tileable,
         })
     }
@@ -478,6 +485,7 @@ pub fn tiling_desktop() -> Result<crate::TilingDesktop> {
                 workspace: workspace_key(client.desktop),
                 snapshot: client.snapshot,
                 app: client.app,
+                size_step: client.size_step,
             });
         }
         result.windows.sort_by_key(|w| w.snapshot.handle);

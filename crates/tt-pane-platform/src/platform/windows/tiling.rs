@@ -147,6 +147,7 @@ pub fn tiling_desktop() -> Result<TilingDesktop> {
                 snapshot,
                 workspace,
                 app,
+                size_step: (1, 1),
             });
         }
     }
@@ -193,6 +194,7 @@ mod tests {
                 snapshot,
                 workspace,
                 app: "fixture.exe".into(),
+                size_step: (1, 1),
             };
             assert_eq!(move_tiling_window(&expected, target).unwrap(), target);
             expected.snapshot = window_snapshot(handle).unwrap().unwrap();
