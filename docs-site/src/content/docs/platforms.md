@@ -21,8 +21,8 @@ Experimental automatic tiling:
 | --- | --- |
 | Windows | Dwindle, opt-in; current virtual desktop, per monitor |
 | macOS | Dwindle, opt-in; per Space and monitor |
-| GNOME Wayland | Dwindle, opt-in; per workspace and monitor (extension version 3) |
-| Linux X11 | Planned; ordinary snaps keep working with tiling turned on |
+| GNOME Wayland | Dwindle, opt-in; per workspace and monitor (extension version 4) |
+| Linux X11 | Dwindle, opt-in; per desktop and monitor (EWMH window manager) |
 
 Windows tiling polls every 100 ms while the tray runs. It skips dialogs and minimized, maximized, fullscreen, hidden, utility, and non-resizable windows. Windows that reject moves become floating; elevated apps may reject control from an unelevated process. See [experimental tiling configuration](/tt-pane/configuration/#tiling-experimental).
 
@@ -38,6 +38,8 @@ Automatic tiling on macOS arranges standard, resizable windows on the visible Sp
 
 ## Linux
 
+Automatic tiling on X11 works with stacking window managers that implement EWMH, such as Openbox, Xfwm or KWin (tested with Openbox); tiling window managers such as i3 arrange windows themselves. Each desktop and monitor has its own layout; windows on all desktops share one per monitor. Dialogs, transient and fixed-size windows, minimized, maximized and fullscreen windows, and tt-pane itself stay out. `float_apps` matches the WM_CLASS class, such as `XTerm` or `firefox`. Terminals that resize in whole character cells can leave a gap of a few pixels in their tile. Holding the mouse button pauses tiling. Other Wayland compositors keep ordinary snapping.
+
 GPUI needs a compatible GPU driver and native font, X11/XCB, XKB, and Wayland libraries. See the repository’s [build prerequisite list](https://github.com/thirtytech/tt-pane#build-prerequisites).
 
 Enable a StatusNotifierItem tray host: KDE, Waybar’s tray module, or GNOME’s AppIndicator extension. X11 requires EWMH move/resize and RandR 1.5 monitor enumeration. Panels with only legacy struts are not accounted for.
@@ -52,9 +54,9 @@ A release build sets this up at startup. You can also click **Set up GNOME** in 
 tt-pane gnome setup
 ```
 
-Log out and back in once after the first setup, and after an update changes the extension: GNOME only loads extension code at login. Automatic tiling needs extension version 3; with an older extension running, tiling reports that the extension is out of date until you log out and back in.
+Log out and back in once after the first setup, and after an update changes the extension: GNOME only loads extension code at login. Automatic tiling needs extension version 4; with an older extension running, tiling reports that the extension is out of date until you log out and back in.
 
-Tiling on GNOME follows the active workspace. Windows shown on every workspace (including other monitors when workspaces span only the primary display) share one layout per monitor. `float_apps` matches the window's WM class, such as `org.gnome.Nautilus` or `firefox`. Dragging or resizing a window pauses tiling until you let go. GNOME automatically maximizes a new window that opens at nearly the size of the screen, which apps often do after they were tiled large, and maximized windows stay out of the layout. Turn that off with `gsettings set org.gnome.mutter auto-maximize false` so new windows tile. Saving Settings re-registers the shortcuts. Holding a focus key does nothing extra on GNOME, because GNOME shortcuts only report presses.
+Tiling on GNOME follows the active workspace. Windows shown on every workspace (including other monitors when workspaces span only the primary display) share one layout per monitor. `float_apps` matches the window's WM class, such as `org.gnome.Nautilus` or `firefox`. Dragging or resizing a window pauses tiling until you let go. A window that opens maximized still tiles: GNOME maximizes new windows that open at nearly the size of the screen, which apps often do after they were tiled large, and apps can restore a maximized state. Maximizing a tiled window yourself takes it out of the layout until you restore it. Saving Settings re-registers the shortcuts. Holding a focus key does nothing extra on GNOME, because GNOME shortcuts only report presses.
 
 ## A shortcut does nothing
 
