@@ -740,7 +740,14 @@ fn reflow(
     centered: &[u64],
     mut move_window: impl FnMut(&platform::TilingWindow, Rect) -> Result<Rect>,
 ) -> Result<()> {
-    let result = state.reconcile(config, desktop, Some(handle), centered, &mut move_window);
+    // Native movers revalidate against the snapshot they are given, so the undo
+    // below must start from where this reconcile actually left each window.
+    let mut moved = std::collections::HashMap::new();
+    let result = state.reconcile(config, desktop, Some(handle), centered, |w, target| {
+        let actual = move_window(w, target)?;
+        moved.insert(w.snapshot.handle, actual);
+        Ok(actual)
+    });
     let evicted = state
         .floating
         .iter()
@@ -758,7 +765,11 @@ fn reflow(
                 .iter()
                 .find(|w| w.snapshot.handle == member.handle)
             {
-                let _ = move_window(live, member.last);
+                let mut live = live.clone();
+                if let Some(bounds) = moved.get(&member.handle) {
+                    live.snapshot.bounds = *bounds;
+                }
+                let _ = move_window(&live, member.last);
             }
         }
     }
@@ -1469,6 +1480,40 @@ mod tests {
         assert!(error.to_string().contains("can't get any smaller"));
         assert_eq!(state, before);
         // Both tiles are put back on the rectangles they accepted before the grow.
+        // Native movers refuse stale snapshots, so the undo must use the bounds
+        // its own moves produced rather than the pre-reflow observation.
+        let mut actual: std::collections::HashMap<u64, Rect> = desktop
+            .windows
+            .iter()
+            .map(|w| (w.snapshot.handle, w.snapshot.bounds))
+            .collect();
+        let mut state = before.clone();
+        for _ in 0..3 {
+            control(&mut state.groups[0], &config, Action::SplitGrow, 1).unwrap();
+        }
+        reflow(
+            &mut state,
+            before.clone(),
+            &config,
+            &desktop,
+            1,
+            &[],
+            |w, r| {
+                let current = actual.get_mut(&w.snapshot.handle).unwrap();
+                ensure!(
+                    *current == w.snapshot.bounds,
+                    "Window changed before the move"
+                );
+                if !(w.snapshot.handle == 2 && r.width < 500) {
+                    *current = r;
+                }
+                Ok(*current)
+            },
+        )
+        .unwrap_err();
+        for member in &before.groups[0].members {
+            assert_eq!(actual[&member.handle], member.last);
+        }
         for member in &before.groups[0].members {
             assert_eq!(
                 moves
