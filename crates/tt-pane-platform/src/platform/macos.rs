@@ -36,6 +36,25 @@ unsafe extern "C" {
     fn AXValueCreate(kind: u32, value: *const c_void) -> CFTypeRef;
     fn AXValueGetValue(value: CFTypeRef, kind: u32, output: *mut c_void) -> u8;
     fn AXUIElementPerformAction(element: CFTypeRef, action: CFStringRef) -> i32;
+    fn AXUIElementIsAttributeSettable(
+        element: CFTypeRef,
+        name: CFStringRef,
+        settable: *mut u8,
+    ) -> i32;
+    // Private but stable for many releases; window managers such as Rectangle,
+    // Amethyst and yabai use it to pair AX windows with CGWindowIDs.
+    fn _AXUIElementGetWindow(element: CFTypeRef, window: *mut u32) -> i32;
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+// SAFETY: Matches CGEventSource.h: a 32-bit state ID and mouse button, C bool result.
+unsafe extern "C" {
+    fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
+}
+
+// SAFETY: Matches <dlfcn.h>; only reads the NUL-terminated symbol name.
+unsafe extern "C" {
+    fn dlsym(handle: *mut c_void, symbol: *const std::ffi::c_char) -> *mut c_void;
 }
 
 fn attribute(element: &CFType, key: &str) -> Result<CFType> {
@@ -211,8 +230,8 @@ fn flag(element: &CFType, key: &str) -> bool {
         .is_some_and(bool::from)
 }
 
-/// Standard, non-minimized Accessibility windows of an application.
-fn application_windows(pid: i32) -> Vec<(CFType, Rect)> {
+/// Standard Accessibility windows of an application, minimized ones included.
+fn standard_windows(pid: i32) -> Vec<CFType> {
     let Ok(app) = application_element(pid) else {
         return Vec::new();
     };
@@ -227,17 +246,50 @@ fn application_windows(pid: i32) -> Vec<(CFType, Rect)> {
         .filter_map(|item| {
             // SAFETY: AXWindows holds live CF objects retained by the array.
             let window = unsafe { CFType::wrap_under_get_rule(*item) };
-            let standard = attribute(&window, "AXSubrole")
+            attribute(&window, "AXSubrole")
                 .ok()
                 .and_then(|value| value.downcast::<CFString>())
-                .is_some_and(|role| role == "AXStandardWindow");
-            if !standard || flag(&window, "AXMinimized") {
-                return None;
-            }
+                .is_some_and(|role| role == "AXStandardWindow")
+                .then_some(window)
+        })
+        .collect()
+}
+
+/// Standard, non-minimized Accessibility windows of an application.
+fn application_windows(pid: i32) -> Vec<(CFType, Rect)> {
+    standard_windows(pid)
+        .into_iter()
+        .filter(|window| !flag(window, "AXMinimized"))
+        .filter_map(|window| {
             let rect = read_rect(&window).ok()?;
             Some((window, rect))
         })
         .collect()
+}
+
+/// The CGWindowID behind an Accessibility window.
+fn window_number(window: &CFType) -> Option<u32> {
+    ensure_element(window).ok()?;
+    let mut number = 0;
+    // SAFETY: window is a checked AXUIElement; the output slot is a live u32.
+    let result = unsafe { _AXUIElementGetWindow(window.as_CFTypeRef(), &mut number) };
+    (result == 0 && number != 0).then_some(number)
+}
+
+fn settable(window: &CFType, key: &str) -> bool {
+    if ensure_element(window).is_err() {
+        return false;
+    }
+    let mut value = 0;
+    // SAFETY: window is a checked AXUIElement; the string and output outlive the call.
+    let result = unsafe {
+        AXUIElementIsAttributeSettable(
+            window.as_CFTypeRef(),
+            CFString::new(key).as_concrete_TypeRef(),
+            &mut value,
+        )
+    };
+    result == 0 && value != 0
 }
 
 struct ScreenInfo {
@@ -277,6 +329,7 @@ fn near(a: Rect, b: Rect) -> bool {
 }
 
 struct ListedWindow {
+    number: u32,
     pid: i32,
     layer: i64,
     rect: Rect,
@@ -315,6 +368,7 @@ fn listed_windows() -> Result<Vec<ListedWindow>> {
                 return None;
             }
             Some(ListedWindow {
+                number: number(&info, "kCGWindowNumber")? as u32,
                 pid: number(&info, "kCGWindowOwnerPID")? as i32,
                 layer: number(&info, "kCGWindowLayer")? as i64,
                 rect: Rect {
@@ -509,9 +563,261 @@ pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>) -> Resul
     Ok(actual)
 }
 
+/// A restored standard window, identified by its CGWindowID (stable for the
+/// window's lifetime) and owning process.
+#[derive(Debug, Clone)]
+pub struct WindowSnapshot {
+    pub handle: u64,
+    pub id: String,
+    pub area: Rect,
+    pub bounds: Rect,
+}
+
+fn window_id(pid: i32, number: u32) -> String {
+    format!("ax:{pid}:{number}")
+}
+
+fn trusted() -> Result<()> {
+    ensure!(
+        accessibility_trusted(false),
+        "Grant tt-pane Accessibility access in System Settings → Privacy & Security → Accessibility"
+    );
+    Ok(())
+}
+
+fn main_thread() -> Result<MainThreadMarker> {
+    MainThreadMarker::new().context("Window control must run on the macOS main thread")
+}
+
+/// Owner of an on-screen window; minimized windows and other Spaces report none.
+fn owner(number: u32) -> Option<i32> {
+    use core_graphics::window::{copy_window_info, kCGWindowListOptionIncludingWindow};
+    let list = copy_window_info(kCGWindowListOptionIncludingWindow, number)?;
+    let item = list.iter().next()?;
+    // SAFETY: The window list holds live CFDictionaries retained by the array.
+    let info: CFDictionary<CFString, CFType> =
+        unsafe { CFDictionary::wrap_under_get_rule((*item).cast()) };
+    let onscreen = info
+        .find(CFString::new("kCGWindowIsOnscreen"))
+        .and_then(|value| value.downcast::<CFBoolean>())
+        .is_some_and(bool::from);
+    if !onscreen {
+        return None;
+    }
+    number_value(&info, "kCGWindowOwnerPID")
+}
+
+fn number_value(dict: &CFDictionary<CFString, CFType>, key: &str) -> Option<i32> {
+    number(dict, key).map(|value| value as i32)
+}
+
+/// The live AX window and its current frame, if it is still a restored standard window.
+fn find_window(handle: u64) -> Option<(i32, CFType, Rect)> {
+    let number = u32::try_from(handle).ok()?;
+    let pid = owner(number)?;
+    application_windows(pid)
+        .into_iter()
+        .find(|(window, _)| window_number(window) == Some(number))
+        .map(|(window, rect)| (pid, window, rect))
+}
+
+pub fn foreground_handle() -> Option<u64> {
+    if !accessibility_trusted(false) {
+        return None;
+    }
+    let front = NSWorkspace::sharedWorkspace().frontmostApplication()?;
+    let app = application_element(front.processIdentifier()).ok()?;
+    window_number(&attribute(&app, "AXFocusedWindow").ok()?).map(u64::from)
+}
+
+/// Read without restoring, activating, or repositioning a window. Minimized
+/// windows and windows on other Spaces are excluded.
+pub fn window_snapshot(handle: u64) -> Result<Option<WindowSnapshot>> {
+    trusted()?;
+    let screens = ScreenInfo::read(main_thread()?)?;
+    let Some((pid, _, bounds)) = find_window(handle) else {
+        return Ok(None);
+    };
+    Ok(screens.work_area(bounds).map(|area| WindowSnapshot {
+        handle,
+        id: window_id(pid, handle as u32),
+        area,
+        bounds,
+    }))
+}
+
+/// Revalidate immediately before a move, never overwriting a manual move made
+/// since the coordinator's last observation.
+fn revalidate(expected: &WindowSnapshot) -> Result<(i32, CFType)> {
+    trusted()?;
+    let screens = ScreenInfo::read(main_thread()?)?;
+    let (pid, window, bounds) =
+        find_window(expected.handle).context("Window is no longer available")?;
+    ensure!(
+        window_id(pid, expected.handle as u32) == expected.id
+            && near(bounds, expected.bounds)
+            && screens.work_area(bounds) == Some(expected.area),
+        "Window changed before the group update"
+    );
+    Ok((pid, window))
+}
+
+pub fn move_snapshot(expected: &WindowSnapshot, target: Rect) -> Result<Rect> {
+    let (_, window) = revalidate(expected)?;
+    let size = CGSize::new(target.width as f64, target.height as f64);
+    set_size(&window, &size)?;
+    set_position(&window, &CGPoint::new(target.x as f64, target.y as f64))?;
+    // Some applications constrain the first resize against the previous monitor.
+    set_size(&window, &size)?;
+    read_rect(&window)
+}
+
+pub fn focus_snapshot(expected: &WindowSnapshot) -> Result<()> {
+    let (pid, window) = revalidate(expected)?;
+    activate_window(pid, &window)
+}
+
+pub fn move_tiling_window(expected: &super::TilingWindow, target: Rect) -> Result<Rect> {
+    move_snapshot(&expected.snapshot, target)
+}
+
+/// Space key for a set of space IDs: one Space, or a window shown on all of them.
+fn space_key(ids: &[i64]) -> Option<String> {
+    match ids {
+        [] => None,
+        [id] => Some(format!("macos:{id}")),
+        _ => Some("macos:all".to_owned()),
+    }
+}
+
+const CURRENT_SPACE: &str = "macos:current";
+
+/// Space keys per window from the private SkyLight Spaces API, looked up at
+/// run time: if macOS drops it, every window shares one layout per monitor.
+fn window_spaces(numbers: &[u32]) -> std::collections::HashMap<u32, String> {
+    type Connection = unsafe extern "C" fn() -> i32;
+    type CopySpaces = unsafe extern "C" fn(i32, i32, CFTypeRef) -> CFTypeRef;
+    const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
+    const ALL_SPACES: i32 = 7;
+    let lookup = |names: [&std::ffi::CStr; 2]| {
+        names.into_iter().find_map(|name| {
+            // SAFETY: dlsym only reads the NUL-terminated name.
+            let symbol = unsafe { dlsym(RTLD_DEFAULT, name.as_ptr()) };
+            (!symbol.is_null()).then_some(symbol)
+        })
+    };
+    let mut spaces = std::collections::HashMap::new();
+    let (Some(connection), Some(copy)) = (
+        lookup([c"SLSMainConnectionID", c"CGSMainConnectionID"]),
+        lookup([c"SLSCopySpacesForWindows", c"CGSCopySpacesForWindows"]),
+    ) else {
+        return spaces;
+    };
+    // SAFETY: Both symbols have these C signatures in every macOS release that
+    // exports them. The window array outlives each call, and the result is an
+    // owned (+1) CFArray of CFNumbers or null.
+    unsafe {
+        let connection: Connection = std::mem::transmute(connection);
+        let copy: CopySpaces = std::mem::transmute(copy);
+        let cid = connection();
+        for &number in numbers {
+            let windows = CFArray::from_CFTypes(&[CFNumber::from(i64::from(number))]);
+            let raw = copy(cid, ALL_SPACES, windows.as_CFTypeRef());
+            if raw.is_null() {
+                continue;
+            }
+            let ids: CFArray<CFNumber> = CFArray::wrap_under_create_rule(raw.cast());
+            let ids: Vec<i64> = ids.iter().filter_map(|id| id.to_i64()).collect();
+            if let Some(key) = space_key(&ids) {
+                spaces.insert(number, key);
+            }
+        }
+    }
+    spaces
+}
+
+/// Standard, restored, resizable windows of other applications on the visible
+/// Spaces. Identities also cover these applications' minimized windows.
+pub fn tiling_desktop() -> Result<super::TilingDesktop> {
+    trusted()?;
+    let screens = ScreenInfo::read(main_thread()?)?;
+    let own = std::process::id() as i32;
+    let listed: Vec<_> = listed_windows()?
+        .into_iter()
+        .filter(|w| w.layer == 0 && w.pid != own)
+        .collect();
+    let spaces = window_spaces(&listed.iter().map(|w| w.number).collect::<Vec<_>>());
+    let space = |number: u32| {
+        spaces
+            .get(&number)
+            .cloned()
+            .unwrap_or_else(|| CURRENT_SPACE.to_owned())
+    };
+    let mut result = super::TilingDesktop {
+        // A held left button means a drag or resize may be in progress.
+        // SAFETY: Reads the combined session's left mouse button; no pointers.
+        interacting: unsafe { CGEventSourceButtonState(0, 0) },
+        ..Default::default()
+    };
+    for window in &listed {
+        let key = space(window.number);
+        if !result.workspaces.contains(&key) {
+            result.workspaces.push(key);
+        }
+    }
+    let mut pids: Vec<i32> = listed.iter().map(|w| w.pid).collect();
+    pids.sort_unstable();
+    pids.dedup();
+    for pid in pids {
+        let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+            .and_then(|app| app.localizedName())
+            .map(|name| name.to_string())
+            .unwrap_or_default();
+        for window in standard_windows(pid) {
+            let Some(number) = window_number(&window) else {
+                continue;
+            };
+            result.identities.push(window_id(pid, number));
+            if flag(&window, "AXMinimized")
+                || flag(&window, "AXFullScreen")
+                || !settable(&window, "AXSize")
+                || !listed.iter().any(|w| w.number == number)
+            {
+                continue;
+            }
+            let Ok(bounds) = read_rect(&window) else {
+                continue;
+            };
+            let Some(area) = screens.work_area(bounds) else {
+                continue;
+            };
+            result.windows.push(super::TilingWindow {
+                snapshot: WindowSnapshot {
+                    handle: u64::from(number),
+                    id: window_id(pid, number),
+                    area,
+                    bounds,
+                },
+                workspace: space(number),
+                app: app.clone(),
+            });
+        }
+    }
+    result.windows.sort_by_key(|w| w.snapshot.handle);
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn space_keys_name_one_space_or_all() {
+        assert_eq!(space_key(&[]), None);
+        assert_eq!(space_key(&[42]).as_deref(), Some("macos:42"));
+        assert_eq!(space_key(&[1, 2]).as_deref(), Some("macos:all"));
+        assert_eq!(window_id(12, 345), "ax:12:345");
+    }
 
     #[test]
     fn typed_values_round_trip_and_reject_mismatches() {

@@ -155,9 +155,10 @@ fn extension_running() -> bool {
 
 /// Actions the GNOME adapter supports. Paired resizing isn't implemented on
 /// Linux yet, and Ctrl+Alt+Up/Down would shadow GNOME's workspace switching
-/// for nothing.
+/// for nothing. Tiling actions run as one-shot `tt-pane apply` processes that
+/// share the tray's state under the cycle lock.
 fn supported(action: Action) -> bool {
-    !action.adjusts_pair() && !action.is_tiling() && action != Action::ResizeMode
+    !action.adjusts_pair() && action != Action::ResizeMode
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

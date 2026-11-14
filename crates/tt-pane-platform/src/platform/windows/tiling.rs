@@ -1,5 +1,6 @@
 //! Conservative enumeration for automatic tiling; never restores windows.
 use super::*;
+use crate::platform::{TilingDesktop, TilingWindow};
 use windows::{
     Win32::{
         Foundation::{CloseHandle, LPARAM, RPC_E_CHANGED_MODE},
@@ -17,22 +18,6 @@ use windows::{
     },
     core::{BOOL, PWSTR},
 };
-
-#[derive(Debug, Clone)]
-pub struct TilingWindow {
-    pub snapshot: WindowSnapshot,
-    pub workspace: String,
-    pub app: String,
-}
-
-#[derive(Debug, Default)]
-pub struct TilingDesktop {
-    pub windows: Vec<TilingWindow>,
-    /// Includes minimized/unavailable windows, so floating choices survive restore.
-    pub identities: Vec<String>,
-    pub workspaces: Vec<String>,
-    pub interacting: bool,
-}
 
 struct Com(bool);
 impl Com {

@@ -95,29 +95,59 @@ pub fn description() -> &'static str {
     }
 }
 
+/// Whether this session has a tiling backend: Windows, macOS, and GNOME on Wayland.
+pub fn tiling_supported() -> bool {
+    cfg!(any(windows, target_os = "macos")) || is_gnome_wayland()
+}
+
+/// A window the tiling coordinator may arrange, on a workspace it can see.
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+#[derive(Debug, Clone)]
+pub struct TilingWindow {
+    pub snapshot: WindowSnapshot,
+    pub workspace: String,
+    /// Matched case-insensitively by `float_apps`: the executable basename on
+    /// Windows, the WM class on GNOME and the application name on macOS.
+    pub app: String,
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+#[derive(Debug, Default)]
+pub struct TilingDesktop {
+    pub windows: Vec<TilingWindow>,
+    /// Includes minimized/unavailable windows, so floating choices survive restore.
+    pub identities: Vec<String>,
+    pub workspaces: Vec<String>,
+    pub interacting: bool,
+}
+
 /// Centered groups on Linux: implemented for GNOME on Wayland, inert elsewhere.
 #[cfg(target_os = "linux")]
 pub use linux::{
-    WindowSnapshot, focus_snapshot, foreground_handle, move_snapshot, window_snapshot,
+    WindowSnapshot, focus_snapshot, foreground_handle, move_snapshot, move_tiling_window,
+    tiling_desktop, window_snapshot,
 };
 #[cfg(target_os = "macos")]
-pub use macos::{accessibility_trusted, show_alert};
+pub use macos::{
+    WindowSnapshot, accessibility_trusted, focus_snapshot, foreground_handle, move_snapshot,
+    move_tiling_window, show_alert, tiling_desktop, window_snapshot,
+};
 #[cfg(windows)]
 pub use windows::attach_parent_console;
 #[cfg(all(windows, feature = "window-icon"))]
 pub use windows::set_window_icon;
-#[cfg(windows)]
-pub use windows::{TilingDesktop, TilingWindow, move_tiling_window, tiling_desktop};
 #[cfg(windows)]
 pub use windows::{
     WindowSnapshot, choose_glow_color, focus_snapshot, foreground_handle, hold_focus_glow,
     move_snapshot, release_focus_glow, show_focus_glow, wait_for_focus_glow, window_identity,
     window_snapshot,
 };
+#[cfg(windows)]
+pub use windows::{move_tiling_window, tiling_desktop};
 
 /// GNOME cannot tell a minimized window from a closed one, so unavailable
-/// members are released as before.
-#[cfg(target_os = "linux")]
+/// members are released as before. macOS has no centered groups.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn window_identity(_handle: u64) -> Option<String> {
     None
 }

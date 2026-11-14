@@ -202,6 +202,47 @@ pub fn move_snapshot(expected: &WindowSnapshot, target: Rect) -> Result<Rect> {
     move_resize(&connection, expected.handle, expected.bounds, target)
 }
 
+/// ListTilingWindows entry: id, frame, work area, workspace key, WM class, pid.
+type WireTiling = (u64, Wire, Wire, String, String, u32);
+
+fn tiling_window((handle, frame, area, workspace, app, _): WireTiling) -> crate::TilingWindow {
+    crate::TilingWindow {
+        snapshot: WindowSnapshot {
+            handle,
+            id: window_id(handle),
+            area: rect(area),
+            bounds: rect(frame),
+        },
+        workspace,
+        app,
+    }
+}
+
+/// Tileable windows on the active workspace. The extension filters dialogs,
+/// transients, fixed-size, minimized, maximized and fullscreen windows; tt-pane
+/// excludes its own windows here.
+pub fn tiling_desktop() -> Result<crate::TilingDesktop> {
+    let (windows, identities, workspaces, interacting): (
+        Vec<WireTiling>,
+        Vec<u64>,
+        Vec<String>,
+        bool,
+    ) = call(&connection()?, "ListTilingWindows", &())?;
+    let own = std::process::id();
+    let mut windows: Vec<_> = windows
+        .into_iter()
+        .filter(|window| window.5 != own)
+        .map(tiling_window)
+        .collect();
+    windows.sort_by_key(|w| w.snapshot.handle);
+    Ok(crate::TilingDesktop {
+        windows,
+        identities: identities.into_iter().map(window_id).collect(),
+        workspaces,
+        interacting,
+    })
+}
+
 pub fn focus_snapshot(expected: &WindowSnapshot) -> Result<()> {
     let connection = connection()?;
     revalidate(&connection, expected)?;
@@ -428,6 +469,24 @@ mod tests {
             Some(0)
         );
         assert!(candidates(7, &windows, &[], FocusVisibility::IncludeHidden, &[], &[]).is_err());
+    }
+
+    #[test]
+    fn tiling_wire_maps_to_gnome_identities() {
+        let window = tiling_window((
+            42,
+            (10, 40, 800, 600),
+            (0, 32, 3840, 2128),
+            "gnome:1".into(),
+            "org.gnome.Nautilus".into(),
+            7,
+        ));
+        assert_eq!(window.snapshot.handle, 42);
+        assert_eq!(window.snapshot.id, "gnome:42");
+        assert_eq!(window.snapshot.area, AREA);
+        assert_eq!(window.snapshot.bounds.width, 800);
+        assert_eq!(window.workspace, "gnome:1");
+        assert_eq!(window.app, "org.gnome.Nautilus");
     }
 
     #[test]

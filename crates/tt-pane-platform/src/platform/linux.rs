@@ -48,6 +48,23 @@ pub fn move_snapshot(expected: &WindowSnapshot, target: Rect) -> Result<Rect> {
     gnome::move_snapshot(expected, target)
 }
 
+const TILING_UNSUPPORTED: &str =
+    "Automatic tiling on Linux currently supports GNOME on Wayland only";
+
+pub fn tiling_desktop() -> Result<crate::TilingDesktop> {
+    if !gnome_session() {
+        bail!(TILING_UNSUPPORTED);
+    }
+    gnome::tiling_desktop()
+}
+
+pub fn move_tiling_window(expected: &crate::TilingWindow, target: Rect) -> Result<Rect> {
+    if !gnome_session() {
+        bail!(TILING_UNSUPPORTED);
+    }
+    gnome::move_snapshot(&expected.snapshot, target)
+}
+
 pub fn focus_snapshot(expected: &WindowSnapshot) -> Result<()> {
     if !gnome_session() {
         bail!(FOCUS_UNSUPPORTED);

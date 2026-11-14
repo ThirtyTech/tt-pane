@@ -1,4 +1,5 @@
-//! Windows polling coordinator. Tray and CLI share state under the cycle lock.
+//! Tiling polling coordinator for Windows, GNOME on Wayland and macOS. Tray and
+//! CLI share state under the cycle lock.
 use crate::{
     config::{Config, Tiling},
     geometry::{Action, Rect},
@@ -353,7 +354,9 @@ fn lock(path: &Path) -> Result<File> {
 
 pub fn observe(config: &Config, path: &Path) -> Result<()> {
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    if !config.tiling.enabled && !sidecar(&path, ".tiling.json").exists() {
+    if !platform::tiling_supported()
+        || !config.tiling.enabled && !sidecar(&path, ".tiling.json").exists()
+    {
         return Ok(());
     }
     let lock = lock(&path)?;
@@ -407,6 +410,14 @@ pub(crate) fn action(
     handle: Option<u64>,
 ) -> Result<bool> {
     if !config.tiling.enabled && !action.is_tiling() && !sidecar(path, ".tiling.json").exists() {
+        return Ok(false);
+    }
+    // Sessions without a backend (X11, other Wayland compositors) keep ordinary snaps.
+    if !platform::tiling_supported() {
+        ensure!(
+            !action.is_tiling(),
+            "Automatic tiling on Linux currently supports GNOME on Wayland only"
+        );
         return Ok(false);
     }
     let mut state = State::load(path)?;
@@ -1604,6 +1615,15 @@ mod tests {
 
     #[test]
     fn disabled_tiling_actions_error_and_toggle_off_does_not_enumerate() {
+        // Linux CI runs outside GNOME, where tiling actions report the missing backend.
+        if !platform::tiling_supported() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            let error = action(&config(), &path, Action::ToggleTiling, None).unwrap_err();
+            assert!(error.to_string().contains("GNOME on Wayland only"));
+            assert!(!action(&config(), &path, Action::Left, None).unwrap());
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         for command in Action::TILING
@@ -1632,6 +1652,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     #[ignore = "requires interactive Windows desktop; moves only disposable test windows"]
     fn native_reconcile_moves_only_disposable_windows_and_reads_back_bounds() {
         platform::test_support::with_group_windows(|handles| {

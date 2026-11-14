@@ -1,4 +1,6 @@
 //! Explicit Center membership, shared by the tray and CLI under the cycle lock.
+// macOS has no centered groups; tiling only reads this state to skip members.
+#![cfg_attr(target_os = "macos", allow(dead_code))]
 use crate::{
     config::CenterLayout,
     geometry::{Action, Rect},

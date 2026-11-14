@@ -2,8 +2,8 @@
 //
 // GNOME on Wayland gives ordinary clients no way to move another application's
 // window, so tt-pane asks the shell over the session bus. This extension only
-// reports windows, and moves or focuses the window tt-pane names; all placement
-// and navigation logic stays in tt-pane.
+// reports windows, and moves or focuses the window tt-pane names; all placement,
+// navigation and tiling logic stays in tt-pane.
 
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
@@ -13,7 +13,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 const BUS_NAME = 'net.thirtytech.TtPane';
 const OBJECT_PATH = '/net/thirtytech/TtPane';
-const API_VERSION = 2;
+const API_VERSION = 3;
 
 const INTERFACE = `<node>
   <interface name="net.thirtytech.TtPane">
@@ -45,6 +45,12 @@ const INTERFACE = `<node>
     </method>
     <method name="Activate">
       <arg type="t" direction="in" name="id"/>
+    </method>
+    <method name="ListTilingWindows">
+      <arg type="a(t(iiii)(iiii)ssu)" direction="out" name="windows"/>
+      <arg type="at" direction="out" name="identities"/>
+      <arg type="as" direction="out" name="workspaces"/>
+      <arg type="b" direction="out" name="interacting"/>
     </method>
     <property name="Version" type="u" access="read"/>
   </interface>
@@ -108,7 +114,23 @@ function unmaximize(window) {
     return false;
 }
 
+// Windows on every workspace (including secondary monitors when workspaces
+// span the primary display only) share one layout per monitor.
+function workspaceKey(window, active) {
+    return window.is_on_all_workspaces() ? 'gnome:all' : `gnome:${active.index()}`;
+}
+
+// A top-level, resizable, restored application window automatic tiling may arrange.
+function isTileable(window) {
+    return window.get_window_type() === Meta.WindowType.NORMAL &&
+        !window.get_transient_for() && window.allows_resize() && isAvailable(window);
+}
+
 class Service {
+    constructor() {
+        this.grabbing = false;
+    }
+
     GetFocusedWindow() {
         const window = global.display.get_focus_window();
         if (!window || !MOVABLE_TYPES.includes(window.get_window_type()))
@@ -182,6 +204,30 @@ class Service {
         Main.activateWindow(window);
     }
 
+    // Tileable windows on the active workspace, every application window there
+    // (minimized ones included, so floating choices survive a restore), the
+    // workspace keys in view, and whether the user is dragging or resizing.
+    ListTilingWindows() {
+        const active = global.workspace_manager.get_active_workspace();
+        const windows = global.get_window_actors()
+            .map(actor => actor.get_meta_window())
+            .filter(window => window && isApplication(window) &&
+                window.located_on_workspace(active));
+        return [
+            windows.filter(isTileable).map(window => [
+                window.get_id(),
+                rect(window.get_frame_rect()),
+                rect(window.get_work_area_current_monitor()),
+                workspaceKey(window, active),
+                window.get_wm_class() ?? '',
+                Math.max(0, window.get_pid()),
+            ]),
+            windows.map(window => window.get_id()),
+            [`gnome:${active.index()}`, 'gnome:all'],
+            this.grabbing,
+        ];
+    }
+
     get Version() {
         return API_VERSION;
     }
@@ -189,7 +235,16 @@ class Service {
 
 export default class TtPaneExtension extends Extension {
     enable() {
-        this._dbus = Gio.DBusExportedObject.wrapJSObject(INTERFACE, new Service());
+        this._service = new Service();
+        this._grabs = [
+            global.display.connect('grab-op-begin', () => {
+                this._service.grabbing = true;
+            }),
+            global.display.connect('grab-op-end', () => {
+                this._service.grabbing = false;
+            }),
+        ];
+        this._dbus = Gio.DBusExportedObject.wrapJSObject(INTERFACE, this._service);
         this._dbus.export(Gio.DBus.session, OBJECT_PATH);
         this._owner = Gio.bus_own_name_on_connection(
             Gio.DBus.session,
@@ -207,5 +262,9 @@ export default class TtPaneExtension extends Extension {
         }
         this._dbus?.unexport();
         this._dbus = null;
+        for (const id of this._grabs ?? [])
+            global.display.disconnect(id);
+        this._grabs = null;
+        this._service = null;
     }
 }

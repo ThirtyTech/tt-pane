@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod autostart;
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub mod centered;
 pub mod config;
 #[cfg(target_os = "linux")]
@@ -9,7 +9,7 @@ pub mod gnome;
 #[cfg(all(target_os = "linux", feature = "gui"))]
 mod launcher;
 pub mod positioning;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub mod tiling;
 pub use tt_pane_platform as platform;
 pub use tt_pane_platform::geometry;

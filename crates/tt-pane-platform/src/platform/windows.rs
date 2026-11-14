@@ -5,7 +5,7 @@ use anyhow::{Result, ensure};
 pub use glow::{
     choose_glow_color, hold_focus_glow, release_focus_glow, show_focus_glow, wait_for_focus_glow,
 };
-pub use tiling::{TilingDesktop, TilingWindow, move_tiling_window, tiling_desktop};
+pub use tiling::{move_tiling_window, tiling_desktop};
 use windows::Win32::{
     Foundation::{HWND, RECT},
     Graphics::{
