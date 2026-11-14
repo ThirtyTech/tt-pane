@@ -39,6 +39,16 @@ The embedded `src/update_windows.ps1` reads a local JSON job using UTF-8, stages
 
 Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/test-updater.ps1` to exercise portable and installer handoffs and invalid archives with disposable local executables. It verifies that replacement waits for exit, paths with spaces and Unicode survive restart, configuration is preserved, and portable backup files are cleaned up. This check also runs in Windows release CI. It does not download a release or update a real installation. Rust unit tests cover semantic version selection and checksum rejection.
 
+## macOS and Linux in-app updates
+
+The same checks, tray item and Settings section run on macOS and Linux. `src/update.rs` picks the asset from the install layout: an executable at `<name>.app/Contents/MacOS/tt-pane` updates the whole bundle from `tt-pane-<tag>-macos-arm64.dmg` (mounted read-only with `hdiutil`, copied with `ditto`, checked with `codesign --verify --strict`); any other macOS executable updates from `…-macos-arm64.tar.gz`, and Linux from `…-linux-x64.tar.gz` (system `curl` and `tar`). After the checksum, the staged executable must report the release's version from `--version`, which also catches missing libraries or the wrong architecture.
+
+The new version is staged in a `.tt-pane-new-*` folder beside the installed one, so a read-only folder (a `sudo` install in `/usr/local`, or an App Translocation path) fails before anything changes. Because a running executable or bundle can be renamed, tt-pane swaps it in itself and keeps the old one in a `.tt-pane-backup-*` folder; failures up to here leave tt-pane running and report the error. For `install.sh` installs on Linux, `<prefix>/share/icons/hicolor/256x256/apps/tt-pane.png` is refreshed when present.
+
+The embedded `src/update_unix.sh` runs under `/bin/sh` in its own process group, writes its readiness file, waits up to 60 seconds for tt-pane to exit and starts the new version with the absolute `--config` path: `open -n <app> --args …` for the bundle, the executable directly otherwise. If that fails, it restores the backup, starts the previous version and reports the failure (an alert on macOS, `notify-send` on Linux) with diagnostics kept in the `tt-pane-update-*` temporary folder. On success it deletes the backup and staging files.
+
+Run `sh packaging/unix/test-updater.sh` to exercise the helper with disposable executables: it checks that the new version waits for exit, receives `--config` with a path containing spaces, and that a version that fails to start is replaced by the restored backup. This runs in macOS and Linux release CI. `cargo test --release --lib update:: -- --ignored` also downloads and stages (without installing) the latest release; on macOS set `TTPANE_TEST_BUNDLE=1` to stage the disk image instead of the archive.
+
 ## Build locally on macOS
 
 Install Rust, Xcode with the Metal Toolchain, and Python 3. From the repository root:
