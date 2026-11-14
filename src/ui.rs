@@ -135,7 +135,9 @@ struct Settings {
     status: String,
     error: bool,
     preview: PositionPreview,
-    advanced_expanded: bool,
+    tab: Tab,
+    /// The shortcut row under the mouse, which shows its unassign icon.
+    hovered_binding: Option<usize>,
     window: Option<WindowHandle<Settings>>,
     _tray: crate::tray::Tray,
     update: UpdateState,
@@ -524,85 +526,318 @@ fn button(id: impl Into<ElementId>, text: &str) -> Stateful<Div> {
         .child(text.to_owned())
 }
 
-impl Render for Settings {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.update.installing {
-            return div()
-                .size_full()
-                .bg(rgb(0x0e1724))
-                .text_color(rgb(0xe8eef7))
+const TEXT: u32 = 0xe8eef7;
+const MUTED: u32 = 0x91a4bb;
+const MINT: u32 = 0x6ee7c0;
+const PANEL: u32 = 0x131e2c;
+const EDGE: u32 = 0x1b2838;
+const BAR: u32 = 0x0c1520;
+const SAVE: u32 = 0x217b68;
+
+/// The pages of the Settings window, shown as tabs under the header.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Tab {
+    Shortcuts,
+    Snapping,
+    Tiling,
+    Focus,
+    General,
+}
+
+impl Tab {
+    const ALL: [Self; 5] = [
+        Self::Shortcuts,
+        Self::Snapping,
+        Self::Tiling,
+        Self::Focus,
+        Self::General,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Shortcuts => "Shortcuts",
+            Self::Snapping => "Snapping",
+            Self::Tiling => "Tiling",
+            Self::Focus => "Focus",
+            Self::General => "General",
+        }
+    }
+
+    /// Whether `draft` has unsaved changes to the settings on this tab.
+    fn dirty(self, draft: &Config, active: &Config) -> bool {
+        match self {
+            Self::Shortcuts => {
+                draft.bindings.len() != active.bindings.len()
+                    || draft
+                        .bindings
+                        .iter()
+                        .zip(&active.bindings)
+                        .any(|(d, a)| d.action != a.action || d.shortcut != a.shortcut)
+            }
+            Self::Snapping => {
+                draft.center_layout != active.center_layout
+                    || draft.gaps != active.gaps
+                    || draft.width_resize != active.width_resize
+                    || draft.growth != active.growth
+            }
+            Self::Tiling => draft.tiling != active.tiling,
+            Self::Focus => draft.focus != active.focus,
+            Self::General => {
+                draft.launch_at_login != active.launch_at_login
+                    || draft.tray_icon != active.tray_icon
+            }
+        }
+    }
+}
+
+/// Group headings on the Shortcuts tab, in display order.
+const BINDING_GROUPS: [&str; 4] = ["Snap", "Size", "Focus", "Tiling"];
+
+/// The Shortcuts tab group an action is listed under.
+fn binding_group(action: Action) -> &'static str {
+    if Action::POSITIONS.contains(&action) {
+        "Snap"
+    } else if action.focuses() {
+        "Focus"
+    } else if action.is_tiling() {
+        "Tiling"
+    } else {
+        "Size"
+    }
+}
+
+fn help(text: impl Into<SharedString>) -> Div {
+    div().text_xs().text_color(rgb(MUTED)).child(text.into())
+}
+
+/// One setting: name and help on the left, its control on the right.
+fn setting(
+    title: impl Into<SharedString>,
+    note: impl Into<SharedString>,
+    control: impl IntoElement,
+) -> Div {
+    let note = note.into();
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_6()
+        .px_4()
+        .py_3()
+        .child(
+            div()
                 .flex()
                 .flex_col()
-                .p_6()
-                .gap_4()
-                .child(div().text_2xl().child("Updating tt-pane"))
-                .child(self.update.message.clone())
-                .child(crate::update::RESTART_NOTE)
-                .into_any_element();
+                .gap_1()
+                .flex_1()
+                .min_w_0()
+                .child(div().text_sm().child(title.into()))
+                .when(!note.is_empty(), |el| el.child(help(note))),
+        )
+        .child(div().flex_shrink_0().child(control))
+}
+
+/// A setting that only matters when the one above it is on.
+fn nested(row: Div) -> Div {
+    row.pl(px(36.))
+}
+
+/// A titled group of settings on one panel, divided by hairlines.
+fn section(title: &str, rows: impl IntoIterator<Item = Div>) -> Div {
+    div()
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(MUTED))
+                .child(title.to_uppercase()),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .rounded_lg()
+                .bg(rgb(PANEL))
+                .children(
+                    rows.into_iter().enumerate().map(|(i, row)| {
+                        row.when(i > 0, |el| el.border_t_1().border_color(rgb(EDGE)))
+                    }),
+                ),
+        )
+}
+
+fn switch(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
+    div()
+        .id(id)
+        .w(px(38.))
+        .h(px(22.))
+        .p(px(3.))
+        .flex()
+        .when(on, |el| el.justify_end())
+        .rounded_full()
+        .bg(rgb(if on { SAVE } else { 0x263549 }))
+        .cursor_pointer()
+        .child(
+            div()
+                .size(px(16.))
+                .rounded_full()
+                .bg(rgb(if on { TEXT } else { MUTED })),
+        )
+}
+
+fn segments(children: impl IntoIterator<Item = Stateful<Div>>) -> Div {
+    div()
+        .flex()
+        .p(px(2.))
+        .rounded_md()
+        .bg(rgb(0x172231))
+        .children(children)
+}
+
+fn segment(id: impl Into<ElementId>, label: &'static str, on: bool) -> Stateful<Div> {
+    div()
+        .id(id)
+        .px_3()
+        .py_1()
+        .rounded_md()
+        .text_sm()
+        .cursor_pointer()
+        .text_color(rgb(if on { TEXT } else { MUTED }))
+        .when(on, |el| el.bg(rgb(0x354961)))
+        .when(!on, |el| el.hover(|style| style.text_color(rgb(TEXT))))
+        .child(label)
+}
+
+fn stepper(less: Stateful<Div>, value: String, more: Stateful<Div>) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .child(less)
+        .child(div().w(px(52.)).flex().justify_center().child(value))
+        .child(more)
+}
+
+fn step_button(id: impl Into<ElementId>, text: &str) -> Stateful<Div> {
+    button(id, text).px_3().py_1()
+}
+
+/// Help text that isn't tied to one setting.
+fn page_note(text: impl Into<SharedString>, color: u32) -> Div {
+    div()
+        .flex_shrink_0()
+        .px_4()
+        .py_3()
+        .rounded_lg()
+        .border_1()
+        .border_color(rgb(0x263549))
+        .text_xs()
+        .text_color(rgb(color))
+        .child(text.into())
+}
+
+impl Settings {
+    fn select_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        if self.recording.take().is_some() {
+            match self.resume() {
+                Ok(()) => self.message("Recording canceled", false, cx),
+                Err(e) => self.message(format!("{e:#}"), true, cx),
+            }
         }
-        let selected = self.preview.action;
-        let ([preview_x, preview_y, preview_width, preview_height], animating) =
-            self.preview.sample(Instant::now());
-        if animating {
-            window.request_animation_frame();
-        }
-        let rows = self
-            .draft
-            .bindings
-            .iter()
-            .enumerate()
-            .map(|(index, binding)| {
-                let active = self.recording == Some(index);
-                let action = binding.action;
+        self.tab = tab;
+        cx.notify();
+    }
+
+    fn binding_row(&self, index: usize, cx: &mut Context<Self>) -> Stateful<Div> {
+        let binding = &self.draft.bindings[index];
+        let active = self.recording == Some(index);
+        let action = binding.action;
+        div()
+            .id(("binding-row", index))
+            .on_hover(cx.listener(move |this, hovered, _, cx| {
+                if *hovered {
+                    this.hovered_binding = Some(index);
+                    if this.preview.action != action {
+                        this.preview.select(
+                            action,
+                            this.draft.width_resize.percent,
+                            Instant::now(),
+                        );
+                    }
+                } else if this.hovered_binding == Some(index) {
+                    this.hovered_binding = None;
+                }
+                cx.notify();
+            }))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_4()
+            .pl_3()
+            .pr_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(if active {
+                0x203e48
+            } else if self.preview.action == action {
+                0x1b3040
+            } else {
+                0x172231
+            }))
+            .child(div().text_sm().child(action.label()))
+            .child(
                 div()
-                    .id(("binding-row", index))
-                    .on_hover(cx.listener(move |this, hovered, _, cx| {
-                        if *hovered && this.preview.action != action {
-                            this.preview.select(
-                                action,
-                                this.draft.width_resize.percent,
-                                Instant::now(),
-                            );
-                            cx.notify();
-                        }
-                    }))
                     .flex()
                     .items_center()
-                    .justify_between()
-                    .gap_4()
-                    .p_3()
-                    .rounded_md()
-                    .bg(rgb(if active {
-                        0x203e48
-                    } else if selected == action {
-                        0x1b3040
-                    } else {
-                        0x172231
-                    }))
-                    .child(div().text_sm().child(binding.action.label()))
+                    .gap_2()
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                button(
-                                    ("binding", index),
-                                    if active {
-                                        "Recording…"
-                                    } else if binding.shortcut.is_empty() {
-                                        "Disabled"
+                        button(
+                            ("binding", index),
+                            if active {
+                                "Recording…"
+                            } else if binding.shortcut.is_empty() {
+                                "Disabled"
+                            } else {
+                                &binding.shortcut
+                            },
+                        )
+                        .py_1()
+                        .text_sm()
+                        .min_w(px(132.))
+                        .flex()
+                        .justify_center()
+                        .on_click(
+                            cx.listener(move |this, _, window, cx| this.record(index, window, cx)),
+                        ),
+                    )
+                    .child(div().size(px(30.)).when(
+                        !active && !binding.shortcut.is_empty(),
+                        |el| {
+                            el.child(
+                                // Strike-through circle: unassigns this shortcut.
+                                div()
+                                    .id(("unbind", index))
+                                    .size(px(30.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_md()
+                                    .text_lg()
+                                    // Hidden until the row is hovered; it keeps its
+                                    // space so the row never shifts.
+                                    .text_color(if self.hovered_binding == Some(index) {
+                                        rgb(0xf0645a).into()
                                     } else {
-                                        &binding.shortcut
-                                    },
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _, window, cx| this.record(index, window, cx),
-                                )),
-                            )
-                            .when(!active && !binding.shortcut.is_empty(), |el| {
-                                el.child(button(("unbind", index), "Clear").on_click(cx.listener(
-                                    move |this, _, _, cx| {
+                                        transparent_black()
+                                    })
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(rgb(0x3a2128)))
+                                    .child("⊘")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
                                         this.draft.bindings[index].shortcut.clear();
                                         this.message(
                                             format!(
@@ -612,248 +847,718 @@ impl Render for Settings {
                                             false,
                                             cx,
                                         );
-                                    },
-                                )))
-                            }),
+                                    })),
+                            )
+                        },
+                    )),
+            )
+    }
+
+    fn shortcuts_tab(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let selected = self.preview.action;
+        let ([preview_x, preview_y, preview_width, preview_height], animating) =
+            self.preview.sample(Instant::now());
+        if animating {
+            window.request_animation_frame();
+        }
+        let groups = BINDING_GROUPS.map(|name| {
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(MUTED))
+                        .child(name.to_uppercase()),
+                )
+                .children(
+                    (0..self.draft.bindings.len())
+                        .filter(|&index| binding_group(self.draft.bindings[index].action) == name)
+                        .map(|index| self.binding_row(index, cx))
+                        .collect::<Vec<_>>(),
+                )
+        });
+        let notes = div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .when(selected.is_tiling(), |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Experimental tiling action (Windows, macOS, GNOME on Wayland, and X11). Turn on automatic tiling on the Tiling tab or use Toggle experimental tiling. These actions edit the live layout and have no fixed snap position.")))
+            .when(selected.adjusts_pair(), |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Move the shared boundary by 25% of the selected window's current height, with a 50/50 stop when returning toward the middle. Blue shows the neighbor. Windows only; matching left and right edges required.")))
+            .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(MINT)).child("H: left, J: down, K: up, L: right. Tap H/J/K/L to navigate background windows by default. Inside a centered group, H/L rotate continuously. Hold for 400 ms to enter covered middle windows from an edge, or exit a middle window to a background edge window. Holds are Windows only; centered groups rotate on Windows and GNOME on Wayland.")))
+            .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+. (period).")))
+            .when(selected.adjusts_width(), |el| el.child(help("Width change per press is set on the Snapping tab.")))
+            .child(help("Hover a shortcut to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."));
+        div()
+            .flex()
+            .flex_1()
+            .min_h_0()
+            .gap_6()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .gap_3()
+                    .child(help("HOVER TO PREVIEW · CLICK A SHORTCUT TO RECORD"))
+                    .child(
+                        div()
+                            .id("bindings")
+                            .flex()
+                            .flex_col()
+                            .gap_4()
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .pr_2()
+                            .children(groups),
+                    ),
+            )
+            .child(
+                div()
+                    .w(px(264.))
+                    .flex_shrink_0()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .p_4()
+                            .rounded_lg()
+                            .bg(rgb(PANEL))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::BOLD)
+                                    .child("Position preview"),
+                            )
+                            .child(
+                                div()
+                                    .relative()
+                                    .flex_shrink_0()
+                                    .w(px(PREVIEW_AREA.width as f32))
+                                    .h(px(PREVIEW_AREA.height as f32))
+                                    .rounded_md()
+                                    .overflow_hidden()
+                                    .bg(rgb(0x090f19))
+                                    .border_1()
+                                    .border_color(rgb(0x354961))
+                                    .when(selected.adjusts_pair(), |el| {
+                                        el.child(
+                                            div()
+                                                .absolute()
+                                                .left(px(preview_x))
+                                                .top(px(0.))
+                                                .w(px(preview_width))
+                                                .h(px(preview_y.max(0.)))
+                                                .bg(rgb(0x355b91))
+                                                .border_1()
+                                                .border_color(rgb(0x8bb5ef)),
+                                        )
+                                    })
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .left(px(preview_x))
+                                            .top(px(preview_y))
+                                            .w(px(preview_width))
+                                            .h(px(preview_height))
+                                            .rounded_sm()
+                                            .bg(rgb(0x258c78))
+                                            .border_1()
+                                            .border_color(rgb(MINT)),
+                                    ),
+                            )
+                            .child(div().text_sm().child(selected.label())),
                     )
-            })
-            .collect::<Vec<_>>();
-        let content = div().track_focus(&self.focus).on_key_down(cx.listener(Self::key_down))
-            .flex_1().min_h_0().w_full().bg(rgb(0x0e1724)).text_color(rgb(0xe8eef7)).font_family("Segoe UI")
-            .flex().flex_col().p_6().gap_4()
-            .child(div().flex().items_center().justify_between()
-                .child(div().flex().flex_col().gap_1().child(div().text_3xl().font_weight(FontWeight::BOLD).child("tt-pane"))
-                    .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Your windows. A keystroke away.")))
-                .child(div().text_xs().text_color(rgb(0x6ee7c0)).child(platform::description())))
-            .child(div().flex().flex_1().min_h_0().gap_6()
-                // Left: experimental toggles stay fixed above the scrolling bindings.
-                .child(div().flex().flex_col().flex_1().min_w_0().min_h_0().gap_3()
-                    .when(cfg!(windows), |el| el.child(div().flex_shrink_0().flex().gap_4().p_3().rounded_lg().bg(rgb(0x131e2c))
-                        .child(div().flex().flex_col().gap_2().flex_1().min_w_0()
-                            .child(button("tiling-enabled", if self.draft.tiling.enabled { "Automatic tiling: On" } else { "Automatic tiling: Off" })
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.draft.tiling.enabled = !this.draft.tiling.enabled;
-                                    this.message("Automatic tiling updated. Save to activate.", false, cx);
-                                })))
-                            .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Experimental. Dwindle tiles restored windows on the current desktop. Moving or snapping a tile floats it.")))
-                        .child(div().flex().flex_col().gap_2().flex_1().min_w_0()
-                            .child(button("tiling-snap-rearranges", if self.draft.tiling.snap_rearranges { "Snaps rearrange tiles: On" } else { "Snaps rearrange tiles: Off" })
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.draft.tiling.snap_rearranges = !this.draft.tiling.snap_rearranges;
-                                    this.message("Snap behavior updated. Save to activate.", false, cx);
-                                })))
-                            .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Half and quarter snaps move the other tiles into the remaining space instead of covering them.")))))
-                    .child(div().flex_shrink_0().text_xs().text_color(rgb(0x91a4bb)).child("HOVER TO PREVIEW · CLICK A SHORTCUT TO RECORD"))
-                    .child(div().id("bindings").flex().flex_col().gap_2().flex_1().min_h_0().overflow_y_scroll()
-                        .children(rows)))
-                // Right: the preview stays fixed above the scrolling options.
-                .child(div().w(px(264.)).flex_shrink_0().min_h_0().flex().flex_col().gap_4()
-                    .child(div().flex_shrink_0().flex().flex_col().gap_2().p_4().rounded_lg().bg(rgb(0x131e2c))
-                        .child(div().text_sm().font_weight(FontWeight::BOLD).child("Position preview"))
-                        .child(div().relative().flex_shrink_0().w(px(PREVIEW_AREA.width as f32)).h(px(PREVIEW_AREA.height as f32)).rounded_md().overflow_hidden().bg(rgb(0x090f19)).border_1().border_color(rgb(0x354961))
-                            .when(selected.adjusts_pair(), |el| el.child(div().absolute().left(px(preview_x)).top(px(0.)).w(px(preview_width)).h(px(preview_y.max(0.))).bg(rgb(0x355b91)).border_1().border_color(rgb(0x8bb5ef))))
-                            .child(div().absolute().left(px(preview_x)).top(px(preview_y))
-                                .w(px(preview_width)).h(px(preview_height)).rounded_sm()
-                                .bg(rgb(0x258c78)).border_1().border_color(rgb(0x6ee7c0))))
-                        .child(div().text_sm().child(selected.label())))
-                .child(div().id("placement-options").flex_1().min_h_0().overflow_y_scroll().flex().flex_col().gap_4().p_4().rounded_lg().bg(rgb(0x131e2c))
-                    .when(selected.is_tiling(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Experimental tiling action (Windows, macOS, GNOME on Wayland, and X11). Turn on Automatic tiling above the shortcuts or use Toggle experimental tiling. These actions edit the live layout and have no fixed snap position.")))
-                    .when(selected.adjusts_pair(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Move the shared boundary by 25% of the selected window's current height, with a 50/50 stop when returning toward the middle. Blue shows the neighbor. Windows only; matching left and right edges required.")))
-                    .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("H: left, J: down, K: up, L: right. Tap H/J/K/L to navigate background windows by default. Inside a centered group, H/L rotate continuously. Hold for 400 ms to enter covered middle windows from an edge, or exit a middle window to a background edge window. Holds are Windows only; centered groups rotate on Windows and GNOME on Wayland.")))
-                    .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(0x6ee7c0)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+. (period).")))
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Hover a keybinding to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."))
-                    .when(!platform::tiling_supported(), |el| el.child(div().text_xs().text_color(rgb(0x91a4bb)).child("Automatic tiling is available on Windows, macOS, GNOME on Wayland, and X11.")))
-                    .child(div().text_sm().text_color(rgb(0x91a4bb)).child("Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap."))
-                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("General"))
-                    .child(div().text_sm().child("Launch at login"))
-                    .child(button("launch-at-login", if self.draft.launch_at_login { "On" } else { "Off" })
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.draft.launch_at_login = !this.draft.launch_at_login;
-                            this.message("Launch at login updated. Save to activate.", false, cx);
-                        })))
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Start tt-pane in the tray when you sign in."))
-                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Center windows"))
-                    .child(button("center-layout", match self.draft.center_layout {
-                        CenterLayout::Offset => "Layout: Offset",
-                        CenterLayout::Stack => "Layout: Stack",
-                    }).on_click(cx.listener(|this, _, _, cx| {
-                        this.draft.center_layout = match this.draft.center_layout {
-                            CenterLayout::Offset => CenterLayout::Stack,
-                            CenterLayout::Stack => CenterLayout::Offset,
-                        };
-                        this.message("Center layout updated. Save to activate.", false, cx);
-                    })))
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Offset (default) spreads background center windows out. Stack keeps them centered; H/L brings the next window forward. Sizing stays the same."))
-                    .when(cfg!(any(target_os = "macos", target_os = "linux")), |el| el
-                        .child(div().text_sm().child(if cfg!(target_os = "macos") { "Menu bar icon" } else { "Tray icon" }))
-                        .child(button("tray-icon", match self.draft.tray_icon {
-                            TrayIconStyle::Color => "Color",
-                            TrayIconStyle::Monochrome => "Monochrome",
-                        })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.draft.tray_icon = match this.draft.tray_icon {
-                                    TrayIconStyle::Color => TrayIconStyle::Monochrome,
-                                    TrayIconStyle::Monochrome => TrayIconStyle::Color,
-                                };
-                                this.message("Tray icon updated. Save to activate.", false, cx);
-                            })))
-                        .child(div().text_xs().text_color(rgb(0x91a4bb)).child(if cfg!(target_os = "macos") {
-                            "Monochrome follows the menu bar's light or dark appearance. Color shows the full app icon."
-                        } else {
-                            "Monochrome draws a white silhouette for dark panels. Color shows the full app icon."
-                        })))
-                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Window focus"))
-                    .when(cfg!(windows), |el| el
-                        .child(div().text_sm().child("Focus glow"))
-                        .child(button("focus-glow", if self.draft.focus.glow_enabled { "On" } else { "Off" })
-                            .on_click(cx.listener(|this, _, _, cx| {
+                    .child(
+                        div()
+                            .id("action-notes")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .p_4()
+                            .rounded_lg()
+                            .bg(rgb(PANEL))
+                            .child(notes),
+                    ),
+            )
+    }
+
+    fn snapping_tab(&self, cx: &mut Context<Self>) -> Vec<Div> {
+        let d = &self.draft;
+        vec![
+            section(
+                "Center windows",
+                [setting(
+                    "Layout",
+                    "Offset spreads background center windows out. Stack keeps them centered; H/L brings the next window forward. Sizing stays the same.",
+                    segments(
+                        [
+                            (CenterLayout::Offset, "center-offset", "Offset"),
+                            (CenterLayout::Stack, "center-stack", "Stack"),
+                        ]
+                        .map(|(layout, id, label)| {
+                            segment(id, label, d.center_layout == layout).on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    if this.draft.center_layout != layout {
+                                        this.draft.center_layout = layout;
+                                        this.message(
+                                            "Center layout updated. Save to activate.",
+                                            false,
+                                            cx,
+                                        );
+                                    }
+                                },
+                            ))
+                        }),
+                    ),
+                )],
+            ),
+            section(
+                "Snapped window gaps",
+                [
+                    setting(
+                        "Inner gap per window",
+                        "Default 5 on each inner edge, so 10 between tiles. 0 turns spacing off.",
+                        stepper(
+                            step_button("gap-inner-less", "−").on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.draft.gaps.inner = this.draft.gaps.inner.saturating_sub(1);
+                                    this.message(
+                                        "Window gaps updated. Save to activate.",
+                                        false,
+                                        cx,
+                                    );
+                                },
+                            )),
+                            d.gaps.inner.to_string(),
+                            step_button("gap-inner-more", "+").on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.draft.gaps.inner = (this.draft.gaps.inner + 1).min(100);
+                                    this.message(
+                                        "Window gaps updated. Save to activate.",
+                                        false,
+                                        cx,
+                                    );
+                                },
+                            )),
+                        ),
+                    ),
+                    setting(
+                        "Desktop edge gap",
+                        "Default 20, range 0–100. Applies on the next snap; center windows are unchanged.",
+                        stepper(
+                            step_button("gap-outer-less", "−").on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.draft.gaps.outer = this.draft.gaps.outer.saturating_sub(1);
+                                    this.message(
+                                        "Window gaps updated. Save to activate.",
+                                        false,
+                                        cx,
+                                    );
+                                },
+                            )),
+                            d.gaps.outer.to_string(),
+                            step_button("gap-outer-more", "+").on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.draft.gaps.outer = (this.draft.gaps.outer + 1).min(100);
+                                    this.message(
+                                        "Window gaps updated. Save to activate.",
+                                        false,
+                                        cx,
+                                    );
+                                },
+                            )),
+                        ),
+                    ),
+                ],
+            ),
+            section(
+                "Width adjustment",
+                [setting(
+                    "Width change per press",
+                    "Shrink and Expand width keep the height and the left edge, right edge, or center fixed. Repeats keep resizing; expansion stops at the work-area edge.",
+                    stepper(
+                        step_button("width-less", "−").on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.width_resize.percent =
+                                this.draft.width_resize.percent.saturating_sub(1).max(1);
+                            this.preview.select(
+                                this.preview.action,
+                                this.draft.width_resize.percent,
+                                Instant::now(),
+                            );
+                            this.message("Width adjustment updated. Save to activate.", false, cx);
+                        })),
+                        format!("{}%", d.width_resize.percent),
+                        step_button("width-more", "+").on_click(cx.listener(|this, _, _, cx| {
+                            this.draft.width_resize.percent =
+                                (this.draft.width_resize.percent + 1).min(99);
+                            this.preview.select(
+                                this.preview.action,
+                                this.draft.width_resize.percent,
+                                Instant::now(),
+                            );
+                            this.message("Width adjustment updated. Save to activate.", false, cx);
+                        })),
+                    ),
+                )],
+            ),
+            section(
+                "Repeat shortcut to grow",
+                [
+                    setting(
+                        "Growth per press",
+                        "The first press places the window. Repeats multiply its size, keeping the corner or edge anchored. Center starts at 50% and grows equally in every direction.",
+                        stepper(
+                            step_button("growth-less", "−").on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.draft.growth.percent =
+                                        this.draft.growth.percent.saturating_sub(1).max(1);
+                                    this.message("Growth updated. Save to activate.", false, cx);
+                                },
+                            )),
+                            format!("{}%", d.growth.percent),
+                            step_button("growth-more", "+").on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.draft.growth.percent =
+                                        (this.draft.growth.percent + 1).min(100);
+                                    this.message("Growth updated. Save to activate.", false, cx);
+                                },
+                            )),
+                        ),
+                    ),
+                    setting(
+                        "Steps before reset",
+                        "Growth stops at the work area. 0 turns it off.",
+                        stepper(
+                            step_button("steps-less", "−").on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.draft.growth.steps =
+                                        this.draft.growth.steps.saturating_sub(1);
+                                    this.message("Growth updated. Save to activate.", false, cx);
+                                },
+                            )),
+                            if d.growth.steps == 0 {
+                                "Off".to_owned()
+                            } else {
+                                d.growth.steps.to_string()
+                            },
+                            step_button("steps-more", "+").on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.draft.growth.steps = (this.draft.growth.steps + 1).min(20);
+                                    this.message("Growth updated. Save to activate.", false, cx);
+                                },
+                            )),
+                        ),
+                    ),
+                ],
+            ),
+            page_note(
+                "Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap.",
+                MUTED,
+            ),
+        ]
+    }
+
+    fn tiling_tab(&self, cx: &mut Context<Self>) -> Vec<Div> {
+        let tiling = &self.draft.tiling;
+        let mut page = Vec::new();
+        if cfg!(windows) {
+            page.push(section("Automatic tiling", [
+                setting(
+                    "Tile windows automatically (experimental)",
+                    "Dwindle tiles restored windows on the current desktop. Moving or snapping a tile floats it.",
+                    switch("tiling-enabled", tiling.enabled).on_click(cx.listener(|this, _, _, cx| {
+                        this.draft.tiling.enabled = !this.draft.tiling.enabled;
+                        this.message("Automatic tiling updated. Save to activate.", false, cx);
+                    })),
+                ),
+                nested(setting(
+                    "Snaps rearrange tiles",
+                    "Half and quarter snaps move the other tiles into the remaining space instead of covering them.",
+                    switch("tiling-snap-rearranges", tiling.snap_rearranges).on_click(cx.listener(|this, _, _, cx| {
+                        this.draft.tiling.snap_rearranges = !this.draft.tiling.snap_rearranges;
+                        this.message("Snap behavior updated. Save to activate.", false, cx);
+                    })),
+                )),
+            ]));
+        }
+        page.push(if platform::tiling_supported() {
+            page_note("Tiling shortcuts (swap, split, float, toggle tiling) are on the Shortcuts tab under Tiling.", MINT)
+        } else {
+            page_note("Automatic tiling is available on Windows, macOS, GNOME on Wayland, and X11.", MUTED)
+        });
+        page
+    }
+
+    fn focus_tab(&self, cx: &mut Context<Self>) -> Vec<Div> {
+        let focus = &self.draft.focus;
+        let mut page = Vec::new();
+        if cfg!(windows) {
+            page.push(section(
+                "Focus glow",
+                [
+                    setting(
+                        "Highlight the focused window",
+                        "Briefly highlight the target after moving a window or using H/J/K/L.",
+                        switch("focus-glow", focus.glow_enabled).on_click(cx.listener(
+                            |this, _, _, cx| {
                                 this.draft.focus.glow_enabled = !this.draft.focus.glow_enabled;
                                 this.message("Focus glow updated. Save to activate.", false, cx);
-                            })))
-                        .child(div().flex().items_center().gap_2()
-                            .child(div().size(px(18.)).rounded_sm().bg(rgb(self.draft.focus.glow_rgb().unwrap_or(0xf2f0e8))))
-                            .child(button("glow-color", &format!("Color: {}", self.draft.focus.glow_color))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    #[cfg(windows)]
-                                    {
-                                        let initial = this.draft.focus.glow_rgb().unwrap_or(0xf2f0e8);
-                                        cx.spawn(async move |this, cx| {
-                                            // ChooseColorW pumps Windows messages. Run it after the
-                                            // click listener releases GPUI's App/entity borrows so
-                                            // activation observers and foreground tasks can re-enter.
-                                            let color = platform::choose_glow_color(initial);
-                                            if let Some(color) = color {
-                                                let _ = this.update(cx, |this, cx| {
-                                                    this.draft.focus.glow_color = format!("#{color:06X}");
-                                                    this.message("Glow color updated. Save to activate.", false, cx);
-                                                });
-                                            }
-                                        }).detach();
-                                    }
-                                    let _ = (this, cx);
-                                }))))
-                        .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Briefly highlight the target after moving a window or using H/J/K/L. Default: neutral off-white.")))
-                    .child(div().text_sm().child("Include middle windows in H/J/K/L navigation"))
-                    .child(button("include-middle", if self.draft.focus.include_middle_windows { "On" } else { "Off" })
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.draft.focus.include_middle_windows = !this.draft.focus.include_middle_windows;
-                            this.message("Window focus updated. Save to activate.", false, cx);
-                        })))
-                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Snapped window gaps"))
-                    .child(div().text_sm().child("Inner gap per window"))
-                    .child(div().flex().items_center().justify_between()
-                        .child(button("gap-inner-less", "−").on_click(cx.listener(|this, _, _, cx| {
-                            this.draft.gaps.inner = this.draft.gaps.inner.saturating_sub(1);
-                            this.message("Window gaps updated. Save to activate.", false, cx);
-                        })))
-                        .child(format!("{}", self.draft.gaps.inner))
-                        .child(button("gap-inner-more", "+").on_click(cx.listener(|this, _, _, cx| {
-                            this.draft.gaps.inner = (this.draft.gaps.inner + 1).min(100);
-                            this.message("Window gaps updated. Save to activate.", false, cx);
-                        }))))
-                    .child(div().text_sm().child("Desktop edge gap"))
-                    .child(div().flex().items_center().justify_between()
-                        .child(button("gap-outer-less", "−").on_click(cx.listener(|this, _, _, cx| {
-                            this.draft.gaps.outer = this.draft.gaps.outer.saturating_sub(1);
-                            this.message("Window gaps updated. Save to activate.", false, cx);
-                        })))
-                        .child(format!("{}", self.draft.gaps.outer))
-                        .child(button("gap-outer-more", "+").on_click(cx.listener(|this, _, _, cx| {
-                            this.draft.gaps.outer = (this.draft.gaps.outer + 1).min(100);
-                            this.message("Window gaps updated. Save to activate.", false, cx);
-                        }))))
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Defaults: 5 on each inner edge (10 between tiles), 20 at desktop edges. Range: 0–100; 0 disables spacing. Applies on the next snap. Center windows are unchanged."))
-                    .child(button("advanced-toggle", if self.advanced_expanded { "Advanced ▾" } else { "Advanced ▸" })
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.advanced_expanded = !this.advanced_expanded;
-                            cx.notify();
-                        })))
-                    .when(self.advanced_expanded, |el| el
-                    .child(div().text_sm().child("Filter middle windows by visibility"))
-                    .child(button("visibility-filter", if self.draft.focus.visibility_filter_enabled { "On" } else { "Off" })
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.draft.focus.visibility_filter_enabled = !this.draft.focus.visibility_filter_enabled;
-                            this.message("Window focus updated. Save to activate.", false, cx);
-                        })))
-                    .child(div().text_sm().child("Minimum middle-window visibility"))
-                    .child(div().flex().items_center().justify_between()
-                        .child(button("visibility-less", "−").on_click(cx.listener(|this, _, _, cx| {
-                            this.draft.focus.minimum_visible_percent = this.draft.focus.minimum_visible_percent.saturating_sub(1);
-                            this.message("Window focus updated. Save to activate.", false, cx);
-                        })))
-                        .child(format!("{}%", self.draft.focus.minimum_visible_percent))
-                        .child(button("visibility-more", "+").on_click(cx.listener(|this, _, _, cx| {
-                            this.draft.focus.minimum_visible_percent = (this.draft.focus.minimum_visible_percent + 1).min(99);
-                            this.message("Window focus updated. Save to activate.", false, cx);
-                        }))))
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("When middle-window navigation is enabled, Filter Off includes covered windows. Filter On requires more than the percentage above (default: 10%) to be visible. Hold H/L for 400 ms to enter covered middle windows from an edge, or return from a middle window to the background. Minimized windows and other virtual desktops stay excluded."))
-                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Width adjustment"))
-                    .child(div().text_sm().child("Width change per press"))
-                    .child(div().flex().items_center().justify_between()
-                        .child(button("width-less", "−").on_click(cx.listener(|this, _, _, cx| {
-                            this.draft.width_resize.percent = this.draft.width_resize.percent.saturating_sub(1).max(1);
-                            this.preview.select(this.preview.action, this.draft.width_resize.percent, Instant::now());
-                            this.message("Width adjustment updated. Save to activate.", false, cx);
-                        })))
-                        .child(format!("{}%", self.draft.width_resize.percent))
-                        .child(button("width-more", "+").on_click(cx.listener(|this, _, _, cx| {
-                            this.draft.width_resize.percent = (this.draft.width_resize.percent + 1).min(99);
-                            this.preview.select(this.preview.action, this.draft.width_resize.percent, Instant::now());
-                            this.message("Width adjustment updated. Save to activate.", false, cx);
-                        }))))
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("Shrink/Expand width keep height and the left edge, right edge, or center fixed. Repeats keep resizing; expansion stops at the work-area edge. Hover a position first to preview its width adjustment."))
-                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Repeat shortcut to grow"))
-                    .child(div().text_sm().child("Growth per press"))
-                    .child(div().flex().items_center().justify_between()
-                        .child(button("growth-less", "−").on_click(cx.listener(|this, _, _, cx| {
-                            this.draft.growth.percent = this.draft.growth.percent.saturating_sub(1).max(1);
-                            this.message("Growth updated. Save to activate.", false, cx);
-                        })))
-                        .child(format!("{}%", self.draft.growth.percent))
-                        .child(button("growth-more", "+").on_click(cx.listener(|this, _, _, cx| {
-                            this.draft.growth.percent = (this.draft.growth.percent + 1).min(100);
-                            this.message("Growth updated. Save to activate.", false, cx);
-                        }))))
-                    .child(div().text_sm().child("Growth steps before reset"))
-                    .child(div().flex().items_center().justify_between()
-                        .child(button("steps-less", "−").on_click(cx.listener(|this, _, _, cx| {
-                            this.draft.growth.steps = this.draft.growth.steps.saturating_sub(1);
-                            this.message("Growth updated. Save to activate.", false, cx);
-                        })))
-                        .child(if self.draft.growth.steps == 0 { "Off".to_owned() } else { self.draft.growth.steps.to_string() })
-                        .child(button("steps-more", "+").on_click(cx.listener(|this, _, _, cx| {
-                            this.draft.growth.steps = (this.draft.growth.steps + 1).min(20);
-                            this.message("Growth updated. Save to activate.", false, cx);
-                        }))))
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child("First press places the window. Repeats multiply its size, keeping the corner or edge anchored. Center starts at 50% width and height, then grows equally in every direction. Growth stops at the work area; 0 steps turns it off.")))
-                    .child(div().text_xs().text_color(rgb(0x91a4bb)).child(if platform::is_gnome_wayland() {
-                        "GNOME: saving registers these as GNOME keyboard shortcuts. The first time, log out and back in so GNOME loads the tt-pane extension."
-                    } else if platform::is_wayland() {
-                        "This Wayland compositor isn't supported yet. tt-pane runs on GNOME (Wayland) and in X11 sessions."
-                    } else { "Closing settings keeps tt-pane running in the tray. Use the tray menu to quit." })))))
-            .children(Some(div().flex().flex_col().gap_2()
-                    .child(div().text_sm().child(format!("Updates · Version {}", env!("CARGO_PKG_VERSION"))))
-                    .child(div().text_xs().child(self.update.message.clone()))
-                    .child(div().flex().gap_3()
-                        .when(self.update.pending.is_none(), |el| el.child(button("check-update", "Check for updates").on_click(cx.listener(|this, _, _, cx| this.check_update(cx)))))
-                        .when(self.update.pending.is_none() && self.update.release.is_some(), |el| el.child(button("install-update", "Update and restart").on_click(cx.listener(|this, _, _, cx| this.install_update(cx))))))))
-            .child(div().text_sm().text_color(rgb(if self.error { 0xffa59b } else { 0x91a4bb })).child(self.status.clone()))
-            .child(div().flex().items_center().justify_between().gap_3()
-                .child(button("reset", "Reset defaults").on_click(cx.listener(|this, _, _, cx| {
-                    this.recording = None;
-                    let result = this.resume();
-                    this.draft = Config::default();
-                    this.preview.select(this.preview.action, this.draft.width_resize.percent, Instant::now());
-                    this.message(result.err().map(|e| format!("{e:#}")).unwrap_or_else(|| "Defaults restored. Save to activate.".into()), false, cx);
-                })))
-                .child(div().flex().gap_3()
-                    .when(platform::is_gnome_wayland(), |el| el.child(button("setup-gnome", "Set up GNOME").on_click(cx.listener(|this, _, _, cx| this.setup_gnome(cx)))))
-                    .child(button("save", "Save changes").bg(rgb(0x217b68)).on_click(cx.listener(|this, _, _, cx| this.save(cx))))));
+                            },
+                        )),
+                    ),
+                    nested(setting(
+                        "Glow color",
+                        "Default: neutral off-white.",
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .size(px(18.))
+                                    .rounded_sm()
+                                    .bg(rgb(focus.glow_rgb().unwrap_or(0xf2f0e8))),
+                            )
+                            .child(
+                                button("glow-color", &focus.glow_color).on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        #[cfg(windows)]
+                                        {
+                                            let initial =
+                                                this.draft.focus.glow_rgb().unwrap_or(0xf2f0e8);
+                                            cx.spawn(async move |this, cx| {
+                                                // ChooseColorW pumps Windows messages. Run it after the
+                                                // click listener releases GPUI's App/entity borrows so
+                                                // activation observers and foreground tasks can re-enter.
+                                                let color = platform::choose_glow_color(initial);
+                                                if let Some(color) = color {
+                                                    let _ = this.update(cx, |this, cx| {
+                                                        this.draft.focus.glow_color =
+                                                            format!("#{color:06X}");
+                                                        this.message(
+                                                            "Glow color updated. Save to activate.",
+                                                            false,
+                                                            cx,
+                                                        );
+                                                    });
+                                                }
+                                            })
+                                            .detach();
+                                        }
+                                        let _ = (this, cx);
+                                    },
+                                )),
+                            ),
+                    )),
+                ],
+            ));
+        }
+        page.push(section("H/J/K/L navigation", [setting(
+            "Include middle windows",
+            "Navigate into windows that sit between the screen edges, not only the ones at each edge.",
+            switch("include-middle", focus.include_middle_windows).on_click(cx.listener(|this, _, _, cx| {
+                this.draft.focus.include_middle_windows = !this.draft.focus.include_middle_windows;
+                this.message("Window focus updated. Save to activate.", false, cx);
+            })),
+        )]));
+        page.push(section("Middle-window visibility", [
+            setting(
+                "Filter middle windows by visibility",
+                "Applies when middle windows are included. Off includes covered windows. Minimized windows and other virtual desktops stay excluded.",
+                switch("visibility-filter", focus.visibility_filter_enabled).on_click(cx.listener(|this, _, _, cx| {
+                    this.draft.focus.visibility_filter_enabled = !this.draft.focus.visibility_filter_enabled;
+                    this.message("Window focus updated. Save to activate.", false, cx);
+                })),
+            ),
+            nested(setting(
+                "Minimum visible",
+                "A middle window must show more than this to be included. Default: 10%.",
+                stepper(
+                    step_button("visibility-less", "−").on_click(cx.listener(|this, _, _, cx| {
+                        this.draft.focus.minimum_visible_percent = this.draft.focus.minimum_visible_percent.saturating_sub(1);
+                        this.message("Window focus updated. Save to activate.", false, cx);
+                    })),
+                    format!("{}%", focus.minimum_visible_percent),
+                    step_button("visibility-more", "+").on_click(cx.listener(|this, _, _, cx| {
+                        this.draft.focus.minimum_visible_percent = (this.draft.focus.minimum_visible_percent + 1).min(99);
+                        this.message("Window focus updated. Save to activate.", false, cx);
+                    })),
+                ),
+            )),
+        ]));
+        page.push(page_note("Hold H/L for 400 ms to enter covered middle windows from an edge, or to return from a middle window to the background.", MUTED));
+        page
+    }
+
+    fn general_tab(&self, cx: &mut Context<Self>) -> Vec<Div> {
+        let mut page = vec![section(
+            "Startup",
+            [setting(
+                "Launch at login",
+                "Start tt-pane in the tray when you sign in.",
+                switch("launch-at-login", self.draft.launch_at_login).on_click(cx.listener(
+                    |this, _, _, cx| {
+                        this.draft.launch_at_login = !this.draft.launch_at_login;
+                        this.message("Launch at login updated. Save to activate.", false, cx);
+                    },
+                )),
+            )],
+        )];
+        if cfg!(any(target_os = "macos", target_os = "linux")) {
+            page.push(section("Appearance", [setting(
+                if cfg!(target_os = "macos") { "Menu bar icon" } else { "Tray icon" },
+                if cfg!(target_os = "macos") {
+                    "Monochrome follows the menu bar's light or dark appearance. Color shows the full app icon."
+                } else {
+                    "Monochrome draws a white silhouette for dark panels. Color shows the full app icon."
+                },
+                segments([
+                    (TrayIconStyle::Color, "tray-color", "Color"),
+                    (TrayIconStyle::Monochrome, "tray-monochrome", "Monochrome"),
+                ]
+                .map(|(style, id, label)| {
+                    segment(id, label, self.draft.tray_icon == style).on_click(cx.listener(
+                        move |this, _, _, cx| {
+                            if this.draft.tray_icon != style {
+                                this.draft.tray_icon = style;
+                                this.message("Tray icon updated. Save to activate.", false, cx);
+                            }
+                        },
+                    ))
+                })),
+            )]));
+        }
+        let pending = self.update.pending.is_some();
+        page.push(section(
+            "Updates",
+            [setting(
+                format!("Version {}", env!("CARGO_PKG_VERSION")),
+                self.update.message.clone(),
+                div()
+                    .flex()
+                    .gap_2()
+                    .when(!pending, |el| {
+                        el.child(
+                            button("check-update", "Check for updates")
+                                .on_click(cx.listener(|this, _, _, cx| this.check_update(cx))),
+                        )
+                    })
+                    .when(!pending && self.update.release.is_some(), |el| {
+                        el.child(
+                            button("install-update", "Update and restart")
+                                .bg(rgb(SAVE))
+                                .on_click(cx.listener(|this, _, _, cx| this.install_update(cx))),
+                        )
+                    }),
+            )],
+        ));
+        if platform::is_gnome_wayland() {
+            page.push(section("GNOME", [setting(
+                "GNOME Shell extension and shortcuts",
+                "Saving registers your shortcuts as GNOME keyboard shortcuts. The first time, log out and back in so GNOME loads the tt-pane extension.",
+                button("setup-gnome", "Set up GNOME").on_click(cx.listener(|this, _, _, cx| this.setup_gnome(cx))),
+            )]));
+        }
+        page.push(page_note(
+            if platform::is_wayland() && !platform::is_gnome_wayland() {
+                "This Wayland compositor isn't supported yet. tt-pane runs on GNOME (Wayland) and in X11 sessions."
+            } else {
+                "Closing settings keeps tt-pane running in the tray. Use the tray menu to quit."
+            },
+            MUTED,
+        ));
+        page
+    }
+}
+
+impl Render for Settings {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.update.installing {
+            return div()
+                .size_full()
+                .bg(rgb(0x0e1724))
+                .text_color(rgb(TEXT))
+                .flex()
+                .flex_col()
+                .p_6()
+                .gap_4()
+                .child(div().text_2xl().child("Updating tt-pane"))
+                .child(self.update.message.clone())
+                .child(crate::update::RESTART_NOTE)
+                .into_any_element();
+        }
+        let tabs = Tab::ALL.map(|tab| {
+            let selected = self.tab == tab;
+            div()
+                .id(("tab", tab as usize))
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_4()
+                .pt_2()
+                .pb(px(10.))
+                .border_b_2()
+                .border_color(if selected {
+                    rgb(MINT).into()
+                } else {
+                    transparent_black()
+                })
+                .text_sm()
+                .text_color(rgb(if selected { TEXT } else { MUTED }))
+                .cursor_pointer()
+                .hover(|style| style.text_color(rgb(TEXT)))
+                .child(tab.label())
+                .when(tab.dirty(&self.draft, &self.active), |el| {
+                    el.child(div().size(px(6.)).rounded_full().bg(rgb(MINT)))
+                })
+                .on_click(cx.listener(move |this, _, _, cx| this.select_tab(tab, cx)))
+        });
+        let page = match self.tab {
+            Tab::Shortcuts => self.shortcuts_tab(window, cx).px_6().py_4(),
+            tab => {
+                let sections = match tab {
+                    Tab::Snapping => self.snapping_tab(cx),
+                    Tab::Tiling => self.tiling_tab(cx),
+                    Tab::Focus => self.focus_tab(cx),
+                    _ => self.general_tab(cx),
+                };
+                div().flex().flex_col().flex_1().min_h_0().child(
+                    div()
+                        .id(("page", tab as usize))
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .px_6()
+                        .py_4()
+                        .child(
+                            div()
+                                .w_full()
+                                .max_w(px(680.))
+                                .flex()
+                                .flex_col()
+                                .gap_5()
+                                .children(sections),
+                        ),
+                )
+            }
+        };
+        let content = div()
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::key_down))
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .bg(rgb(0x0e1724))
+            .text_color(rgb(TEXT))
+            .font_family("Segoe UI")
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex()
+                    .items_end()
+                    .justify_between()
+                    .gap_4()
+                    .px_6()
+                    .pt_5()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_2xl()
+                                    .font_weight(FontWeight::BOLD)
+                                    .child("tt-pane"),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(rgb(MUTED))
+                                    .child("Your windows. A keystroke away."),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(MINT))
+                            .child(platform::description()),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_1()
+                    .px_6()
+                    .pt_3()
+                    .border_b_1()
+                    .border_color(rgb(EDGE))
+                    .children(tabs),
+            )
+            .child(page)
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap_4()
+                    .px_6()
+                    .py_3()
+                    .border_t_1()
+                    .border_color(rgb(EDGE))
+                    .bg(rgb(BAR))
+                    .child(button("reset", "Reset defaults").on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.recording = None;
+                            let result = this.resume();
+                            this.draft = Config::default();
+                            this.preview.select(
+                                this.preview.action,
+                                this.draft.width_resize.percent,
+                                Instant::now(),
+                            );
+                            this.message(
+                                result.err().map(|e| format!("{e:#}")).unwrap_or_else(|| {
+                                    "Defaults restored. Save to activate.".into()
+                                }),
+                                false,
+                                cx,
+                            );
+                        },
+                    )))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(rgb(if self.error { 0xffa59b } else { MUTED }))
+                            .child(self.status.clone()),
+                    )
+                    .child(
+                        button("save", "Save changes")
+                            .bg(rgb(SAVE))
+                            .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
+                    ),
+            );
         window_frame(content, window)
     }
 }
 
-const WINDOW_TITLE: &str = "tt-pane — Keyboard shortcuts";
+const WINDOW_TITLE: &str = "tt-pane — Settings";
 /// Width of the transparent band around a client-decorated window that holds
 /// its shadow and resize handles.
 const FRAME_INSET: Pixels = px(10.);
@@ -1232,7 +1937,8 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             status,
             error,
             preview: PositionPreview::new(Action::Left),
-            advanced_expanded: false,
+            tab: Tab::Shortcuts,
+            hovered_binding: None,
             window: None,
             _tray: tray,
             update: UpdateState::default(),
@@ -1272,6 +1978,7 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                                     continue;
                                 }
                                 settings.update(cx, |this, cx| {
+                                    this.tab = Tab::General;
                                     if this.update.release.is_some() {
                                         this.install_update(cx);
                                     } else {
@@ -1357,6 +2064,37 @@ mod preview_tests {
                     assert_eq!(preview.placement, placement);
                     assert_eq!(preview.to, expected.to);
                 }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tab_tests {
+    use super::{Config, Tab};
+
+    #[test]
+    fn each_change_marks_only_its_own_tab() {
+        let active = Config::default();
+        type Change = fn(&mut Config);
+        let changes: [(Tab, Change); 5] = [
+            (Tab::Shortcuts, |c| c.bindings[0].shortcut.clear()),
+            (Tab::Snapping, |c| c.gaps.outer += 1),
+            (Tab::Tiling, |c| c.tiling.enabled = !c.tiling.enabled),
+            (Tab::Focus, |c| {
+                c.focus.include_middle_windows = !c.focus.include_middle_windows
+            }),
+            (Tab::General, |c| c.launch_at_login = !c.launch_at_login),
+        ];
+        for (changed, change) in changes {
+            let mut draft = active.clone();
+            change(&mut draft);
+            for tab in Tab::ALL {
+                assert_eq!(
+                    tab.dirty(&draft, &active),
+                    tab == changed,
+                    "{changed:?} → {tab:?}"
+                );
             }
         }
     }
