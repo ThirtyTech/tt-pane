@@ -13,7 +13,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 const BUS_NAME = 'net.thirtytech.TtPane';
 const OBJECT_PATH = '/net/thirtytech/TtPane';
-const API_VERSION = 3;
+const API_VERSION = 4;
 
 const INTERFACE = `<node>
   <interface name="net.thirtytech.TtPane">
@@ -93,10 +93,28 @@ function isShowing(window) {
     return !window.minimized && window.located_on_workspace(workspace);
 }
 
+// Windows that were already maximized when first shown: GNOME auto-maximizes a
+// window that opens at nearly the size of the screen, and apps restore a saved
+// maximized state. Tiling arranges these like restored windows; maximizing a
+// window later still keeps it out of the layout.
+const openedMaximized = new Set();
+
+function maximizedOnOpen(window) {
+    const id = window.get_id();
+    if (!openedMaximized.has(id))
+        return false;
+    // Once restored, by tt-pane or the user, a later maximize is deliberate.
+    if (!isMaximized(window)) {
+        openedMaximized.delete(id);
+        return false;
+    }
+    return true;
+}
+
 // A restored application window tt-pane may move or focus without restoring it.
 function isAvailable(window) {
-    return isApplication(window) && isShowing(window) &&
-        !window.is_fullscreen() && !isMaximized(window);
+    return isApplication(window) && isShowing(window) && !window.is_fullscreen() &&
+        (!isMaximized(window) || maximizedOnOpen(window));
 }
 
 // GNOME 49 replaced get_maximized()/unmaximize(flags) with is_maximized()/unmaximize().
@@ -123,7 +141,10 @@ function workspaceKey(window, active) {
 // A top-level, resizable, restored application window automatic tiling may arrange.
 function isTileable(window) {
     return window.get_window_type() === Meta.WindowType.NORMAL &&
-        !window.get_transient_for() && window.allows_resize() && isAvailable(window);
+        !window.get_transient_for() && isAvailable(window) &&
+        // Mutter reports maximized windows as not resizable, but only resizable
+        // windows can be maximized.
+        (window.allows_resize() || isMaximized(window));
 }
 
 class Service {
@@ -149,6 +170,7 @@ class Service {
             throw new Error('The window closed before it could be positioned');
         if (window.is_fullscreen())
             throw new Error('Exit fullscreen before positioning this window');
+        openedMaximized.delete(id);
         const wasMaximized = unmaximize(window);
         window.move_resize_frame(true, x, y, width, height);
         // A Wayland client applies an unmaximize asynchronously and can restore
@@ -243,7 +265,27 @@ export default class TtPaneExtension extends Extension {
             global.display.connect('grab-op-end', () => {
                 this._service.grabbing = false;
             }),
+            // GNOME applies auto-maximize while placing a window, before it is shown.
+            global.display.connect('window-created', (_display, window) => {
+                const id = window.get_id();
+                const forget = () => {
+                    window.disconnectObject(this);
+                    this._tracked.delete(window);
+                    openedMaximized.delete(id);
+                };
+                this._tracked.add(window);
+                window.connectObject('shown', () => {
+                    window.disconnectObject(this);
+                    if (!isMaximized(window)) {
+                        this._tracked.delete(window);
+                        return;
+                    }
+                    openedMaximized.add(id);
+                    window.connectObject('unmanaged', forget, this);
+                }, 'unmanaged', forget, this);
+            }),
         ];
+        this._tracked = new Set();
         this._dbus = Gio.DBusExportedObject.wrapJSObject(INTERFACE, this._service);
         this._dbus.export(Gio.DBus.session, OBJECT_PATH);
         this._owner = Gio.bus_own_name_on_connection(
@@ -262,6 +304,10 @@ export default class TtPaneExtension extends Extension {
         }
         this._dbus?.unexport();
         this._dbus = null;
+        for (const window of this._tracked ?? [])
+            window.disconnectObject(this);
+        this._tracked = null;
+        openedMaximized.clear();
         for (const id of this._grabs ?? [])
             global.display.disconnect(id);
         this._grabs = null;
