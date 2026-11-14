@@ -402,46 +402,31 @@ fn regular_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// A verified new version, staged in `staging`.
 #[cfg(unix)]
-pub fn prepare(release: &Release, config: &Path) -> Result<Prepared> {
-    use std::{ffi::OsStr, os::unix::fs::PermissionsExt};
-    development_check()?;
-    let exe = fs::canonicalize(std::env::current_exe()?)?;
-    let bundle = cfg!(target_os = "macos")
-        .then(|| app_bundle(&exe))
-        .flatten();
-    let target = bundle.clone().unwrap_or_else(|| exe.clone());
-    ensure!(
-        !target.to_string_lossy().contains("/AppTranslocation/"),
-        "macOS is running tt-pane from a temporary read-only copy. Move tt-pane.app to Applications, open it from there and update again."
-    );
-    let parent = target.parent().context("Install path has no parent")?;
-    // Stage on the install folder's filesystem so the swap is a rename; this
-    // also fails now, while tt-pane still runs, if the folder is read-only.
-    let staging = tempfile::Builder::new()
-        .prefix(".tt-pane-new-")
-        .tempdir_in(parent)
-        .with_context(|| {
-            format!(
-                "{} is not writable; update by reinstalling tt-pane (with sudo for a system-wide install)",
-                parent.display()
-            )
-        })?;
-    let directory = tempfile::Builder::new()
-        .prefix("tt-pane-update-")
-        .tempdir()?;
+struct Staged {
+    path: PathBuf,
+    /// install.sh's launcher icon, from the Linux archive.
+    icon: Option<PathBuf>,
+}
+
+/// Download the release asset for this install into `directory`, verify it and
+/// put the new executable (or app bundle) in `staging`. Changes no install.
+#[cfg(unix)]
+fn stage(release: &Release, bundle: bool, staging: &Path, directory: &Path) -> Result<Staged> {
+    use std::os::unix::fs::PermissionsExt;
     let platform = platform()?;
     let asset = fetch(
         release,
-        &unix_asset(&release.tag, platform, bundle.is_some()),
-        directory.path(),
+        &unix_asset(&release.tag, platform, bundle),
+        directory,
         MAX_ASSET,
     )?;
-    let extracted = directory.path().join("extracted");
+    let extracted = directory.join("extracted");
     fs::create_dir(&extracted)?;
-    let (staged, staged_exe, icon) = if bundle.is_some() {
+    let (staged, staged_exe, icon) = if bundle {
         // Mount the disk image read-only and copy the signed bundle out of it.
-        let mount = directory.path().join("mount");
+        let mount = directory.join("mount");
         fs::create_dir(&mount)?;
         run(
             "/usr/bin/hdiutil",
@@ -455,7 +440,7 @@ pub fn prepare(release: &Release, config: &Path) -> Result<Prepared> {
                 asset.as_os_str(),
             ],
         )?;
-        let staged = staging.path().join("tt-pane.app");
+        let staged = staging.join("tt-pane.app");
         let copied = (|| {
             let app = mount.join("tt-pane.app");
             ensure!(
@@ -497,7 +482,7 @@ pub fn prepare(release: &Release, config: &Path) -> Result<Prepared> {
         let unpacked = extracted.join(format!("tt-pane-{}-{platform}", release.tag));
         let binary = unpacked.join("tt-pane");
         regular_file(&binary)?;
-        let staged = staging.path().join("tt-pane");
+        let staged = staging.join("tt-pane");
         fs::copy(&binary, &staged)?;
         fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))?;
         let icon = unpacked.join("tt-pane.png");
@@ -517,6 +502,39 @@ pub fn prepare(release: &Release, config: &Path) -> Result<Prepared> {
         reported.trim(),
         release.tag
     );
+    Ok(Staged { path: staged, icon })
+}
+
+#[cfg(unix)]
+pub fn prepare(release: &Release, config: &Path) -> Result<Prepared> {
+    use std::ffi::OsStr;
+    development_check()?;
+    let exe = fs::canonicalize(std::env::current_exe()?)?;
+    let bundle = cfg!(target_os = "macos")
+        .then(|| app_bundle(&exe))
+        .flatten();
+    let target = bundle.clone().unwrap_or_else(|| exe.clone());
+    ensure!(
+        !target.to_string_lossy().contains("/AppTranslocation/"),
+        "macOS is running tt-pane from a temporary read-only copy. Move tt-pane.app to Applications, open it from there and update again."
+    );
+    let parent = target.parent().context("Install path has no parent")?;
+    // Stage on the install folder's filesystem so the swap is a rename; this
+    // also fails now, while tt-pane still runs, if the folder is read-only.
+    let staging = tempfile::Builder::new()
+        .prefix(".tt-pane-new-")
+        .tempdir_in(parent)
+        .with_context(|| {
+            format!(
+                "{} is not writable; update by reinstalling tt-pane (with sudo for a system-wide install)",
+                parent.display()
+            )
+        })?;
+    let directory = tempfile::Builder::new()
+        .prefix("tt-pane-update-")
+        .tempdir()?;
+    let Staged { path: staged, icon } =
+        stage(release, bundle.is_some(), staging.path(), directory.path())?;
     let swapped = swap(&staged, &target)?;
     drop(staging);
     // install.sh's launcher icon; best effort.
@@ -750,6 +768,36 @@ mod tests {
         assert!(!reports_version("tt-pane 0.2.9\n", "v0.3.0"));
         assert!(!reports_version("other 0.3.0\n", "v0.3.0"));
         assert!(!reports_version("", "v0.3.0"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "downloads the latest release from GitHub"]
+    fn live_stage_latest_release() {
+        // Stages (never installs) the latest release the way this install
+        // would update: app bundle when TTPANE_TEST_BUNDLE is set on macOS.
+        let json = tempfile::tempdir().unwrap();
+        download(LATEST, &json.path().join("r.json"), 2 * 1024 * 1024).unwrap();
+        let tag = select_release(&fs::read(json.path().join("r.json")).unwrap(), "0.0.0")
+            .unwrap()
+            .unwrap()
+            .tag;
+        let staging = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let bundle = cfg!(target_os = "macos") && std::env::var_os("TTPANE_TEST_BUNDLE").is_some();
+        let staged = stage(
+            &Release { tag: tag.clone() },
+            bundle,
+            staging.path(),
+            directory.path(),
+        )
+        .unwrap();
+        println!(
+            "Staged {tag} at {} (icon: {:?})",
+            staged.path.display(),
+            staged.icon
+        );
+        assert!(staged.path.exists());
     }
 
     #[test]
