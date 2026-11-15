@@ -130,6 +130,8 @@ struct Settings {
     active: Config,
     path: PathBuf,
     shortcuts: Option<Shortcuts>,
+    /// Active shortcuts another application owns, flagged in their rows.
+    taken: Vec<(Action, global_hotkey::hotkey::HotKey)>,
     recording: Option<usize>,
     focus: FocusHandle,
     status: String,
@@ -316,13 +318,26 @@ impl Settings {
     }
 
     fn resume(&mut self) -> anyhow::Result<()> {
-        if let Some(shortcuts) = &mut self.shortcuts
-            && let Some(message) =
-                crate::shortcuts::taken_message(&shortcuts.replace(&self.active)?)
-        {
-            anyhow::bail!(message);
+        if let Some(shortcuts) = &mut self.shortcuts {
+            self.taken = shortcuts.replace(&self.active)?;
+            if let Some(message) = crate::shortcuts::taken_message(&self.active, &self.taken) {
+                anyhow::bail!(message);
+            }
         }
         Ok(())
+    }
+
+    /// The active shortcut for this row could not be registered. A shortcut
+    /// edited since then isn't flagged until Save tries it.
+    fn is_taken(&self, binding: &Binding) -> bool {
+        self.taken
+            .iter()
+            .any(|(action, _)| *action == binding.action)
+            && self
+                .active
+                .bindings
+                .iter()
+                .any(|b| b.action == binding.action && b.shortcut == binding.shortcut)
     }
 
     fn record(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -432,7 +447,7 @@ impl Settings {
         }
         let shortcuts = self.shortcuts.as_mut().unwrap();
         let taken = match shortcuts.replace(&self.draft) {
-            Ok(taken) => crate::shortcuts::taken_message(&taken),
+            Ok(taken) => taken,
             Err(error) => {
                 let _ = self.resume();
                 self.message(format!("{error:#}"), true, cx);
@@ -440,7 +455,9 @@ impl Settings {
             }
         };
         if let Err(error) = self.draft.save(&self.path) {
-            let rollback = shortcuts.replace(&self.active);
+            let rollback = shortcuts
+                .replace(&self.active)
+                .map(|taken| self.taken = taken);
             self.message(
                 format!(
                     "Save failed: {error:#}{}",
@@ -456,6 +473,8 @@ impl Settings {
         }
         let tray_changed = self.active.tray_icon != self.draft.tray_icon;
         self.active = self.draft.clone();
+        let message = crate::shortcuts::taken_message(&self.active, &taken);
+        self.taken = taken;
         if let Err(error) = crate::tiling::saved_settings(&self.active, &self.path) {
             self.message(
                 format!("Saved, but could not update tiling: {error:#}"),
@@ -478,7 +497,7 @@ impl Settings {
             self.message(format!("Saved, but {error:#}"), true, cx);
             return;
         }
-        if let Some(taken) = taken {
+        if let Some(taken) = message {
             self.message(format!("Saved. {taken}"), true, cx);
             return;
         }
@@ -766,6 +785,7 @@ impl Settings {
         let binding = &self.draft.bindings[index];
         let active = self.recording == Some(index);
         let action = binding.action;
+        let taken = !active && self.is_taken(binding);
         div()
             .id(("binding-row", index))
             .on_hover(cx.listener(move |this, hovered, _, cx| {
@@ -798,7 +818,21 @@ impl Settings {
             } else {
                 0x172231
             }))
-            .child(div().text_sm().child(action.label()))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().text_sm().child(action.label()))
+                    .when(taken, |el| {
+                        el.child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0xf0645a))
+                                .child("⚠ In use by another app"),
+                        )
+                    }),
+            )
             .child(
                 div()
                     .flex()
@@ -1900,14 +1934,16 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             status = format!("{e:#}");
             error = true;
         }
+        let mut taken = Vec::new();
         let shortcuts = match Shortcuts::new() {
             Ok(mut shortcuts) => {
                 match shortcuts.replace(&config) {
-                    Ok(taken) => {
-                        if let Some(message) = crate::shortcuts::taken_message(&taken) {
+                    Ok(keys) => {
+                        if let Some(message) = crate::shortcuts::taken_message(&config, &keys) {
                             status = message;
                             error = true;
                         }
+                        taken = keys;
                     }
                     Err(e) => {
                         status = format!("{e:#}");
@@ -1944,6 +1980,7 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             active: config,
             path,
             shortcuts,
+            taken,
             recording: None,
             focus: cx.focus_handle(),
             status,

@@ -353,11 +353,19 @@ impl Shortcuts {
     }
 }
 
-/// Names the shortcuts `Shortcuts::replace` could not register, if any.
-pub fn taken_message(taken: &[(Action, HotKey)]) -> Option<String> {
+/// Names the shortcuts `Shortcuts::replace` could not register, if any, as
+/// `config` spells them.
+pub fn taken_message(config: &Config, taken: &[(Action, HotKey)]) -> Option<String> {
     let names: Vec<_> = taken
         .iter()
-        .map(|(action, key)| format!("{} ({key})", action.label()))
+        .map(|(action, key)| {
+            let shortcut = config
+                .bindings
+                .iter()
+                .find(|b| b.action == *action && b.shortcut.parse::<HotKey>().ok() == Some(*key))
+                .map_or_else(|| key.to_string(), |b| b.shortcut.clone());
+            format!("{} ({shortcut})", action.label())
+        })
         .collect();
     (!names.is_empty()).then(|| {
         format!(
@@ -682,7 +690,11 @@ mod tests {
         });
         let taken = shortcuts.replace(&candidate).unwrap();
         assert_eq!(taken, vec![(Action::Right, blocked)]);
-        assert!(taken_message(&taken).unwrap().contains("Right half"));
+        assert!(
+            taken_message(&candidate, &taken)
+                .unwrap()
+                .contains(&format!("Right half ({blocked})"))
+        );
         assert_eq!(shortcuts.action(original.id()), Some(Action::Left));
         assert_eq!(shortcuts.action(added.id()), Some(Action::Center));
         assert_eq!(shortcuts.action(blocked.id()), None);
