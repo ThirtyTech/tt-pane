@@ -148,8 +148,6 @@ pub use macos::{
     WindowSnapshot, accessibility_trusted, focus_snapshot, foreground_handle, move_snapshot,
     move_tiling_window, show_alert, tiling_desktop, window_snapshot,
 };
-#[cfg(windows)]
-pub use windows::attach_parent_console;
 #[cfg(all(windows, feature = "window-icon"))]
 pub use windows::set_window_icon;
 #[cfg(windows)]
@@ -158,6 +156,8 @@ pub use windows::{
     move_snapshot, release_focus_glow, show_focus_glow, wait_for_focus_glow, window_identity,
     window_snapshot,
 };
+#[cfg(windows)]
+pub use windows::{attach_parent_console, ctrl_c_requested, quit_on_ctrl_c};
 #[cfg(windows)]
 pub use windows::{move_tiling_window, tiling_desktop};
 

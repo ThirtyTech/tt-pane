@@ -195,7 +195,9 @@ pub fn terminal_ctrl_c_terminates_tray_app(binary: &str) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         if let Some(status) = child.0.try_wait().unwrap() {
-            assert_eq!(status.code().map(|code| code as u32), Some(0xc000013a));
+            // A clean quit, not STATUS_CONTROL_C_EXIT (0xc000013a), which cargo run
+            // reports as "process didn't exit successfully".
+            assert_eq!(status.code(), Some(0), "Ctrl+C should quit cleanly");
             break;
         }
         assert!(

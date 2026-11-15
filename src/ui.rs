@@ -1863,6 +1863,9 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
          the desktop, or set WAYLAND_DISPLAY=wayland-0 (or DISPLAY=:0) when launching it from \
          a terminal such as SSH or tmux."
     );
+    // Terminal Ctrl+C quits through the tray loop below, so the exit code is 0.
+    #[cfg(windows)]
+    platform::quit_on_ctrl_c();
     // A persistent entity owns the shortcuts and tray independently of any window.
     let failure = std::rc::Rc::new(std::cell::RefCell::new(None));
     let result = failure.clone();
@@ -2018,6 +2021,11 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                 smol::Timer::after(Duration::from_millis(16)).await;
                 if cx
                     .update(|cx| {
+                        #[cfg(windows)]
+                        if platform::ctrl_c_requested() {
+                            cx.quit();
+                            return;
+                        }
                         while let Ok(event) = tray_icon::menu::MenuEvent::receiver().try_recv() {
                             if event.id.0 == crate::tray::UPDATE {
                                 if let Err(e) = show_settings(&settings, cx) {

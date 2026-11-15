@@ -466,6 +466,29 @@ pub fn attach_parent_console() {
     }
 }
 
+static CTRL_C: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Turn terminal Ctrl+C/Ctrl+Break into a request the GUI polls with
+/// [`ctrl_c_requested`], so it quits like the tray's Quit and exits 0 instead
+/// of being killed with STATUS_CONTROL_C_EXIT. A second press, or any other
+/// console event, falls through to the default handler, so a hung app still dies.
+pub fn quit_on_ctrl_c() {
+    use std::sync::atomic::Ordering;
+    use windows::{Win32::System::Console::*, core::BOOL};
+    unsafe extern "system" fn handler(event: u32) -> BOOL {
+        let interrupt = event == CTRL_C_EVENT || event == CTRL_BREAK_EVENT;
+        BOOL::from(interrupt && !CTRL_C.swap(true, Ordering::SeqCst))
+    }
+    // SAFETY: The handler is a 'static function touching only an atomic; Windows
+    // calls it on its own thread for the life of the process.
+    let _ = unsafe { SetConsoleCtrlHandler(Some(handler), true) };
+}
+
+/// Whether Ctrl+C reached a process that called [`quit_on_ctrl_c`].
+pub fn ctrl_c_requested() -> bool {
+    CTRL_C.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 #[cfg(feature = "window-icon")]
 /// Set the executable's shared icon resource (101) on a borrowed native window.
 pub fn set_window_icon(window: &impl raw_window_handle::HasWindowHandle) -> anyhow::Result<()> {
