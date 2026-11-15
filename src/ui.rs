@@ -1178,20 +1178,12 @@ impl Settings {
             page.push(section("Automatic tiling", [
                 setting(
                     "Tile windows automatically (experimental)",
-                    "Dwindle tiles restored windows on the current desktop. Moving or snapping a tile floats it.",
+                    "Dwindle tiles restored windows on the current desktop. Moving a tile floats it; a snapped window keeps its space and the tiles fill the rest.",
                     switch("tiling-enabled", tiling.enabled).on_click(cx.listener(|this, _, _, cx| {
                         this.draft.tiling.enabled = !this.draft.tiling.enabled;
                         this.message("Automatic tiling updated. Save to activate.", false, cx);
                     })),
                 ),
-                nested(setting(
-                    "Snaps rearrange tiles",
-                    "Half and quarter snaps move the other tiles into the remaining space instead of covering them.",
-                    switch("tiling-snap-rearranges", tiling.snap_rearranges).on_click(cx.listener(|this, _, _, cx| {
-                        this.draft.tiling.snap_rearranges = !this.draft.tiling.snap_rearranges;
-                        this.message("Snap behavior updated. Save to activate.", false, cx);
-                    })),
-                )),
             ]));
         }
         page.push(if platform::tiling_supported() {

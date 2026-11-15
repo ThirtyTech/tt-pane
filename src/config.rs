@@ -61,8 +61,10 @@ pub struct Tiling {
     pub default_split_ratio: f64,
     pub split_width_multiplier: f64,
     pub preserve_split: bool,
-    /// Half/quarter snaps dock the window into the layout instead of floating it.
-    pub snap_rearranges: bool,
+    /// Retired: snaps always float and keep their space. Accepted so older
+    /// configurations still load; never written back.
+    #[serde(rename = "snap_rearranges", skip_serializing)]
+    pub retired_snap_rearranges: bool,
     /// Exact executable basenames, matched without ASCII case sensitivity.
     pub float_apps: Vec<String>,
 }
@@ -75,7 +77,7 @@ impl Default for Tiling {
             default_split_ratio: 0.5,
             split_width_multiplier: 1.0,
             preserve_split: true,
-            snap_rearranges: false,
+            retired_snap_rearranges: false,
             float_apps: Vec::new(),
         }
     }
@@ -603,6 +605,21 @@ mod tests {
         }
         assert!(
             toml::from_str::<Config>("version=1\nbindings=[]\n[tiling]\nlayout='master'").is_err()
+        );
+    }
+    #[test]
+    fn retired_snap_rearranges_still_loads_and_is_not_written_back() {
+        let config: Config = toml::from_str(
+            "version=1
+bindings=[]
+[tiling]
+snap_rearranges=true",
+        )
+        .unwrap();
+        assert!(
+            !toml::to_string(&config)
+                .unwrap()
+                .contains("snap_rearranges")
         );
     }
     #[test]
