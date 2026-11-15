@@ -55,6 +55,11 @@ struct Floating {
     /// Floated on purpose with toggle-float.
     #[serde(default)]
     explicit: bool,
+    /// Snapped by a half/quarter snap or moved into a corner by the user. Only
+    /// these take their space out of the layout, and only while in a corner;
+    /// tiles that float for other reasons (drift, a refused size) don't.
+    #[serde(default)]
+    snapped: bool,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
@@ -133,12 +138,21 @@ impl State {
         }
     }
 
+    fn mark_snapped(&mut self, id: &str, snapped: bool) {
+        for floating in &mut self.floating {
+            if floating.id == id {
+                floating.snapped = snapped;
+            }
+        }
+    }
+
     fn float(&mut self, workspace: &str, id: &str) {
         if !self.floating.iter().any(|f| f.id == id) {
             self.floating.push(Floating {
                 workspace: workspace.to_owned(),
                 id: id.to_owned(),
                 explicit: false,
+                snapped: false,
             });
         }
         for group in &mut self.groups {
@@ -164,7 +178,10 @@ impl State {
                     w.workspace == group.workspace
                         && w.snapshot.area == group.area
                         && !group.tree.contains(w.snapshot.handle)
-                        && self.floating.iter().any(|f| f.id == w.snapshot.id)
+                        && self
+                            .floating
+                            .iter()
+                            .any(|f| f.id == w.snapshot.id && f.snapped)
                 })
                 .filter_map(|w| snapped_cell(w.snapshot.bounds, group.area, config.gaps))
                 .take(MAX_SNAPPED)
@@ -210,7 +227,20 @@ impl State {
                         if !near(member.last, live.snapshot.bounds)
                             || live.snapshot.area != group.area
                         {
-                            floats.push((live.workspace.clone(), member.id.clone()));
+                            // A real move that ends in a corner is a snap (native
+                            // snaps included); a few pixels of drift is not.
+                            let (a, b) = (member.last, live.snapshot.bounds);
+                            let moved = [
+                                (a.x, b.x),
+                                (a.y, b.y),
+                                (a.x + a.width, b.x + b.width),
+                                (a.y + a.height, b.y + b.height),
+                            ]
+                            .iter()
+                            .any(|(a, b)| a.abs_diff(*b) > MOVED);
+                            let snapped =
+                                moved && snapped_cell(b, live.snapshot.area, config.gaps).is_some();
+                            floats.push((live.workspace.clone(), member.id.clone(), snapped));
                         } else {
                             return true;
                         }
@@ -222,8 +252,9 @@ impl State {
                 false
             });
         }
-        for (workspace, id) in floats {
+        for (workspace, id, snapped) in floats {
             self.float(&workspace, &id);
+            self.mark_snapped(&id, snapped);
         }
         for window in &desktop.windows {
             let live = &window.snapshot;
@@ -375,6 +406,7 @@ impl State {
                         workspace: group.workspace.clone(),
                         id,
                         explicit: false,
+                        snapped: false,
                     });
                 }
             }
@@ -389,6 +421,8 @@ impl State {
 
 /// Window edges this far past the outer gap still count as touching the work area.
 const SNAP_SLACK: i64 = 12;
+/// A tile that moves further than this was moved on purpose, not drifted.
+const MOVED: u32 = 32;
 /// Snapped windows considered per monitor; the search grows with the fourth power.
 const MAX_SNAPPED: usize = 8;
 
@@ -669,6 +703,15 @@ pub(crate) fn action(
         return Ok(false);
     };
     let handle = live.snapshot.handle;
+    // A half or quarter snap floats the window, tiled or not, and keeps the space
+    // it lands in. The tiles reflow once it has landed (see `settle`), so they
+    // move straight into the space left to them.
+    if snaps(action) {
+        state.float(&live.workspace, &live.snapshot.id);
+        state.mark_snapped(&live.snapshot.id, true);
+        state.save(path)?;
+        return Ok(false);
+    }
     let group_index = state.groups.iter().position(|g| {
         g.workspace == live.workspace && g.area == live.snapshot.area && g.tree.contains(handle)
     });
@@ -716,12 +759,6 @@ pub(crate) fn action(
             }
             Control::Float => {
                 state.float(&live.workspace, &live.snapshot.id);
-                // A snap reflows the tiles once it has landed (see `settle`), so
-                // they move straight into the space it leaves them.
-                if snaps(action) {
-                    state.save(path)?;
-                    return Ok(false);
-                }
                 let desktop = platform::tiling_desktop()?;
                 let result = state.reconcile(
                     config,
@@ -1720,6 +1757,34 @@ mod tests {
             assert!(r.x + r.width <= -605, "{r:?}");
         }
         assert!(state.groups[0].tree.contains(2) && state.groups[0].tree.contains(3));
+    }
+
+    #[test]
+    fn tiles_that_float_without_being_snapped_keep_no_space() {
+        let mut state = State::default();
+        let config = config();
+        let mut desktop = desktop(vec![window(1), window(2)]);
+        tick(&mut state, &mut desktop, &config, Some(1), &[]);
+        // The left tile drifts a few pixels: it floats but still sits in its
+        // corner, and the remaining tile still gets the whole area.
+        desktop.windows[0].snapshot.bounds.width -= 6;
+        tick(&mut state, &mut desktop, &config, Some(2), &[]);
+        assert!(
+            state
+                .floating
+                .iter()
+                .any(|f| f.id == "test:1" && !f.snapped)
+        );
+        assert_eq!(state.groups[0].region, None);
+        // A real move into a corner is a snap and takes the space.
+        desktop.windows[1].snapshot.bounds = Rect {
+            x: -595,
+            y: 405,
+            width: 575,
+            height: 375,
+        };
+        tick(&mut state, &mut desktop, &config, Some(1), &[]);
+        assert!(state.floating.iter().any(|f| f.id == "test:2" && f.snapped));
     }
 
     #[test]
