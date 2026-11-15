@@ -535,6 +535,10 @@ fn apply_inner(
             result?;
         }
     }
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    if tiling {
+        crate::tiling::settle(config, &path)?;
+    }
     Ok(())
 }
 

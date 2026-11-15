@@ -29,6 +29,23 @@ struct Group {
     tree: Dwindle,
     members: Vec<Member>,
     focused: Option<u64>,
+    /// The part of `area` left free by snapped floating windows, where tiles go.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    region: Option<Rect>,
+}
+
+impl Group {
+    fn region(&self) -> Rect {
+        self.region.unwrap_or(self.area)
+    }
+
+    fn layout(
+        &self,
+        tree: &Dwindle,
+        gaps: crate::geometry::SnapGaps,
+    ) -> Result<Vec<(u64, Rect)>, platform::tiling::LayoutError> {
+        tree.layout_in(self.region(), self.area, gaps)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -65,6 +82,7 @@ impl State {
                                 .tree
                                 .layout(g.area, crate::geometry::SnapGaps { inner: 0, outer: 0 })
                                 .is_ok_and(|tiles| tiles.len() == g.members.len())
+                            || g.region.is_some_and(|r| !within(r, g.area))
                             || g.members.iter().any(|m| !g.tree.contains(m.handle))
                             || g.members
                                 .iter()
@@ -129,6 +147,30 @@ impl State {
                 group.tree.remove(member.handle);
             }
             group.members.retain(|m| m.id != id);
+        }
+    }
+
+    /// Keep each visible group's tiles out of the space its snapped floating
+    /// windows hold, measured from where those windows are now, so re-snapping
+    /// or resizing one frees its old space for the tiles.
+    fn refresh_regions(&mut self, config: &Config, desktop: &platform::TilingDesktop) {
+        for group in &mut self.groups {
+            if !desktop.workspaces.contains(&group.workspace) {
+                continue;
+            }
+            let cells: Vec<_> = desktop
+                .windows
+                .iter()
+                .filter(|w| {
+                    w.workspace == group.workspace
+                        && w.snapshot.area == group.area
+                        && !group.tree.contains(w.snapshot.handle)
+                        && self.floating.iter().any(|f| f.id == w.snapshot.id)
+                })
+                .filter_map(|w| snapped_cell(w.snapshot.bounds, group.area, config.gaps))
+                .take(MAX_SNAPPED)
+                .collect();
+            group.region = free_region(group.area, &cells);
         }
     }
 
@@ -209,6 +251,7 @@ impl State {
                         tree: config.tiling.tree().expect("validated config"),
                         members: Vec::new(),
                         focused: None,
+                        region: None,
                     });
                     self.groups.len() - 1
                 });
@@ -219,7 +262,11 @@ impl State {
             let target = focused
                 .filter(|id| group.tree.contains(*id))
                 .or(group.focused);
-            if group.tree.insert(live.handle, target, live.area).is_ok() {
+            if group
+                .tree
+                .insert(live.handle, target, group.region())
+                .is_ok()
+            {
                 group.members.push(Member {
                     handle: live.handle,
                     id: live.id.clone(),
@@ -229,6 +276,7 @@ impl State {
                 self.float(&window.workspace, &live.id);
             }
         }
+        self.refresh_regions(config, desktop);
         // Reflow after constraints reject a tile. A rejected window is relocated into
         // the largest other tile it has not tried (never splitting the focused window,
         // which is usually the one being resized); only when no tile remains is it
@@ -245,7 +293,7 @@ impl State {
                 std::collections::HashMap::new();
             let members = group.members.len();
             for _ in 0..=members * members {
-                let targets = match group.tree.layout(group.area, config.gaps) {
+                let targets = match group.layout(&group.tree, config.gaps) {
                     Ok(targets) => targets,
                     Err(e) => {
                         failure = Some(anyhow::anyhow!("Cannot lay out tiles: {e:?}"));
@@ -291,8 +339,7 @@ impl State {
                     group.tree.remove(handle);
                     let tried = tried.entry(handle).or_default();
                     let candidate = group
-                        .tree
-                        .layout(group.area, config.gaps)
+                        .layout(&group.tree, config.gaps)
                         .ok()
                         .and_then(|tiles| {
                             tiles
@@ -304,7 +351,10 @@ impl State {
                         })
                         .map(|(other, _)| other);
                     if let Some(other) = candidate
-                        && group.tree.insert(handle, Some(other), group.area).is_ok()
+                        && group
+                            .tree
+                            .insert(handle, Some(other), group.region())
+                            .is_ok()
                     {
                         tried.push(other);
                         continue;
@@ -338,6 +388,120 @@ impl State {
     }
 }
 
+/// Window edges this far past the outer gap still count as touching the work area.
+const SNAP_SLACK: i64 = 12;
+/// Snapped windows considered per monitor; the search grows with the fourth power.
+const MAX_SNAPPED: usize = 8;
+
+fn within(inner: Rect, outer: Rect) -> bool {
+    inner.width > 0
+        && inner.height > 0
+        && inner.x >= outer.x
+        && inner.y >= outer.y
+        && i64::from(inner.x) + i64::from(inner.width)
+            <= i64::from(outer.x) + i64::from(outer.width)
+        && i64::from(inner.y) + i64::from(inner.height)
+            <= i64::from(outer.y) + i64::from(outer.height)
+}
+
+/// The space a snapped window holds: its bounds plus the inner gap, reaching the
+/// work-area edges it is anchored to. A window counts as snapped when it touches
+/// two perpendicular edges (halves touch three, quarters two), so windows left
+/// floating in the middle or along one edge don't take space from the tiles.
+fn snapped_cell(bounds: Rect, area: Rect, gaps: crate::geometry::SnapGaps) -> Option<Rect> {
+    let (l, t) = (i64::from(bounds.x), i64::from(bounds.y));
+    let (r, b) = (l + i64::from(bounds.width), t + i64::from(bounds.height));
+    let (al, at) = (i64::from(area.x), i64::from(area.y));
+    let (ar, ab) = (al + i64::from(area.width), at + i64::from(area.height));
+    let touches =
+        |distance: i64| (-SNAP_SLACK..=i64::from(gaps.outer) + SNAP_SLACK).contains(&distance);
+    let (left, top, right, bottom) = (
+        touches(l - al),
+        touches(t - at),
+        touches(ar - r),
+        touches(ab - b),
+    );
+    if !(left || right) || !(top || bottom) || bounds.width <= 0 || bounds.height <= 0 {
+        return None;
+    }
+    let inner = i64::from(gaps.inner);
+    let cl = if left { al } else { (l - inner).max(al) };
+    let ct = if top { at } else { (t - inner).max(at) };
+    let cr = if right { ar } else { (r + inner).min(ar) };
+    let cb = if bottom { ab } else { (b + inner).min(ab) };
+    (cl < cr && ct < cb).then(|| Rect {
+        x: cl as i32,
+        y: ct as i32,
+        width: (cr - cl) as i32,
+        height: (cb - ct) as i32,
+    })
+}
+
+/// The largest rectangle of `area` that no cell covers, preferring the squarer
+/// one on a tie. None means tiles use the whole area: nothing is snapped, or
+/// what is left is under a fifth of the area across or down.
+fn free_region(area: Rect, cells: &[Rect]) -> Option<Rect> {
+    if cells.is_empty() {
+        return None;
+    }
+    let edges = |start: fn(&Rect) -> i32, size: fn(&Rect) -> i32| {
+        let mut edges: Vec<i64> = std::iter::once(&area)
+            .chain(cells)
+            .flat_map(|r| {
+                [
+                    i64::from(start(r)),
+                    i64::from(start(r)) + i64::from(size(r)),
+                ]
+            })
+            .collect();
+        edges.sort_unstable();
+        edges.dedup();
+        edges
+    };
+    let xs = edges(|r| r.x, |r| r.width);
+    let ys = edges(|r| r.y, |r| r.height);
+    let span = |r: &Rect| {
+        let (x, y) = (i64::from(r.x), i64::from(r.y));
+        (x, y, x + i64::from(r.width), y + i64::from(r.height))
+    };
+    let (al, at, ar, ab) = span(&area);
+    let cells: Vec<_> = cells.iter().map(span).collect();
+    // Scored by area, then by the shorter side.
+    let mut best: Option<((i64, i64), Rect)> = None;
+    for (i, &l) in xs.iter().enumerate() {
+        for &r in &xs[i + 1..] {
+            for (j, &t) in ys.iter().enumerate() {
+                for &b in &ys[j + 1..] {
+                    if l < al || r > ar || t < at || b > ab {
+                        continue;
+                    }
+                    if cells
+                        .iter()
+                        .any(|&(cl, ct, cr, cb)| cl < r && l < cr && ct < b && t < cb)
+                    {
+                        continue;
+                    }
+                    let score = ((r - l) * (b - t), (r - l).min(b - t));
+                    if best.is_none_or(|(s, _)| score > s) {
+                        let region = Rect {
+                            x: l as i32,
+                            y: t as i32,
+                            width: (r - l) as i32,
+                            height: (b - t) as i32,
+                        };
+                        best = Some((score, region));
+                    }
+                }
+            }
+        }
+    }
+    let (_, region) = best?;
+    if region.width * 5 < area.width || region.height * 5 < area.height {
+        return None;
+    }
+    (region != area).then_some(region)
+}
+
 fn lock(path: &Path) -> Result<File> {
     std::fs::create_dir_all(
         path.parent()
@@ -363,6 +527,20 @@ pub fn observe(config: &Config, path: &Path) -> Result<()> {
     if lock.try_lock().is_err() {
         return Ok(());
     }
+    observe_locked(config, &path)
+}
+
+/// Reconcile right after a placement, with the cycle lock already held, so the
+/// tiles move once into the space a snap left them instead of on the next poll.
+pub(crate) fn settle(config: &Config, path: &Path) -> Result<()> {
+    if !platform::tiling_supported() || !sidecar(path, ".tiling.json").exists() {
+        return Ok(());
+    }
+    observe_locked(config, path)
+}
+
+fn observe_locked(config: &Config, path: &Path) -> Result<()> {
+    let path = path.to_path_buf();
     config.validate()?;
     let mut state = State::load(&path)?;
     let before = state.clone();
@@ -571,6 +749,12 @@ pub(crate) fn action(
             }
             Control::Float => {
                 state.float(&live.workspace, &live.snapshot.id);
+                // A snap reflows the tiles once it has landed (see `settle`), so
+                // they move straight into the space it leaves them.
+                if dock_for(action).is_some() {
+                    state.save(path)?;
+                    return Ok(false);
+                }
                 let desktop = platform::tiling_desktop()?;
                 let result = state.reconcile(
                     config,
@@ -658,6 +842,7 @@ fn dock_window(
                 tree: config.tiling.tree().expect("validated config"),
                 members: Vec::new(),
                 focused: None,
+                region: None,
             });
             next.groups.len() - 1
         });
@@ -685,7 +870,7 @@ fn dock_window(
         let target = group.focused.filter(|id| group.tree.contains(*id));
         if group
             .tree
-            .insert(window.snapshot.handle, target, group.area)
+            .insert(window.snapshot.handle, target, group.region())
             .is_ok()
         {
             group.members.push(Member {
@@ -710,8 +895,8 @@ fn dock_window(
         .and_then(|current| shares.iter().position(|s| (s - current).abs() < 0.01))
         .map_or(shares[0], |step| shares[(step + 1) % shares.len()]);
     let mut tree = group.tree.clone();
-    if tree.dock(handle, dock, share, group.area).is_err()
-        || tree.layout(group.area, config.gaps).is_err()
+    if tree.dock(handle, dock, share, group.region()).is_err()
+        || group.layout(&tree, config.gaps).is_err()
     {
         return false;
     }
@@ -995,8 +1180,8 @@ fn control(group: &mut Group, config: &Config, action: Action, handle: u64) -> R
     let direction = swap_direction(action).unwrap_or(action);
     let mut tree = group.tree.clone();
     if direction.focuses() {
-        let tiles = tree
-            .layout(group.area, config.gaps)
+        let tiles = group
+            .layout(&tree, config.gaps)
             .map_err(|e| anyhow::anyhow!("{e:?}"))?;
         let current = tiles
             .iter()
@@ -1047,7 +1232,7 @@ fn control(group: &mut Group, config: &Config, action: Action, handle: u64) -> R
                     } else {
                         0.05
                     },
-                    group.area,
+                    group.region(),
                 )
             }
             _ => tree.grow(
@@ -1063,7 +1248,8 @@ fn control(group: &mut Group, config: &Config, action: Action, handle: u64) -> R
     } else {
         return Ok(Control::Float);
     }
-    tree.layout(group.area, config.gaps)
+    group
+        .layout(&tree, config.gaps)
         .map_err(|e| anyhow::anyhow!("Split cannot fit this work area: {e:?}"))?;
     group.tree = tree;
     Ok(Control::Reflow)
@@ -1667,6 +1853,103 @@ mod tests {
         let before = lone.clone();
         assert!(!snap(&mut lone, &config, &single, &[], 0, Dock::Right));
         assert_eq!(lone, before);
+    }
+
+    #[test]
+    fn snapped_windows_take_their_space_out_of_the_layout() {
+        let rect = |x, y, width, height| Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        let mut state = State::default();
+        let config = config();
+        let mut desktop = desktop(vec![window(1), window(2), window(3)]);
+        tick(&mut state, &mut desktop, &config, Some(1), &[]);
+        let bounds = |desktop: &platform::TilingDesktop, handle: u64| {
+            desktop
+                .windows
+                .iter()
+                .find(|w| w.snapshot.handle == handle)
+                .unwrap()
+                .snapshot
+                .bounds
+        };
+        let snap = |desktop: &mut platform::TilingDesktop, handle: u64, to: Rect| {
+            desktop
+                .windows
+                .iter_mut()
+                .find(|w| w.snapshot.handle == handle)
+                .unwrap()
+                .snapshot
+                .bounds = to;
+        };
+        // Snapping 1 to the left half floats it; 2 and 3 tile the right half.
+        snap(&mut desktop, 1, rect(-1180, 20, 575, 760));
+        tick(&mut state, &mut desktop, &config, Some(1), &[]);
+        assert_eq!(state.groups[0].region, Some(rect(-600, 0, 600, 800)));
+        for handle in [2, 3] {
+            let r = bounds(&desktop, handle);
+            assert!(r.x >= -595 && r.x + r.width <= -20, "{r:?}");
+        }
+        assert_eq!(tick(&mut state, &mut desktop, &config, Some(2), &[]), 0);
+        // Narrowing the snapped window frees what it gave up.
+        snap(&mut desktop, 1, rect(-1180, 20, 375, 760));
+        tick(&mut state, &mut desktop, &config, Some(2), &[]);
+        assert_eq!(state.groups[0].region, Some(rect(-800, 0, 800, 800)));
+        assert!(bounds(&desktop, 2).x.min(bounds(&desktop, 3).x) == -795);
+        // Left half and bottom-right quarter snapped: only the top right tiles.
+        snap(&mut desktop, 1, rect(-1180, 20, 575, 760));
+        snap(&mut desktop, 2, rect(-595, 405, 575, 375));
+        tick(&mut state, &mut desktop, &config, Some(3), &[]);
+        assert_eq!(state.groups[0].region, Some(rect(-600, 0, 600, 400)));
+        assert_eq!(bounds(&desktop, 3), rect(-595, 20, 575, 375));
+        // Re-snapping 1 to the bottom left frees the top left too.
+        snap(&mut desktop, 1, rect(-1180, 405, 575, 375));
+        tick(&mut state, &mut desktop, &config, Some(3), &[]);
+        assert_eq!(state.groups[0].region, Some(rect(-1200, 0, 1200, 400)));
+        assert_eq!(bounds(&desktop, 3), rect(-1180, 20, 1160, 375));
+        assert_eq!(tick(&mut state, &mut desktop, &config, Some(3), &[]), 0);
+        // Snapped windows that leave too little room give the tiles the whole area.
+        snap(&mut desktop, 1, rect(-1180, 20, 575, 760));
+        snap(&mut desktop, 2, rect(-595, 20, 575, 760));
+        tick(&mut state, &mut desktop, &config, Some(3), &[]);
+        assert_eq!(state.groups[0].region, None);
+        assert_eq!(bounds(&desktop, 3), rect(-1180, 20, 1160, 760));
+    }
+
+    #[test]
+    fn only_windows_anchored_to_a_corner_count_as_snapped() {
+        let gaps = crate::geometry::SnapGaps::default();
+        let at = |x, y, width, height| {
+            snapped_cell(
+                Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                },
+                AREA,
+                gaps,
+            )
+        };
+        // Middle and single-edge windows float freely.
+        assert_eq!(at(-1100, 100, 400, 300), None);
+        assert_eq!(at(-1180, 100, 400, 300), None);
+        // A top-right quarter holds its corner plus the inner gap.
+        assert_eq!(
+            at(-595, 20, 575, 375),
+            Some(Rect {
+                x: -600,
+                y: 0,
+                width: 600,
+                height: 400
+            })
+        );
+        // Native snaps without gaps count too.
+        assert!(at(-1200, 0, 600, 800).is_some());
+        assert_eq!(free_region(AREA, &[]), None);
     }
 
     #[test]

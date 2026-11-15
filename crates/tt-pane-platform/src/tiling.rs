@@ -472,16 +472,28 @@ impl Dwindle {
     /// Return deterministic tree order. Reject unrepresentable geometry instead
     /// of emitting zero-size or overlapping tiles when the work area is too small.
     pub fn layout(&self, area: Rect, gaps: SnapGaps) -> Result<Vec<(u64, Rect)>, LayoutError> {
-        if area.width <= 0
-            || area.height <= 0
-            || area.x.checked_add(area.width).is_none()
-            || area.y.checked_add(area.height).is_none()
+        self.layout_in(area, area, gaps)
+    }
+
+    /// Lay out within `region`, a part of the work area `area` left free by
+    /// snapped windows. Outer gaps apply only on the work area's own edges, so
+    /// tiles keep the inner gap next to the windows they share the screen with.
+    pub fn layout_in(
+        &self,
+        region: Rect,
+        area: Rect,
+        gaps: SnapGaps,
+    ) -> Result<Vec<(u64, Rect)>, LayoutError> {
+        if region.width <= 0
+            || region.height <= 0
+            || region.x.checked_add(region.width).is_none()
+            || region.y.checked_add(region.height).is_none()
         {
             return Err(LayoutError::InvalidArea);
         }
         let mut tiles = Vec::new();
         if let Some(root) = &self.root {
-            self.visit(root, area, &mut tiles)?;
+            self.visit(root, region, &mut tiles)?;
         }
         for (_, rect) in &mut tiles {
             *rect = gaps.inset(area, *rect);
@@ -634,6 +646,53 @@ mod tests {
         tree.insert(2, Some(1), AREA).unwrap();
         tree.insert(3, Some(2), AREA).unwrap();
         tree
+    }
+
+    #[test]
+    fn layout_in_a_region_keeps_outer_gaps_on_work_area_edges_only() {
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 1200,
+            height: 800,
+        };
+        // The right half is free; a snapped window holds the left half.
+        let region = Rect {
+            x: 600,
+            width: 600,
+            ..area
+        };
+        let mut tree = Dwindle::default();
+        tree.insert(1, None, region).unwrap();
+        tree.insert(2, Some(1), region).unwrap();
+        let gaps = SnapGaps {
+            inner: 5,
+            outer: 20,
+        };
+        assert_eq!(
+            tree.layout_in(region, area, gaps).unwrap(),
+            [
+                (
+                    1,
+                    Rect {
+                        x: 605,
+                        y: 20,
+                        width: 575,
+                        height: 375
+                    }
+                ),
+                (
+                    2,
+                    Rect {
+                        x: 605,
+                        y: 405,
+                        width: 575,
+                        height: 375
+                    }
+                ),
+            ]
+        );
+        assert_eq!(tree.layout(area, gaps), tree.layout_in(area, area, gaps));
     }
 
     #[test]
