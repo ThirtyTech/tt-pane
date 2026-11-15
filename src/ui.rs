@@ -316,8 +316,11 @@ impl Settings {
     }
 
     fn resume(&mut self) -> anyhow::Result<()> {
-        if let Some(shortcuts) = &mut self.shortcuts {
-            shortcuts.replace(&self.active)?;
+        if let Some(shortcuts) = &mut self.shortcuts
+            && let Some(message) =
+                crate::shortcuts::taken_message(&shortcuts.replace(&self.active)?)
+        {
+            anyhow::bail!(message);
         }
         Ok(())
     }
@@ -428,11 +431,14 @@ impl Settings {
             }
         }
         let shortcuts = self.shortcuts.as_mut().unwrap();
-        if let Err(error) = shortcuts.replace(&self.draft) {
-            let _ = self.resume();
-            self.message(format!("{error:#}"), true, cx);
-            return;
-        }
+        let taken = match shortcuts.replace(&self.draft) {
+            Ok(taken) => crate::shortcuts::taken_message(&taken),
+            Err(error) => {
+                let _ = self.resume();
+                self.message(format!("{error:#}"), true, cx);
+                return;
+            }
+        };
         if let Err(error) = self.draft.save(&self.path) {
             let rollback = shortcuts.replace(&self.active);
             self.message(
@@ -470,6 +476,10 @@ impl Settings {
         }
         if let Err(error) = crate::autostart::apply(self.active.launch_at_login) {
             self.message(format!("Saved, but {error:#}"), true, cx);
+            return;
+        }
+        if let Some(taken) = taken {
+            self.message(format!("Saved. {taken}"), true, cx);
             return;
         }
         #[cfg(target_os = "linux")]
@@ -1892,9 +1902,17 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
         }
         let shortcuts = match Shortcuts::new() {
             Ok(mut shortcuts) => {
-                if let Err(e) = shortcuts.replace(&config) {
-                    status = format!("{e:#}");
-                    error = true;
+                match shortcuts.replace(&config) {
+                    Ok(taken) => {
+                        if let Some(message) = crate::shortcuts::taken_message(&taken) {
+                            status = message;
+                            error = true;
+                        }
+                    }
+                    Err(e) => {
+                        status = format!("{e:#}");
+                        error = true;
+                    }
                 }
                 Some(shortcuts)
             }

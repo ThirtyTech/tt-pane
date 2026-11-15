@@ -1,5 +1,5 @@
 use crate::{config::Config, geometry::Action, platform};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use global_hotkey::{
     GlobalHotKeyManager, HotKeyState,
     hotkey::{Code, HotKey, Modifiers},
@@ -310,37 +310,28 @@ impl Shortcuts {
         self.gesture.poll(now)
     }
 
-    /// Register a complete set, rolling back on OS shortcut conflicts.
-    pub fn replace(&mut self, config: &Config) -> Result<()> {
+    /// Register a complete set. A key another application owns is skipped and
+    /// returned, so one conflict never disables the other shortcuts.
+    pub fn replace(&mut self, config: &Config) -> Result<Vec<(Action, HotKey)>> {
         self.leave_resize();
         self.glow = config
             .focus
             .glow_enabled
             .then(|| config.focus.glow_rgb())
             .flatten();
-        let next = configured_hotkeys(config)?;
+        let mut next = configured_hotkeys(config)?;
+        let mut taken = Vec::new();
         if let Some(manager) = &self.manager {
             // Keep shared keys registered, so swapping actions doesn't lose a grab.
-            let added: Vec<_> = next
-                .iter()
-                .filter(|(k, _)| !self.registered.iter().any(|(old, _)| old == k))
-                .copied()
-                .collect();
-            let mut acquired = Vec::new();
-            for (key, action) in added {
-                if let Err(error) = manager.register(key) {
-                    for key in acquired {
-                        let _ = manager.unregister(key);
-                    }
-                    return Err(error).with_context(|| {
-                        format!(
-                            "Could not register {} ({key}); another application may own it",
-                            action.label()
-                        )
-                    });
+            let registered = &self.registered;
+            next.retain(|&(key, action)| {
+                let ok =
+                    registered.iter().any(|(old, _)| *old == key) || manager.register(key).is_ok();
+                if !ok {
+                    taken.push((action, key));
                 }
-                acquired.push(key);
-            }
+                ok
+            });
             for (key, _) in &self.registered {
                 if !next.iter().any(|(new, _)| new == key) {
                     manager.unregister(*key)?;
@@ -349,7 +340,7 @@ impl Shortcuts {
         }
         self.gesture = FocusGesture::default();
         self.registered = next;
-        Ok(())
+        Ok(taken)
     }
 
     pub fn suspend(&mut self) -> Result<()> {
@@ -358,7 +349,23 @@ impl Shortcuts {
             bindings: Vec::new(),
             ..Config::default()
         })
+        .map(drop)
     }
+}
+
+/// Names the shortcuts `Shortcuts::replace` could not register, if any.
+pub fn taken_message(taken: &[(Action, HotKey)]) -> Option<String> {
+    let names: Vec<_> = taken
+        .iter()
+        .map(|(action, key)| format!("{} ({key})", action.label()))
+        .collect();
+    (!names.is_empty()).then(|| {
+        format!(
+            "Could not register {}; another application may own {}. Your other shortcuts work.",
+            names.join(", "),
+            if names.len() == 1 { "it" } else { "them" }
+        )
+    })
 }
 
 impl Drop for Shortcuts {
@@ -645,12 +652,13 @@ mod tests {
     }
     #[cfg(target_os = "windows")]
     #[test]
-    fn native_conflict_keeps_previous_shortcuts_registered() {
+    fn a_taken_key_leaves_the_other_shortcuts_registered() {
         use crate::config::Binding;
         let owner = GlobalHotKeyManager::new().unwrap();
         let blocked: HotKey = "Ctrl+Alt+Shift+F23".parse().unwrap();
         owner.register(blocked).unwrap();
         let original: HotKey = "Ctrl+Alt+Shift+F22".parse().unwrap();
+        let added: HotKey = "Ctrl+Alt+Shift+F21".parse().unwrap();
         let mut shortcuts = Shortcuts::new().unwrap();
         let config = Config {
             version: 1,
@@ -660,16 +668,26 @@ mod tests {
             }],
             ..Config::default()
         };
-        shortcuts.replace(&config).unwrap();
+        assert!(shortcuts.replace(&config).unwrap().is_empty());
+        // The taken key comes before a free one, as Toggle float's default
+        // came before the tiling keys after it.
         let mut candidate = config.clone();
         candidate.bindings.push(Binding {
             action: Action::Right,
             shortcut: blocked.to_string(),
         });
-        assert!(shortcuts.replace(&candidate).is_err());
+        candidate.bindings.push(Binding {
+            action: Action::Center,
+            shortcut: added.to_string(),
+        });
+        let taken = shortcuts.replace(&candidate).unwrap();
+        assert_eq!(taken, vec![(Action::Right, blocked)]);
+        assert!(taken_message(&taken).unwrap().contains("Right half"));
         assert_eq!(shortcuts.action(original.id()), Some(Action::Left));
+        assert_eq!(shortcuts.action(added.id()), Some(Action::Center));
         assert_eq!(shortcuts.action(blocked.id()), None);
         assert!(owner.register(original).is_err());
+        assert!(owner.register(added).is_err());
         shortcuts.suspend().unwrap();
         owner.register(original).unwrap();
         owner.unregister(original).unwrap();
