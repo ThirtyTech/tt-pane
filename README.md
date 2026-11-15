@@ -62,7 +62,7 @@ Closing Settings leaves the tray and shortcuts running. **Quit tt-pane** in the 
 
 Hover over a keybinding row to animate **Position preview** to that action's initial placement. The green rectangle represents the window and the dark rectangle represents the monitor's usable space. The preview keeps the last hovered action when the pointer leaves. Clicking the shortcut button starts recording; hovering only changes the illustration.
 
-Windows GUI builds do not allocate a console. When launched from a terminal (including `cargo run`), they attach to that terminal so **Ctrl+C terminates tt-pane**. Launching from Explorer or a shortcut remains console-free; piped CLI output is preserved. macOS uses an accessory app with a menu-bar icon and no Dock icon. Linux uses the StatusNotifierItem D-Bus protocol; enable a tray host such as KDE, a Waybar tray module, or the GNOME AppIndicator extension. No GTK tray event loop is required.
+Windows GUI builds do not allocate a console. When launched from a terminal (including `cargo run`), they attach to that terminal so **Ctrl+C quits tt-pane** the same way the tray's Quit does, with exit code 0 (a second Ctrl+C kills it if it doesn't respond). Launching from Explorer or a shortcut remains console-free; piped CLI output is preserved. macOS uses an accessory app with a menu-bar icon and no Dock icon. Linux uses the StatusNotifierItem D-Bus protocol; enable a tray host such as KDE, a Waybar tray module, or the GNOME AppIndicator extension. No GTK tray event loop is required.
 
 Automatic configuration-file watching remains future work.
 

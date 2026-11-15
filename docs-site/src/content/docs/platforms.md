@@ -26,7 +26,7 @@ Experimental automatic tiling:
 
 Windows tiling polls every 100 ms while the tray runs. It skips dialogs and minimized, maximized, fullscreen, hidden, utility, and non-resizable windows. Windows that reject moves become floating; elevated apps may reject control from an unelevated process. See [experimental tiling configuration](/tt-pane/configuration/#tiling-experimental).
 
-Run normally. Elevated applications can reject positioning from an unelevated process. GUI launches do not allocate a console; terminal launches attach to the terminal, where Ctrl+C terminates tt-pane.
+Run normally. Elevated applications can reject positioning from an unelevated process. GUI launches do not allocate a console; terminal launches attach to the terminal, where Ctrl+C quits tt-pane cleanly, like the tray's Quit, with exit code 0. A second Ctrl+C kills it if it doesn't respond.
 
 ## macOS
 
