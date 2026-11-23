@@ -536,6 +536,30 @@ pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>) -> Resul
     let identity = unsafe { core_foundation::base::CFHash(window.as_CFTypeRef()) };
     let id = format!("ax:{}:{identity}", application.processIdentifier());
     let target = resolve(&id, area, current)?;
+    if let Some(duration) = crate::snap_animation() {
+        let mut last = current;
+        crate::animation::run(
+            current,
+            target,
+            duration,
+            &mut |frame| {
+                let size = CGSize::new(frame.width as f64, frame.height as f64);
+                let point = CGPoint::new(frame.x as f64, frame.y as f64);
+                // Shrink before moving and move before growing, so no frame
+                // pushes the window past the screen edge it travels along.
+                if frame.width < last.width || frame.height < last.height {
+                    set_size(&window, &size)?;
+                    set_position(&window, &point)?;
+                } else {
+                    set_position(&window, &point)?;
+                    set_size(&window, &size)?;
+                }
+                last = frame;
+                Ok(())
+            },
+            &mut crate::animation::pause,
+        );
+    }
     let size = CGSize::new(target.width as f64, target.height as f64);
     let point = CGPoint::new(target.x as f64, target.y as f64);
     set_size(&window, &size)?;

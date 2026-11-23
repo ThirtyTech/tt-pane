@@ -608,6 +608,7 @@ impl Tab {
                     || draft.gaps != active.gaps
                     || draft.width_resize != active.width_resize
                     || draft.growth != active.growth
+                    || draft.animation != active.animation
             }
             Self::Tiling => draft.tiling != active.tiling,
             Self::Focus => draft.focus != active.focus,
@@ -1205,6 +1206,19 @@ impl Settings {
                         ),
                     ),
                 ],
+            ),
+            section(
+                "Animation",
+                [setting(
+                    "Animate snapping (experimental)",
+                    "Glide the window to its new position, from a snap or anywhere else. A window larger than its target shrinks early, so the app relayouts fewer times.",
+                    switch("animate-snapping", d.animation.enabled).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.draft.animation.enabled = !this.draft.animation.enabled;
+                            this.message("Snap animation updated. Save to activate.", false, cx);
+                        },
+                    )),
+                )],
             ),
             page_note(
                 "Positions use the active window’s monitor and its available work area. A window spanning displays uses the monitor with the largest overlap.",
@@ -2134,9 +2148,12 @@ mod tab_tests {
     fn each_change_marks_only_its_own_tab() {
         let active = Config::default();
         type Change = fn(&mut Config);
-        let changes: [(Tab, Change); 5] = [
+        let changes: [(Tab, Change); 6] = [
             (Tab::Shortcuts, |c| c.bindings[0].shortcut.clear()),
             (Tab::Snapping, |c| c.gaps.outer += 1),
+            (Tab::Snapping, |c| {
+                c.animation.enabled = !c.animation.enabled
+            }),
             (Tab::Tiling, |c| c.tiling.enabled = !c.tiling.enabled),
             (Tab::Focus, |c| {
                 c.focus.include_middle_windows = !c.focus.include_middle_windows

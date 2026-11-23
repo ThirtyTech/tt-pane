@@ -9,7 +9,7 @@ pub use tiling::{move_tiling_window, tiling_desktop};
 use windows::Win32::{
     Foundation::{HWND, RECT},
     Graphics::{
-        Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute},
+        Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmFlush, DwmGetWindowAttribute},
         Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow},
     },
     UI::{
@@ -372,6 +372,31 @@ fn apply_inner(
         let top = visible.top - outer.top;
         let right = outer.right - visible.right;
         let bottom = outer.bottom - visible.bottom;
+        if let Some(duration) = crate::snap_animation() {
+            crate::animation::run(
+                current,
+                target,
+                duration,
+                &mut |frame| {
+                    SetWindowPos(
+                        window,
+                        None,
+                        frame.x - left,
+                        frame.y - top,
+                        frame.width + left + right,
+                        frame.height + top + bottom,
+                        SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                    )?;
+                    Ok(())
+                },
+                // Pace frames to composition; fall back to a short sleep.
+                &mut || {
+                    if DwmFlush().is_err() {
+                        std::thread::sleep(std::time::Duration::from_millis(8));
+                    }
+                },
+            );
+        }
         SetWindowPos(
             window,
             None,

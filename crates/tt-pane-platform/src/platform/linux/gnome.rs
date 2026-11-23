@@ -160,6 +160,21 @@ pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>) -> Resul
     }
     let frame = rect(frame);
     let target = resolve(&window_id(window), rect(area), frame)?;
+    if let Some(duration) = crate::snap_animation() {
+        crate::animation::run(
+            frame,
+            target,
+            duration,
+            &mut |step| {
+                call::<_, ()>(
+                    &connection,
+                    "MoveResize",
+                    &(window, step.x, step.y, step.width, step.height),
+                )
+            },
+            &mut crate::animation::pause,
+        );
+    }
     // Pin the move to the window captured above, even if focus changed meanwhile.
     move_resize(&connection, window, frame, target)
 }

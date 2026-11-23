@@ -383,6 +383,15 @@ pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>) -> Resul
             "_NET_WM_STATE",
             [0, x.atom("_NET_WM_STATE_FULLSCREEN")?, 0, 2, 0],
         )?;
+        if let Some(duration) = crate::snap_animation() {
+            crate::animation::run(
+                current,
+                target,
+                duration,
+                &mut |frame| x.move_frame(window, extents, frame),
+                &mut crate::animation::pause,
+            );
+        }
         x.move_frame(window, extents, target)?;
         Ok(target)
     })

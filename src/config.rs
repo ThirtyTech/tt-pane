@@ -39,6 +39,8 @@ pub struct Config {
     pub width_resize: WidthResize,
     #[serde(default)]
     pub focus: Focus,
+    #[serde(default)]
+    pub animation: Animation,
     pub bindings: Vec<Binding>,
 }
 
@@ -135,6 +137,34 @@ pub struct Growth {
 #[serde(default, deny_unknown_fields)]
 pub struct WidthResize {
     pub percent: u32,
+}
+
+/// Experimental animated snapping. Off by default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Animation {
+    pub enabled: bool,
+    /// Total time of one snap, in milliseconds (50 to 1000).
+    pub duration_ms: u32,
+}
+
+impl Default for Animation {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            duration_ms: 160,
+        }
+    }
+}
+
+impl Animation {
+    pub const DURATION_RANGE: std::ops::RangeInclusive<u32> = 50..=1000;
+
+    /// The animation length when snaps animate.
+    pub fn duration(&self) -> Option<std::time::Duration> {
+        self.enabled
+            .then(|| std::time::Duration::from_millis(self.duration_ms.into()))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,6 +276,7 @@ impl Default for Config {
             growth: Growth::default(),
             width_resize: WidthResize::default(),
             focus: Focus::default(),
+            animation: Animation::default(),
             bindings: Action::ALL
                 .into_iter()
                 .zip(keys.into_iter().map(Some).chain(std::iter::repeat(None)))
@@ -361,6 +392,12 @@ impl Config {
         ) {
             self.focus.minimum_visible_percent = defaults.focus.minimum_visible_percent;
         }
+        if reset(
+            !Animation::DURATION_RANGE.contains(&self.animation.duration_ms),
+            "animation.duration_ms",
+        ) {
+            self.animation.duration_ms = defaults.animation.duration_ms;
+        }
         if reset(self.focus.glow_rgb().is_none(), "focus.glow_color") {
             self.focus.glow_color = defaults.focus.glow_color;
         }
@@ -460,6 +497,10 @@ impl Config {
         ensure!(
             self.gaps.inner <= 100 && self.gaps.outer <= 100,
             "Window gaps must be between 0 and 100"
+        );
+        ensure!(
+            Animation::DURATION_RANGE.contains(&self.animation.duration_ms),
+            "Animation duration must be between 50 and 1000 ms"
         );
         ensure!(
             self.focus.minimum_visible_percent <= 99,
@@ -985,6 +1026,39 @@ mod launch_at_login_tests {
 mod gap_tests {
     use super::*;
     use crate::geometry::SnapGaps;
+
+    #[test]
+    fn animation_defaults_off_and_repairs_out_of_range_durations() {
+        let config: Config = toml::from_str(
+            "version = 1
+bindings = []",
+        )
+        .unwrap();
+        assert_eq!(config.animation, Animation::default());
+        assert_eq!(config.animation.duration(), None);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "version = 1
+bindings = []
+[animation]
+enabled = true
+duration_ms = 5000
+",
+        )
+        .unwrap();
+        let (config, warnings) = Config::load_with_warnings(&path).unwrap();
+        assert!(config.animation.enabled);
+        assert_eq!(
+            config.animation.duration(),
+            Some(std::time::Duration::from_millis(160))
+        );
+        assert!(warnings.iter().any(|w| w.contains("animation.duration_ms")));
+        let mut invalid = Config::default();
+        invalid.animation.duration_ms = 10;
+        assert!(invalid.validate().is_err());
+    }
 
     #[test]
     fn gaps_migrate_validate_and_persist() {

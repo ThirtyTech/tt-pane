@@ -472,43 +472,47 @@ fn apply_inner(
         );
     }
     let mut next = None;
-    let actual = platform::apply_with(window, &mut |id, area, current| {
-        let mut cycle = if action == Action::FillGap {
-            Cycle::fill_gap(previous.as_ref(), id, area, config.growth)?
-        } else if action.adjusts_width() {
-            Cycle::adjust_width(previous.as_ref(), id, action, area, current, config)
-        } else if action.sizes_alone() {
-            Cycle::size_alone(previous.as_ref(), id, action, area, current, config)
-        } else {
-            Cycle::next(previous.as_ref(), id, action, area, current, config.growth)
-        };
-        if Action::POSITIONS.contains(&action) && action != Action::Center {
-            cycle.last = config.gaps.inset(area, cycle.last);
-        } else if action == Action::FillGap {
-            // The saved strip already has its outer margins. Add spacing only
-            // along the source boundary, and leave floating-window strips alone.
-            if let Some(gap) = previous
-                .as_ref()
-                .and_then(|p| p.gaps.iter().rev().find(|g| g.usable_on(area)))
-                && !gap.middle
-                && platform::is_edge_snapped(gap.source_bounds, area, config.gaps)
-            {
-                let spacing = config.gaps.inner * 2;
-                let source = gap.source_bounds;
-                cycle.last = if gap.target.x >= source.x + source.width {
-                    crate::geometry::inset_rect(cycle.last, spacing, 0, 0, 0)
-                } else if gap.target.y >= source.y + source.height {
-                    crate::geometry::inset_rect(cycle.last, 0, spacing, 0, 0)
-                } else if gap.target.y + gap.target.height <= source.y {
-                    crate::geometry::inset_rect(cycle.last, 0, 0, 0, spacing)
-                } else {
-                    crate::geometry::inset_rect(cycle.last, 0, 0, spacing, 0)
-                };
+    // Experimental: animate this single-window snap from its live bounds,
+    // snapped or not. Tiling and group moves above and below stay instant.
+    let actual = platform::with_snap_animation(config.animation.duration(), || {
+        platform::apply_with(window, &mut |id, area, current| {
+            let mut cycle = if action == Action::FillGap {
+                Cycle::fill_gap(previous.as_ref(), id, area, config.growth)?
+            } else if action.adjusts_width() {
+                Cycle::adjust_width(previous.as_ref(), id, action, area, current, config)
+            } else if action.sizes_alone() {
+                Cycle::size_alone(previous.as_ref(), id, action, area, current, config)
+            } else {
+                Cycle::next(previous.as_ref(), id, action, area, current, config.growth)
+            };
+            if Action::POSITIONS.contains(&action) && action != Action::Center {
+                cycle.last = config.gaps.inset(area, cycle.last);
+            } else if action == Action::FillGap {
+                // The saved strip already has its outer margins. Add spacing only
+                // along the source boundary, and leave floating-window strips alone.
+                if let Some(gap) = previous
+                    .as_ref()
+                    .and_then(|p| p.gaps.iter().rev().find(|g| g.usable_on(area)))
+                    && !gap.middle
+                    && platform::is_edge_snapped(gap.source_bounds, area, config.gaps)
+                {
+                    let spacing = config.gaps.inner * 2;
+                    let source = gap.source_bounds;
+                    cycle.last = if gap.target.x >= source.x + source.width {
+                        crate::geometry::inset_rect(cycle.last, spacing, 0, 0, 0)
+                    } else if gap.target.y >= source.y + source.height {
+                        crate::geometry::inset_rect(cycle.last, 0, spacing, 0, 0)
+                    } else if gap.target.y + gap.target.height <= source.y {
+                        crate::geometry::inset_rect(cycle.last, 0, 0, 0, spacing)
+                    } else {
+                        crate::geometry::inset_rect(cycle.last, 0, 0, spacing, 0)
+                    };
+                }
             }
-        }
-        let target = cycle.last;
-        next = Some(cycle);
-        Ok(target)
+            let target = cycle.last;
+            next = Some(cycle);
+            Ok(target)
+        })
     })?;
     if let Some(mut cycle) = next {
         cycle.record_result(previous.as_ref(), actual);
