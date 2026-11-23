@@ -5,7 +5,7 @@ description: Customize shortcuts, growth, width changes, and scripted window pos
 
 ## Settings
 
-Open **Settings…** from the tray. Settings has five tabs: **Shortcuts** (keybindings and the position preview), **Snapping** (center layout, gaps, width and growth steps), **Tiling**, **Focus** (focus glow and H/J/K/L navigation) and **General** (launch at login, tray icon, updates, GNOME setup). A dot on a tab marks unsaved changes there. Hover a keybinding row to see the position preview; click its shortcut to record a replacement. **Save changes** validates and applies the settings on every tab, and **Reset defaults** resets all of them. Closing the window leaves tt-pane and its shortcuts running.
+Open **Settings…** from the tray. Settings has five tabs: **Shortcuts** (keybindings and the position preview), **Snapping** (center layout, gaps, width and growth steps, snap animation), **Tiling**, **Focus** (focus glow and H/J/K/L navigation) and **General** (launch at login, tray icon, updates, GNOME setup). A dot on a tab marks unsaved changes there. Hover a keybinding row to see the position preview; click its shortcut to record a replacement. **Save changes** validates and applies the settings on every tab, and **Reset defaults** resets all of them. Closing the window leaves tt-pane and its shortcuts running.
 
 The settings screen displays the resolved configuration path:
 
@@ -46,6 +46,10 @@ visibility_filter_enabled = false
 minimum_visible_percent = 10
 glow_enabled = true
 glow_color = "#F2F0E8"
+
+[animation]
+enabled = false
+duration_ms = 160
 
 [[bindings]]
 action = "left"
@@ -101,6 +105,14 @@ Sizing is unchanged: the selected window restores its saved size, background mem
 **Settings → Snapping → Snapped window gaps** (**Inner gap per window** and **Desktop edge gap**) controls spacing for half, quarter, and fill-work-area placements. Defaults match [Hyprland](https://wiki.hypr.land/configuring/core/config-options/): `inner = 5` per window edge (10 total between adjacent tiles), and `outer = 20` at desktop work-area edges. Values use native desktop coordinates (pixels on Windows, points on macOS), range from 0–100, and zero disables the corresponding spacing. Existing configurations inherit these defaults.
 
 Changes apply on the next placement; existing windows are not rearranged when saving unless experimental automatic tiling is active. Repeated growth retains margins, width expansion stops at the inset work-area edge, and filling a saved strip beside a snapped window leaves inner spacing. Center placement and floating center groups retain their existing geometry. Background focus navigation recognizes both inset tiles and native edge snaps.
+
+## Animated snapping (experimental)
+
+**Settings → Snapping → Animation → Animate snapping** makes a snap glide the window to its new position instead of jumping. It works from any starting point: another snap, a window you placed yourself, or a maximized window. It applies to half, quarter, center, fill-work-area, width and growth actions on Windows, macOS, GNOME on Wayland and X11. It defaults to **Off**, including existing configurations.
+
+The window moves on a fast-slow-fast curve: it leaves and arrives quickly and slows through the middle. A snap takes `duration_ms` (160 ms by default, 50–1000) in total; there is no Settings control for the duration yet. When the window is wider or taller than its target, it reaches the target size in the first 40% of the time, so the application lays itself out fewer times, and the edge that moves least stays put (from full width to the right half, the right edge doesn't move). Growing follows the normal curve. An application that is slow to redraw skips frames rather than slowing the snap down, and the window always ends exactly where an instant snap would put it.
+
+Tiling, centered groups, swaps and shared-boundary resizes still move windows instantly.
 
 ## Launch at login
 

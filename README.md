@@ -82,6 +82,10 @@ The command-line positioning tool can be built independently of GPUI:
 cargo build --release --no-default-features
 ```
 
+## Experimental animated snapping
+
+Turn on **Settings → Snapping → Animation → Animate snapping** and save to have snaps glide the window into place from wherever it is, snapped or not. Motion follows a fast-slow-fast curve over 160 ms (`[animation] duration_ms`, 50–1000). A window larger than its target shrinks early, so the application relayouts fewer times. It is off by default; tiling and centered-group moves stay instant. See the [configuration reference](docs-site/src/content/docs/configuration.md#animated-snapping-experimental).
+
 ## Experimental automatic tiling
 
 Turn on **Settings → Tiling → Tile windows automatically** and save (Windows, macOS, GNOME on Wayland and X11). Dwindle tiles existing and newly opened eligible windows on the current virtual desktop, Space or workspace, with a separate layout per monitor. It is off by default. Closing/minimizing a tile reflows its neighbors; moving or snapping a tile makes it floating. Turning tiling off leaves windows in place. Keep the tray running for automatic updates.
