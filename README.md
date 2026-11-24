@@ -84,7 +84,7 @@ cargo build --release --no-default-features
 
 ## Experimental animated snapping
 
-Turn on **Settings → Snapping → Animation → Animate snapping** and save to have snaps glide the window into place from wherever it is, snapped or not. Motion follows a fast-slow-fast curve over 160 ms (`[animation] duration_ms`, 50–1000). A window larger than its target shrinks early, so the application relayouts fewer times. It is off by default; tiling and centered-group moves stay instant. See the [configuration reference](docs-site/src/content/docs/configuration.md#animated-snapping-experimental).
+Turn on **Settings → Snapping → Animation → Animate snapping** and save to have snaps glide the window into place from wherever it is, snapped or not. Motion follows a fast-slow-fast curve over 160 ms (`[animation] duration_ms`, 50–1000). A window larger than its target shrinks early, so the application relayouts fewer times. Focusing an offset window in a centered group glides it into the center too. It is off by default; tiling moves stay instant. See the [configuration reference](docs-site/src/content/docs/configuration.md#animated-snapping-experimental).
 
 ## Experimental automatic tiling
 

@@ -112,7 +112,9 @@ Changes apply on the next placement; existing windows are not rearranged when sa
 
 The window moves on a fast-slow-fast curve: it leaves and arrives quickly and slows through the middle. A snap takes `duration_ms` (160 ms by default, 50–1000) in total; there is no Settings control for the duration yet. When the window is wider or taller than its target, it reaches the target size in the first 40% of the time, so the application lays itself out fewer times, and the edge that moves least stays put (from full width to the right half, the right edge doesn't move). Growing follows the normal curve. An application that is slow to redraw skips frames rather than slowing the snap down, and the window always ends exactly where an instant snap would put it.
 
-Tiling, centered groups, swaps and shared-boundary resizes still move windows instantly.
+In a centered group (Windows and GNOME on Wayland), focusing an offset member glides it into the center, whether you use H/L, hold into the group, or click or Alt+Tab to it. The member it replaces steps aside instantly first, so only one window animates at a time.
+
+Tiling, swaps and shared-boundary resizes still move windows instantly.
 
 ## Launch at login
 
