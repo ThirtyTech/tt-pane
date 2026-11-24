@@ -411,6 +411,15 @@ pub fn move_snapshot(expected: &WindowSnapshot, target: Rect) -> Result<Rect> {
     with(|x| {
         let live = x.revalidate(expected)?;
         let window = expected.handle as u32;
+        if let Some(duration) = crate::snap_animation() {
+            crate::animation::run(
+                expected.bounds,
+                target,
+                duration,
+                &mut |frame| x.move_frame(window, live.extents, frame),
+                &mut crate::animation::pause,
+            );
+        }
         x.move_frame(window, live.extents, target)?;
         if near(expected.bounds, target) {
             return Ok(target);

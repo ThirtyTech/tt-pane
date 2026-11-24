@@ -2079,9 +2079,11 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                                     this.message(format!("Tiling: {e:#}"), true, cx);
                                 }
                                 #[cfg(any(windows, target_os = "linux"))]
-                                if let Err(e) =
-                                    crate::centered::observe(&this.path, this.active.center_layout)
-                                {
+                                if let Err(e) = crate::centered::observe(
+                                    &this.path,
+                                    this.active.center_layout,
+                                    this.active.animation.duration(),
+                                ) {
                                     this.message(format!("{e:#}"), true, cx);
                                 }
                             }

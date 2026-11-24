@@ -23,9 +23,10 @@ thread_local! {
         const { std::cell::Cell::new(None) };
 }
 
-/// Animate single-window snaps made by `run` on this thread over `duration`
-/// (experimental). Other moves, such as tiling and group arrangements, stay
-/// instant. The previous setting is restored afterwards, even on unwinding.
+/// Animate single-window snaps, and `move_snapshot` calls, made by `run` on
+/// this thread over `duration` (experimental). Callers scope it to the moves
+/// that should glide; everything else stays instant. The previous setting is
+/// restored afterwards, even on unwinding.
 pub fn with_snap_animation<T>(duration: Option<std::time::Duration>, run: impl FnOnce() -> T) -> T {
     struct Restore(Option<std::time::Duration>);
     impl Drop for Restore {
@@ -37,11 +38,8 @@ pub fn with_snap_animation<T>(duration: Option<std::time::Duration>, run: impl F
     run()
 }
 
-#[cfg_attr(
-    not(any(windows, target_os = "macos", target_os = "linux")),
-    allow(dead_code)
-)]
-pub(crate) fn snap_animation() -> Option<std::time::Duration> {
+/// The animation length set by the innermost `with_snap_animation` on this thread.
+pub fn snap_animation() -> Option<std::time::Duration> {
     SNAP_ANIMATION.get()
 }
 

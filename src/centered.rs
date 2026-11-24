@@ -312,12 +312,17 @@ impl Group {
             })
             .collect();
         moves.sort_by_key(|(m, _, _)| m.handle == handle);
+        // With animated snapping on, only the selected member glides into its
+        // slot; background members step aside instantly first.
+        let animation = platform::snap_animation();
         let mut failure = None;
         for (member, snapshot, target) in moves {
             if crate::positioning::near(member.last, target) {
                 continue;
             }
-            match platform::move_snapshot(snapshot, target) {
+            let glide = animation.filter(|_| member.handle == handle);
+            match platform::with_snap_animation(glide, || platform::move_snapshot(snapshot, target))
+            {
                 Ok(actual) if crate::positioning::near(actual, target) => {
                     if let Some(saved) = self.members.iter_mut().find(|m| m.id == member.id) {
                         saved.last = actual;
@@ -404,7 +409,11 @@ fn target(peers: &[Member], index: usize, selected_index: usize) -> Rect {
 
 /// Observe mouse/Alt+Tab focus as well as keybindings. Avoid blocking the UI on a
 /// concurrent CLI command. The caller throttles this to ten observations/second.
-pub fn observe(path: &Path, layout: CenterLayout) -> Result<()> {
+pub fn observe(
+    path: &Path,
+    layout: CenterLayout,
+    animation: Option<std::time::Duration>,
+) -> Result<()> {
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     if !crate::positioning::sidecar(&path, ".centered.json").exists() {
         return Ok(());
@@ -420,7 +429,7 @@ pub fn observe(path: &Path, layout: CenterLayout) -> Result<()> {
     }
     let mut group = Group::load(&path)?;
     let before = group.clone();
-    let result = group.refresh(layout);
+    let result = platform::with_snap_animation(animation, || group.refresh(layout));
     if group != before {
         group.save(&path)?;
     }
@@ -545,7 +554,7 @@ mod tests {
                 for (action, expected) in [(Action::FocusLeft, left), (Action::FocusRight, right)] {
                     platform::focus_snapshot(&platform::window_snapshot(source).unwrap().unwrap())
                         .unwrap();
-                    observe(&path, CenterLayout::Offset).unwrap();
+                    observe(&path, CenterLayout::Offset, None).unwrap();
                     config.focus.minimum_visible_percent = 99;
                     crate::positioning::apply_gesture(&config, &path, action, Some(source), true)
                         .unwrap();
@@ -575,6 +584,59 @@ mod tests {
     #[test]
     #[cfg(windows)]
     #[ignore = "requires an interactive Windows desktop and briefly focuses disposable windows"]
+    fn native_focus_glides_only_the_selected_member_into_the_center() {
+        platform::test_support::with_group_windows(|handles| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            let mut config = crate::config::Config::default();
+            for handle in &handles[..2] {
+                crate::positioning::apply(&config, &path, Action::Center, Some(*handle)).unwrap();
+            }
+            config.animation.enabled = true;
+            config.animation.duration_ms = 300;
+            let start = |handle| platform::window_snapshot(handle).unwrap().unwrap().bounds;
+            let (selected, background) = (start(handles[0]), start(handles[1]));
+            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let watcher = {
+                let done = done.clone();
+                let watched = [handles[0], handles[1]];
+                std::thread::spawn(move || {
+                    let mut seen = [vec![], vec![]];
+                    while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                        for (frames, handle) in seen.iter_mut().zip(watched) {
+                            if let Ok(Some(w)) = platform::window_snapshot(handle)
+                                && frames.last() != Some(&w.bounds)
+                            {
+                                frames.push(w.bounds);
+                            }
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                    seen
+                })
+            };
+            crate::positioning::apply(&config, &path, Action::FocusRight, Some(handles[1]))
+                .unwrap();
+            done.store(true, std::sync::atomic::Ordering::Relaxed);
+            let [entering, left_centre] = watcher.join().unwrap();
+            assert_eq!(platform::foreground_handle(), Some(handles[0]));
+            // The member being focused passes through intermediate frames...
+            let end = start(handles[0]);
+            assert_ne!(end, selected);
+            let between = entering.iter().filter(|b| **b != selected && **b != end);
+            assert!(between.count() >= 3, "{entering:?}");
+            // ...while the one stepping aside jumps straight to its slot.
+            let end = start(handles[1]);
+            assert!(
+                left_centre.iter().all(|b| *b == background || *b == end),
+                "{left_centre:?}"
+            );
+        });
+    }
+
+    #[test]
+    #[cfg(windows)]
+    #[ignore = "requires an interactive Windows desktop and briefly focuses disposable windows"]
     fn native_center_group_promotes_members_and_releases_manually_moved_windows() {
         platform::test_support::with_group_windows(|handles| {
             let dir = tempfile::tempdir().unwrap();
@@ -595,7 +657,7 @@ mod tests {
             // A regular native focus change is picked up by the tray observer.
             platform::focus_snapshot(&platform::window_snapshot(handles[0]).unwrap().unwrap())
                 .unwrap();
-            observe(&path, CenterLayout::Offset).unwrap();
+            observe(&path, CenterLayout::Offset, None).unwrap();
             group = Group::load(&path).unwrap();
             assert_eq!(
                 platform::window_snapshot(handles[0])
@@ -736,7 +798,7 @@ mod tests {
             config.center_layout = CenterLayout::Stack;
             platform::focus_snapshot(&platform::window_snapshot(handles[0]).unwrap().unwrap())
                 .unwrap();
-            observe(&path, config.center_layout).unwrap();
+            observe(&path, config.center_layout, None).unwrap();
             for turn in 0..6 {
                 let selected = turn % handles.len();
                 let group = Group::load(&path).unwrap();
@@ -758,7 +820,7 @@ mod tests {
                     Some(handles[(selected + 1) % handles.len()])
                 );
             }
-            observe(&path, CenterLayout::Offset).unwrap();
+            observe(&path, CenterLayout::Offset, None).unwrap();
             let group = Group::load(&path).unwrap();
             assert_eq!(group.members.len(), handles.len());
             assert!(

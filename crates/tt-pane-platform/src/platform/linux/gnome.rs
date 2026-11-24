@@ -160,21 +160,7 @@ pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>) -> Resul
     }
     let frame = rect(frame);
     let target = resolve(&window_id(window), rect(area), frame)?;
-    if let Some(duration) = crate::snap_animation() {
-        crate::animation::run(
-            frame,
-            target,
-            duration,
-            &mut |step| {
-                call::<_, ()>(
-                    &connection,
-                    "MoveResize",
-                    &(window, step.x, step.y, step.width, step.height),
-                )
-            },
-            &mut crate::animation::pause,
-        );
-    }
+    animate(&connection, window, frame, target);
     // Pin the move to the window captured above, even if focus changed meanwhile.
     move_resize(&connection, window, frame, target)
 }
@@ -214,7 +200,28 @@ fn revalidate(connection: &Connection, expected: &WindowSnapshot) -> Result<()> 
 pub fn move_snapshot(expected: &WindowSnapshot, target: Rect) -> Result<Rect> {
     let connection = connection()?;
     revalidate(&connection, expected)?;
+    animate(&connection, expected.handle, expected.bounds, target);
     move_resize(&connection, expected.handle, expected.bounds, target)
+}
+
+/// Glide toward `target` when the caller asked for animation; the caller's
+/// usual `move_resize` then makes the exact final placement.
+fn animate(connection: &Connection, handle: u64, from: Rect, target: Rect) {
+    if let Some(duration) = crate::snap_animation() {
+        crate::animation::run(
+            from,
+            target,
+            duration,
+            &mut |step| {
+                call::<_, ()>(
+                    connection,
+                    "MoveResize",
+                    &(handle, step.x, step.y, step.width, step.height),
+                )
+            },
+            &mut crate::animation::pause,
+        );
+    }
 }
 
 /// ListTilingWindows entry: id, frame, work area, workspace key, WM class, pid.

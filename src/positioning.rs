@@ -415,7 +415,8 @@ fn apply_inner(
     group.prune();
     #[cfg(any(windows, target_os = "linux"))]
     if action.focuses() {
-        let result = (|| -> Result<()> {
+        // Focusing a centered member glides it into the center (experimental).
+        let result = platform::with_snap_animation(config.animation.duration(), || {
             if include_hidden
                 || !group.focus(
                     window,
@@ -434,7 +435,7 @@ fn apply_inner(
                 group.refresh(config.center_layout)?;
             }
             Ok(())
-        })();
+        });
         if group != group_before {
             group.save(&path)?;
         }
