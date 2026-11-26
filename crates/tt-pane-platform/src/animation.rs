@@ -203,14 +203,16 @@ mod tests {
         run(
             rect(0, 0, 800, 600),
             rect(960, 0, 960, 1040),
-            Duration::from_millis(60),
+            // Long enough that a CI runner oversleeping each 1 ms wait (macOS
+            // often sleeps 15 ms or more) still yields several frames.
+            Duration::from_millis(400),
             &mut |f| {
                 frames.push(f);
                 Ok(())
             },
-            &mut || std::thread::sleep(Duration::from_millis(4)),
+            &mut || std::thread::sleep(Duration::from_millis(1)),
         );
-        assert!(start.elapsed() < Duration::from_millis(200));
+        assert!(start.elapsed() < Duration::from_millis(1500));
         assert!(frames.len() > 3);
         assert!(frames.windows(2).all(|w| w[0].x <= w[1].x));
     }
