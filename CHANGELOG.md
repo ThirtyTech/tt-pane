@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-11-25
 
 - Experimental: snaps can glide the window into place instead of jumping. Turn on **Settings → Snapping → Animation → Animate snapping**. It works from a snapped, floating or maximized window, on a fast-slow-fast curve that takes 160 ms in total (`[animation] duration_ms`, 50–1000; no Settings control yet). A window larger than its target shrinks in the first 40% of that time, so the application relayouts fewer times. In a centered group, focusing an offset window glides it into the center, while the window it replaces steps aside instantly. Off by default; tiling moves stay instant.
 - On Windows, pressing Ctrl+C in the terminal you started tt-pane from now quits it cleanly, the same as **Quit** in the tray, with exit code 0. Before, Windows killed it with STATUS_CONTROL_C_EXIT, which `cargo run` reported as `process didn't exit successfully`. If tt-pane doesn't respond, a second Ctrl+C still kills it.
