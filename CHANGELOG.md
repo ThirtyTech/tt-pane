@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Experimental, Windows: a dock for windows you want close at hand. Turn on **Settings → Dock → Show the dock** to add a panel along the bottom, top, left or right edge of the primary monitor, 15% of the screen by default (5–40%, `[dock] size_percent`). Dock the focused window with **Ctrl+Alt+D** (**Dock / undock window**, `tt-pane apply dock`) or by dragging it onto the panel. Each docked window shows as a live preview, rendered at 1920×1080 off screen and scaled into a 16:9 slot. Click a preview to bring that window into the Center position of the space the panel leaves; it goes back to the dock as soon as you focus another window, and choosing a docked window with Alt+Tab or the taskbar brings it out too. The panel reserves its space like the taskbar, so maximized windows, snaps and tiling stay clear of it. Ctrl+Alt+D on a docked window undocks it, and turning the dock off or quitting tt-pane puts every docked window back where it was. Off by default.
+
 ## 0.3.0 — 2026-11-25
 
 - Experimental: snaps can glide the window into place instead of jumping. Turn on **Settings → Snapping → Animation → Animate snapping**. It works from a snapped, floating or maximized window, on a fast-slow-fast curve that takes 160 ms in total (`[animation] duration_ms`, 50–1000; no Settings control yet). A window larger than its target shrinks in the first 40% of that time, so the application relayouts fewer times. In a centered group, focusing an offset window glides it into the center, while the window it replaces steps aside instantly. Off by default; tiling moves stay instant.

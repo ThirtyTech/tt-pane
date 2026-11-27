@@ -5,7 +5,7 @@ description: Customize shortcuts, growth, width changes, and scripted window pos
 
 ## Settings
 
-Open **Settings…** from the tray. Settings has five tabs: **Shortcuts** (keybindings and the position preview), **Snapping** (center layout, gaps, width and growth steps, snap animation), **Tiling**, **Focus** (focus glow and H/J/K/L navigation) and **General** (launch at login, tray icon, updates, GNOME setup). A dot on a tab marks unsaved changes there. Hover a keybinding row to see the position preview; click its shortcut to record a replacement. **Save changes** validates and applies the settings on every tab, and **Reset defaults** resets all of them. Closing the window leaves tt-pane and its shortcuts running.
+Open **Settings…** from the tray. Settings has six tabs: **Shortcuts** (keybindings and the position preview), **Snapping** (center layout, gaps, width and growth steps, snap animation), **Tiling**, **Focus** (focus glow and H/J/K/L navigation), **Dock** (the experimental dock panel) and **General** (launch at login, tray icon, updates, GNOME setup). A dot on a tab marks unsaved changes there. Hover a keybinding row to see the position preview; click its shortcut to record a replacement. **Save changes** validates and applies the settings on every tab, and **Reset defaults** resets all of them. Closing the window leaves tt-pane and its shortcuts running.
 
 The settings screen displays the resolved configuration path:
 
@@ -50,6 +50,11 @@ glow_color = "#F2F0E8"
 [animation]
 enabled = false
 duration_ms = 160
+
+[dock]
+enabled = false
+edge = "bottom" # or "top", "left", "right"
+size_percent = 15
 
 [[bindings]]
 action = "left"
@@ -116,6 +121,27 @@ In a centered group (Windows and GNOME on Wayland), focusing an offset member gl
 
 Tiling, swaps and shared-boundary resizes still move windows instantly.
 
+## Dock (experimental) — Windows
+
+**Settings → Dock → Show the dock** adds a panel along one edge of the primary monitor. Windows you dock appear in it as live previews; click one to bring that window into the middle of the screen. It goes back to the dock as soon as you focus another window. The dock is off by default, including for existing configurations.
+
+- **Edge** puts the panel on the top, bottom, left or right of the screen (`edge`, default `"bottom"`).
+- **Size** is the panel's share of the screen height for the top and bottom, or of its width for the sides (`size_percent`, 5–40, default 15).
+
+The panel reserves its strip the way the taskbar does, and sits beside the taskbar when both are on the same edge. Maximized windows, snaps, Center, centered groups and automatic tiling all use the space that's left, the *arena*.
+
+**Docking a window.** Press **Ctrl + Alt + D** (**Dock / undock window**) to dock the focused window, or drag a window by its title bar and drop it on the panel. The same shortcut on a docked window takes it out of the dock and puts it back where it was before you docked it. A window dragged onto the panel goes back to where the drag started. From the command line, `tt-pane apply dock` (or `--window HWND`) does the same. tt-pane must be running in the tray, since that process shows the panel.
+
+**Previews.** A docked window is resized to 1920×1080 and moved off screen, where Windows keeps drawing it. Its preview is a live thumbnail of that window, scaled to fit its slot. Slots are 16:9, fill the panel's thickness and shrink so every docked window fits. Some applications stop drawing while they're off screen, and their preview shows the last thing they drew.
+
+**The arena.** Clicking a preview moves its window to the Center position in the arena (half the arena's width and height, centered) and focuses it; its slot is outlined while it's out. With [animated snapping](#animated-snapping-experimental) on, the window glides out of its preview. Focusing any other window, by clicking it, with Alt + Tab or with the taskbar, sends it back to the dock. Choosing a docked window with Alt + Tab or the taskbar brings it into the arena too. Only one docked window is out at a time.
+
+**Leaving the dock.** Closing a docked window removes it. Positioning a docked window with any other tt-pane action, for example snapping the one in the arena to the left half, takes it out of the dock where it is. Docked windows are left out of automatic tiling, centered groups and directional focus.
+
+Turning the dock off and saving, or quitting tt-pane, puts every docked window back where it was before it was docked. Membership is saved in `<config-path>.dock.json`, so if tt-pane stops without quitting, the next start shows the same docked windows again, or puts them back if the dock has been turned off.
+
+The dock is Windows only for now, because it relies on Windows' live window thumbnails.
+
 ## Launch at login
 
 **Settings → General → Launch at login** starts tt-pane in the tray when you sign in. It is on by default, including for existing configurations; turn it off and save to opt out (`launch_at_login = false`). Each tray launch refreshes the entry so it follows the app if you move it:
@@ -157,12 +183,13 @@ tt-pane apply expand-width
 tt-pane apply fill-gap --json
 tt-pane apply focus-right
 tt-pane apply resize-up
+tt-pane apply dock
 ```
 
 Focus commands work on Windows, macOS, and GNOME Wayland. Paired resize commands and hold gestures require Windows. On Windows, `--window HWND` can target an explicit window. `--json` provides structured output for scripting. Use `tt-pane apply --help` for the supported actions and arguments.
 
 ## Shared positioning state
 
-Tray shortcuts, CLI actions, Herdr actions, and GNOME shortcuts share growth state for a configuration file. It is stored in `<config-path>.cycle.json`; a separate `.cycle.lock` serializes concurrent invocations. Deleting the state file resets the cycle. Failed native requests do not advance it.
+Tray shortcuts, CLI actions, Herdr actions, and GNOME shortcuts share growth state for a configuration file. It is stored in `<config-path>.cycle.json`; a separate `.cycle.lock` serializes concurrent invocations, and also guards centered groups (`.centered.json`) and docked windows (`.dock.json`). Deleting the state file resets the cycle. Failed native requests do not advance it.
 
 Windows and macOS store observed bounds. X11 and Wayland store requested bounds because placement is asynchronous; compositor-imposed bounds can restart a cycle.

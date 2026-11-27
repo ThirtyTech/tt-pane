@@ -86,6 +86,10 @@ cargo build --release --no-default-features
 
 Turn on **Settings → Snapping → Animation → Animate snapping** and save to have snaps glide the window into place from wherever it is, snapped or not. Motion follows a fast-slow-fast curve over 160 ms (`[animation] duration_ms`, 50–1000). A window larger than its target shrinks early, so the application relayouts fewer times. Focusing an offset window in a centered group glides it into the center too. It is off by default; tiling moves stay instant. See the [configuration reference](docs-site/src/content/docs/configuration.md#animated-snapping-experimental).
 
+## Experimental dock (Windows)
+
+Turn on **Settings → Dock → Show the dock** and save to add a panel along one edge of the primary monitor (bottom by default; top, left or right, at 5–40% of the screen, 15% by default). Dock the focused window with **Ctrl+Alt+D**, or drag a window onto the panel. Each docked window shows as a live preview, rendered at 1920×1080 off screen. Click a preview to bring that window into the Center position of the remaining screen; focusing any other window sends it back. Ctrl+Alt+D on a docked window undocks it, and turning the dock off or quitting puts every docked window back. It is off by default. See the [configuration reference](docs-site/src/content/docs/configuration.md#dock-experimental--windows).
+
 ## Experimental automatic tiling
 
 Turn on **Settings → Tiling → Tile windows automatically** and save (Windows, macOS, GNOME on Wayland and X11). Dwindle tiles existing and newly opened eligible windows on the current virtual desktop, Space or workspace, with a separate layout per monitor. It is off by default. Closing/minimizing a tile reflows its neighbors; moving or snapping a tile makes it floating. Turning tiling off leaves windows in place. Keep the tray running for automatic updates.
@@ -115,6 +119,7 @@ The new toggle-float, swap-left/down/up/right, toggle-split, split-grow/shrink, 
 | Ctrl+Alt+J | Focus down |
 | Ctrl+Alt+K | Focus up |
 | Ctrl+Alt+L | Focus right |
+| Ctrl+Alt+D | Dock / undock window (Windows; turn the dock on first) |
 
 The digit shortcuts use number-row keys (Digit0 through Digit9). The minus shortcut uses the `-` key; expansion uses the single key normally labeled `=` and `+`. **Shift is not required**. Ctrl+Alt+Shift+= also expands, unless that combination is explicitly assigned to another action. The recorder also supports distinct numpad keys when explicitly assigned. macOS uses the same Control+Option defaults; Command shortcuts can be recorded too. System and application shortcuts can reserve combinations; choose alternatives where needed. Some applications impose minimum window sizes, so requested bounds are not always achievable.
 
