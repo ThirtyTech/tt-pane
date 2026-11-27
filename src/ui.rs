@@ -339,7 +339,7 @@ impl Settings {
         }
         match result {
             Ok(true) => self.message(
-                "Dock: 1–9 or arrows bring out a window · Esc or Enter finishes",
+                "Dock: 1–9 or arrows bring out a window · Shift+arrows move it · Esc or Enter finishes",
                 false,
                 cx,
             ),
@@ -972,7 +972,7 @@ impl Settings {
             .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+. (period).")))
             .when(selected.adjusts_width(), |el| el.child(help("Width change per press is set on the Snapping tab.")))
             .when(selected == Action::Dock, |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Experimental, Windows only. Sends the focused window to the dock panel as a live preview, or takes a docked window back out. Turn the dock on and choose its edge on the Dock tab.")))
-            .when(selected == Action::DockPick, |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Experimental, Windows only. Numbers the dock previews and brings one out: press 1–9 for that preview, or the arrows, H/J/K/L or Tab to step through them, each window coming out as you go. Pressing this shortcut again steps to the next one. Esc, Enter, any other shortcut or 10 seconds idle ends it, leaving the current window out.")))
+            .when(selected == Action::DockPick, |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Experimental, Windows only. Numbers the dock previews and brings one out: press 1–9 for that preview, or the arrows, H/J/K/L or Tab to step through them, each window coming out as you go. Shift with an arrow or H/J/K/L moves the window that's out one place along the dock; dragging a preview along the panel moves it too. Pressing this shortcut again steps to the next one. Esc, Enter, any other shortcut or 10 seconds idle ends it, leaving the current window out.")))
             .child(help("Hover a shortcut to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."));
         div()
             .flex()

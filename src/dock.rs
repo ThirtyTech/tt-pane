@@ -7,7 +7,7 @@
 //! owns the panel and reconciles it with the saved state.
 #![cfg_attr(not(windows), allow(dead_code))]
 use crate::geometry::{Action, Rect};
-pub use crate::platform::dock::{DockEdge, DockFill};
+pub use crate::platform::dock::{DockEdge, DockFill, Toward};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{fs::File, io::Read, io::Write, path::Path};
@@ -41,6 +41,22 @@ pub enum PickStep {
     Previous,
     /// The numbered preview, from 0.
     Slot(usize),
+    /// The neighbouring preview on screen, this way along the edge.
+    Toward(Toward),
+    /// Move the picked window one place this way along the edge.
+    Move(Toward),
+}
+
+impl PickStep {
+    /// An on-screen step as a step through the dock's order, which runs from
+    /// the `fill` end.
+    fn in_order(self, fill: DockFill) -> Self {
+        match self {
+            Self::Toward(toward) if toward.offset(fill) > 0 => Self::Next,
+            Self::Toward(_) => Self::Previous,
+            step => step,
+        }
+    }
 }
 
 /// The member a pick step brings out, counting from `current` (the window out
@@ -59,6 +75,9 @@ pub(crate) fn pick_target(members: &[u64], current: Option<u64>, step: PickStep)
         (PickStep::Previous, None) => count - 1,
         (PickStep::Next, Some(index)) => (index + 1) % count,
         (PickStep::Previous, Some(index)) => (index + count - 1) % count,
+        // Moving keeps the pick; on-screen steps are put in order first.
+        (PickStep::Move(_), _) => return current.filter(|c| members.contains(c)),
+        (PickStep::Toward(_), _) => return None,
     };
     members.get(chosen).copied()
 }
@@ -250,6 +269,27 @@ impl Dock {
 
     pub fn contains(&self, handle: u64) -> bool {
         self.members.iter().any(|m| m.handle == handle)
+    }
+
+    /// Give a member place `to` in the dock, clamped to the end, moving the
+    /// others along. Its preview and parking spot follow at the next
+    /// observation. Returns whether the order changed.
+    pub(crate) fn move_member(&mut self, handle: u64, to: usize) -> bool {
+        let Some(member) = self.members.iter().find(|m| m.handle == handle).cloned() else {
+            return false;
+        };
+        crate::platform::dock::reorder(&mut self.members, &member, to)
+    }
+
+    /// Move a member one place `offset` along the dock's order, stopping at the ends.
+    pub(crate) fn shift_member(&mut self, handle: u64, offset: isize) -> bool {
+        let Some(index) = self.members.iter().position(|m| m.handle == handle) else {
+            return false;
+        };
+        let Some(to) = index.checked_add_signed(offset) else {
+            return false;
+        };
+        to < self.members.len() && self.move_member(handle, to)
     }
 
     /// Forget members whose windows closed, or whose handle now names another window.
@@ -672,6 +712,22 @@ pub(crate) fn pick(config: &crate::config::Config, path: &Path, step: PickStep) 
         "The dock is off. Turn it on in Settings → Dock."
     );
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if let PickStep::Move(toward) = step {
+        // Moving changes the dock, so it waits for the tray's observation.
+        let lock = cycle_lock(&path)?;
+        lock.lock().context("Lock positioning cycle")?;
+        let mut dock = Dock::load(&path)?;
+        if dock.handles().is_empty() {
+            return Ok(false);
+        }
+        let current = platform::pending_dock_pick().or(dock.active());
+        if let Some(handle) = pick_target(&dock.handles(), current, step)
+            && dock.shift_member(handle, toward.offset(config.dock.fill))
+        {
+            dock.save(&path)?;
+        }
+        return Ok(true);
+    }
     // Saves are atomic, so reading needs no lock.
     let dock = Dock::load(&path)?;
     let members = dock.handles();
@@ -679,7 +735,7 @@ pub(crate) fn pick(config: &crate::config::Config, path: &Path, step: PickStep) 
         return Ok(false);
     }
     let current = platform::pending_dock_pick().or(dock.active());
-    if let Some(handle) = pick_target(&members, current, step) {
+    if let Some(handle) = pick_target(&members, current, step.in_order(config.dock.fill)) {
         platform::pick_dock(handle);
     }
     Ok(true)
@@ -740,6 +796,9 @@ pub fn observe(config: &crate::config::Config, path: &Path, drag: &mut DragTrack
         |handle| platform::docked_window(handle).map(|(_, bounds)| bounds),
     );
     let clicks = platform::take_dock_clicks();
+    for (handle, to) in platform::take_dock_moves() {
+        dock.move_member(handle, to);
+    }
     let desktop = native::Desktop::new(config);
     let result = platform::with_snap_animation(config.animation.duration(), || {
         if let Some((handle, start)) = dropped {
@@ -1209,6 +1268,53 @@ mod tests {
         dock.step(&fake, &[slot]).unwrap();
         assert_eq!((dock.active(), fake.bounds(3)), (Some(3), center));
         assert_eq!(fake.bounds(2), parked_at(1));
+    }
+
+    #[test]
+    fn on_screen_steps_and_moves_pick_by_the_fill_end() {
+        let members = [10, 20, 30];
+        let right = PickStep::Toward(Toward::RightOrDown);
+        let left = PickStep::Toward(Toward::LeftOrUp);
+        let pick = |step: PickStep, fill| pick_target(&members, Some(20), step.in_order(fill));
+        assert_eq!(pick(right, DockFill::Start), Some(30));
+        assert_eq!(pick(left, DockFill::Start), Some(10));
+        // Filled from the right, the next window in order sits to the left.
+        assert_eq!(pick(right, DockFill::End), Some(10));
+        assert_eq!(pick(left, DockFill::End), Some(30));
+        // A move keeps the window that's picked, if it's still docked.
+        let shift = PickStep::Move(Toward::RightOrDown);
+        assert_eq!(pick_target(&members, Some(20), shift), Some(20));
+        assert_eq!(pick_target(&members, Some(99), shift), None);
+        assert_eq!(pick_target(&members, None, shift), None);
+    }
+
+    #[test]
+    fn moving_a_member_reorders_the_dock_and_reparks_it_there() {
+        let fake = Fake::with(&[1, 2, 3]);
+        let mut dock = Dock::default();
+        for h in [1, 2, 3] {
+            dock.toggle(&fake, h).unwrap();
+        }
+        dock.step(&fake, &[2]).unwrap();
+        assert!(dock.move_member(3, 0));
+        assert_eq!(dock.handles(), [3, 1, 2]);
+        // Past the end clamps; the window that's out stays out.
+        assert!(dock.move_member(1, 9));
+        assert_eq!(dock.handles(), [3, 2, 1]);
+        assert_eq!(dock.active(), Some(2));
+        assert!(!dock.move_member(99, 0));
+        // One place at a time, stopping at the ends.
+        assert!(!dock.shift_member(3, -1));
+        assert!(!dock.shift_member(1, 1));
+        assert!(dock.shift_member(2, 1));
+        assert_eq!(dock.handles(), [3, 1, 2]);
+        // The next observation parks each docked window at its new place.
+        dock.step(&fake, &[]).unwrap();
+        assert_eq!(
+            (fake.bounds(3), fake.bounds(1)),
+            (parked_at(0), parked_at(1))
+        );
+        assert_eq!(fake.bounds(2), Action::Center.target(ARENA, ARENA));
     }
 
     #[test]

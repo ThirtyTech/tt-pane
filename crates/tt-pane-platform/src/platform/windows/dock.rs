@@ -19,7 +19,11 @@ use windows::{
         Foundation::*,
         Graphics::{Dwm::*, Gdi::*},
         System::LibraryLoader::GetModuleHandleW,
-        UI::{Shell::*, WindowsAndMessaging::*},
+        UI::{
+            Input::KeyboardAndMouse::{ReleaseCapture, SetCapture},
+            Shell::*,
+            WindowsAndMessaging::*,
+        },
     },
     core::{PCWSTR, w},
 };
@@ -60,6 +64,9 @@ struct Shared {
     request: Option<DockRequest>,
     layout: Option<DockLayout>,
     clicks: Vec<u64>,
+    /// Previews dragged to a new place since the last observation: the window
+    /// and its new place in the dock.
+    moves: Vec<(u64, usize)>,
     /// The window dock pick mode chose last, waiting for the next observation.
     picked: Option<u64>,
     /// Dock pick mode is on.
@@ -72,6 +79,7 @@ static SHARED: Mutex<Shared> = Mutex::new(Shared {
     request: None,
     layout: None,
     clicks: Vec::new(),
+    moves: Vec::new(),
     picked: None,
     picking: false,
     window: 0,
@@ -160,6 +168,7 @@ pub fn hide_dock() {
     let mut shared = lock();
     shared.layout = None;
     shared.clicks.clear();
+    shared.moves.clear();
     shared.picked = None;
 }
 
@@ -175,6 +184,12 @@ pub fn take_dock_clicks() -> Vec<u64> {
     let mut clicks = std::mem::take(&mut shared.clicks);
     clicks.extend(shared.picked.take());
     clicks
+}
+
+/// Previews dragged to a new place since the last call, in the order they
+/// were dropped: each window and its new place in the dock.
+pub fn take_dock_moves() -> Vec<(u64, usize)> {
+    std::mem::take(&mut lock().moves)
 }
 
 /// Bring `handle` out of the dock at the next observation, as if its preview
@@ -657,6 +672,11 @@ struct Panel {
     active: Option<u64>,
     highlight: bool,
     numbered: bool,
+    /// The preview pressed with the left button, and where, in screen pixels.
+    pressed: Option<(u64, (i32, i32))>,
+    /// The place a preview being dragged along the panel would drop into.
+    /// The previews are laid out as if it were already there.
+    reorder: Option<usize>,
     /// A click-through window owned by the panel that draws the pick-mode
     /// numbers. Thumbnails cover anything the panel paints, so the numbers
     /// need a window of their own above them.
@@ -681,6 +701,8 @@ impl Default for Panel {
             active: None,
             highlight: false,
             numbered: false,
+            pressed: None,
+            reorder: None,
             overlay: HWND::default(),
         }
     }
@@ -729,11 +751,7 @@ fn run() -> Result<()> {
         RegisterClassW(&overlay_class);
         // Owned by the panel, so it stays above it and goes away with it.
         let overlay = CreateWindowExW(
-            WS_EX_TOOLWINDOW
-                | WS_EX_TOPMOST
-                | WS_EX_NOACTIVATE
-                | WS_EX_LAYERED
-                | WS_EX_TRANSPARENT,
+            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT,
             OVERLAY_CLASS,
             w!("tt-pane dock numbers"),
             WS_POPUP,
@@ -854,7 +872,6 @@ fn reserve(window: HWND, panel: &mut Panel, edge: DockEdge, rect: Option<Rect>) 
         }
     }
 }
-
 
 /// The part of `source` a thumbnail drawn at `width` × `height` shows, relative
 /// to the source window's own rectangle: its visible frame, without the
@@ -985,7 +1002,13 @@ fn update(window: HWND) {
                 SWP_NOACTIVATE | SWP_SHOWWINDOW,
             );
             let rects = dock::slots_from(panel.rect, request.edge, request.fill, count, spacing);
-            panel.slots = request.members.iter().copied().zip(rects.clone()).collect();
+            // A preview being dragged shows where it would drop, the others
+            // making room for it.
+            let mut order = request.members.clone();
+            if let (Some((handle, _)), Some(to)) = (panel.pressed, panel.reorder) {
+                dock::reorder(&mut order, &handle, to);
+            }
+            panel.slots = order.into_iter().zip(rects.clone()).collect();
             panel.drop = request
                 .dragging
                 .then(|| rects.get(docked).copied())
@@ -1058,18 +1081,101 @@ unsafe extern "system" fn procedure(
     unsafe {
         match message {
             WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
-            WM_LBUTTONUP => {
-                let x = (lparam.0 & 0xFFFF) as i16 as i32;
-                let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
-                let _ = PANEL.with(|cell| {
-                    cell.try_borrow().map(|panel| {
-                        let point = (panel.rect.x + x, panel.rect.y + y);
+            WM_LBUTTONDOWN => {
+                let pressed = PANEL.with(|cell| {
+                    cell.try_borrow_mut().ok().and_then(|mut panel| {
+                        let point = screen_point(&panel, lparam);
                         let rects: Vec<Rect> = panel.slots.iter().map(|(_, r)| *r).collect();
-                        if let Some(index) = dock::hit_test(&rects, point) {
-                            lock().clicks.push(panel.slots[index].0);
+                        let index = dock::hit_test(&rects, point)?;
+                        panel.pressed = Some((panel.slots[index].0, point));
+                        panel.reorder = None;
+                        Some(())
+                    })
+                });
+                if pressed.is_some() {
+                    SetCapture(window);
+                }
+                LRESULT(0)
+            }
+            WM_MOUSEMOVE => {
+                // Past the drag threshold, a pressed preview follows the cursor
+                // along the panel, the others making room for it.
+                let moved = PANEL.with(|cell| {
+                    let Ok(mut panel) = cell.try_borrow_mut() else {
+                        return false;
+                    };
+                    let Some((handle, (x, y))) = panel.pressed else {
+                        return false;
+                    };
+                    let point = screen_point(&panel, lparam);
+                    if panel.reorder.is_none()
+                        && point.0.abs_diff(x) <= GetSystemMetrics(SM_CXDRAG).unsigned_abs()
+                        && point.1.abs_diff(y) <= GetSystemMetrics(SM_CYDRAG).unsigned_abs()
+                    {
+                        return false;
+                    }
+                    let edge = lock().request.as_ref().map(|r| r.edge);
+                    let rects: Vec<Rect> = panel.slots.iter().map(|(_, r)| *r).collect();
+                    let to = edge
+                        .and_then(|edge| dock::nearest_slot(&rects, edge, point))
+                        .or_else(|| panel.slots.iter().position(|(h, _)| *h == handle));
+                    let changed = panel.reorder != to;
+                    panel.reorder = to;
+                    changed
+                });
+                if moved {
+                    update(window);
+                }
+                LRESULT(0)
+            }
+            WM_LBUTTONUP => {
+                let ended = PANEL.with(|cell| {
+                    let Ok(mut panel) = cell.try_borrow_mut() else {
+                        return None;
+                    };
+                    let point = screen_point(&panel, lparam);
+                    let (handle, _) = panel.pressed.take()?;
+                    Some(match panel.reorder.take() {
+                        // Dropped on the panel: the dock takes the new order.
+                        Some(to) if dock::contains(panel.rect, point) => {
+                            let mut shared = lock();
+                            shared.moves.push((handle, to));
+                            // Keep showing the new order until the tray's
+                            // observation sends it back.
+                            if let Some(request) = &mut shared.request {
+                                dock::reorder(&mut request.members, &handle, to);
+                            }
+                            true
+                        }
+                        // Dropped elsewhere: nothing changes.
+                        Some(_) => true,
+                        None => {
+                            let rects: Vec<Rect> = panel.slots.iter().map(|(_, r)| *r).collect();
+                            if let Some(index) = dock::hit_test(&rects, point) {
+                                lock().clicks.push(panel.slots[index].0);
+                            }
+                            false
                         }
                     })
                 });
+                let _ = ReleaseCapture();
+                if ended == Some(true) {
+                    update(window);
+                }
+                LRESULT(0)
+            }
+            WM_CAPTURECHANGED => {
+                // Capture lost mid-drag, to another window: put the previews back.
+                let cancelled = PANEL.with(|cell| {
+                    cell.try_borrow_mut().is_ok_and(|mut panel| {
+                        let dragging = panel.reorder.take().is_some();
+                        panel.pressed = None;
+                        dragging
+                    })
+                });
+                if cancelled {
+                    update(window);
+                }
                 LRESULT(0)
             }
             WM_PAINT => {
@@ -1130,6 +1236,14 @@ unsafe extern "system" fn procedure(
     }
 }
 
+/// A mouse message's point in screen pixels. Captured messages can lie
+/// outside the panel, so the coordinates are signed.
+fn screen_point(panel: &Panel, lparam: LPARAM) -> (i32, i32) {
+    let x = (lparam.0 & 0xFFFF) as i16 as i32;
+    let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+    (panel.rect.x + x, panel.rect.y + y)
+}
+
 /// The height of a pick-mode number centred on a preview.
 fn number_height(slot: Rect) -> i32 {
     (slot.height * 2 / 5).clamp(18, 120)
@@ -1183,9 +1297,11 @@ unsafe fn paint_panel(dc: HDC, panel: &Panel) {
     }
 }
 
-/// The preview of the window that's out in the arena, if it has one.
+/// The preview to outline: one being dragged, or else that of the window
+/// that's out in the arena, if it has one.
 fn active_preview(panel: &Panel) -> Option<Rect> {
-    let active = panel.active?;
+    let dragged = panel.pressed.filter(|_| panel.reorder.is_some());
+    let active = dragged.map(|(handle, _)| handle).or(panel.active)?;
     panel
         .previews
         .iter()
@@ -1342,4 +1458,3 @@ unsafe fn paint_numbers(dc: HDC, panel: &Panel) {
         let _ = DeleteObject(fill.into());
     }
 }
-

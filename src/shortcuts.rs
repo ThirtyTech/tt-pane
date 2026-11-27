@@ -1,4 +1,9 @@
-use crate::{config::Config, dock::PickStep, geometry::Action, platform};
+use crate::{
+    config::Config,
+    dock::{PickStep, Toward},
+    geometry::Action,
+    platform,
+};
 use anyhow::Result;
 use global_hotkey::{
     GlobalHotKeyManager, HotKeyState,
@@ -175,28 +180,28 @@ fn pick_keys() -> Vec<(HotKey, Option<PickStep>)> {
         .enumerate()
         .chain(NUMPAD.into_iter().enumerate())
         .map(|(slot, code)| (plain(code), Some(PickStep::Slot(slot))));
+    // Arrows and H/J/K/L go by what's on screen; with Shift they move the
+    // picked window that way instead.
+    const BACK: [Code; 4] = [Code::ArrowLeft, Code::ArrowUp, Code::KeyH, Code::KeyK];
+    const FORTH: [Code; 4] = [Code::ArrowRight, Code::ArrowDown, Code::KeyL, Code::KeyJ];
+    let shift = |code| HotKey::new(Some(Modifiers::SHIFT), code);
+    let directions = [(BACK, Toward::LeftOrUp), (FORTH, Toward::RightOrDown)]
+        .into_iter()
+        .flat_map(|(codes, toward)| {
+            codes.into_iter().flat_map(move |code| {
+                [
+                    (plain(code), Some(PickStep::Toward(toward))),
+                    (shift(code), Some(PickStep::Move(toward))),
+                ]
+            })
+        });
     let steps = [
-        (Code::ArrowLeft, Some(PickStep::Previous)),
-        (Code::ArrowUp, Some(PickStep::Previous)),
-        (Code::KeyH, Some(PickStep::Previous)),
-        (Code::KeyK, Some(PickStep::Previous)),
-        (Code::ArrowRight, Some(PickStep::Next)),
-        (Code::ArrowDown, Some(PickStep::Next)),
-        (Code::KeyL, Some(PickStep::Next)),
-        (Code::KeyJ, Some(PickStep::Next)),
-        (Code::Tab, Some(PickStep::Next)),
-        (Code::Escape, None),
-        (Code::Enter, None),
-    ]
-    .into_iter()
-    .map(|(code, step)| (plain(code), step));
-    slots
-        .chain(steps)
-        .chain([(
-            HotKey::new(Some(Modifiers::SHIFT), Code::Tab),
-            Some(PickStep::Previous),
-        )])
-        .collect()
+        (plain(Code::Tab), Some(PickStep::Next)),
+        (shift(Code::Tab), Some(PickStep::Previous)),
+        (plain(Code::Escape), None),
+        (plain(Code::Enter), None),
+    ];
+    slots.chain(directions).chain(steps).collect()
 }
 
 struct PickMode {
@@ -839,10 +844,10 @@ mod tests {
             (Code::Digit1, PickStep::Slot(0)),
             (Code::Digit9, PickStep::Slot(8)),
             (Code::Numpad3, PickStep::Slot(2)),
-            (Code::ArrowLeft, PickStep::Previous),
-            (Code::KeyK, PickStep::Previous),
-            (Code::ArrowRight, PickStep::Next),
-            (Code::KeyJ, PickStep::Next),
+            (Code::ArrowLeft, PickStep::Toward(Toward::LeftOrUp)),
+            (Code::KeyK, PickStep::Toward(Toward::LeftOrUp)),
+            (Code::ArrowRight, PickStep::Toward(Toward::RightOrDown)),
+            (Code::KeyJ, PickStep::Toward(Toward::RightOrDown)),
             (Code::Tab, PickStep::Next),
         ] {
             assert_eq!(
@@ -854,11 +859,25 @@ mod tests {
                 None
             );
         }
-        let back_tab = HotKey::new(Some(Modifiers::SHIFT), Code::Tab).id();
+        let shifted = |code| HotKey::new(Some(Modifiers::SHIFT), code).id();
         assert_eq!(
-            pick(shortcuts.event(back_tab, HotKeyState::Pressed, start)),
+            pick(shortcuts.event(shifted(Code::Tab), HotKeyState::Pressed, start)),
             PickStep::Previous
         );
+        // Shift with an arrow or H/J/K/L moves the picked window.
+        for (code, toward) in [
+            (Code::ArrowLeft, Toward::LeftOrUp),
+            (Code::ArrowUp, Toward::LeftOrUp),
+            (Code::KeyH, Toward::LeftOrUp),
+            (Code::ArrowRight, Toward::RightOrDown),
+            (Code::ArrowDown, Toward::RightOrDown),
+            (Code::KeyJ, Toward::RightOrDown),
+        ] {
+            assert_eq!(
+                pick(shortcuts.event(shifted(code), HotKeyState::Pressed, start)),
+                PickStep::Move(toward)
+            );
+        }
         // Pressing the shortcut again steps on instead of ending the mode.
         assert_eq!(
             pick(shortcuts.event(toggle, HotKeyState::Pressed, start)),

@@ -519,6 +519,50 @@ pub fn hit_test(slots: &[Rect], point: (i32, i32)) -> Option<usize> {
     slots.iter().position(|slot| contains(*slot, point))
 }
 
+/// The slot a preview dragged to `point` would take: the one whose middle is
+/// nearest along the edge, so a drag past the ends takes the first or last.
+pub fn nearest_slot(slots: &[Rect], edge: DockEdge, (x, y): (i32, i32)) -> Option<usize> {
+    let distance = |slot: &Rect| {
+        if edge.horizontal() {
+            (slot.x + slot.width / 2).abs_diff(x)
+        } else {
+            (slot.y + slot.height / 2).abs_diff(y)
+        }
+    };
+    (0..slots.len()).min_by_key(|&index| distance(&slots[index]))
+}
+
+/// Move `item` to place `to` in `order`, clamped to the end. Returns whether
+/// the order changed; an item that isn't there leaves it as it is.
+pub fn reorder<T: PartialEq>(order: &mut Vec<T>, item: &T, to: usize) -> bool {
+    let Some(from) = order.iter().position(|o| o == item) else {
+        return false;
+    };
+    let moved = order.remove(from);
+    let to = to.min(order.len());
+    order.insert(to, moved);
+    from != to
+}
+
+/// Which way along the edge a key points on screen: left or up, or right or
+/// down. Arrows across the edge count as the nearest one along it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Toward {
+    LeftOrUp,
+    RightOrDown,
+}
+
+impl Toward {
+    /// How many places in fill order one step this way moves: slots count from
+    /// the fill end, so with `End` they run right to left, or bottom to top.
+    pub fn offset(self, fill: DockFill) -> isize {
+        match (self, fill) {
+            (Self::RightOrDown, DockFill::Start) | (Self::LeftOrUp, DockFill::End) => 1,
+            (Self::LeftOrUp, DockFill::Start) | (Self::RightOrDown, DockFill::End) => -1,
+        }
+    }
+}
+
 pub fn contains(rect: Rect, (x, y): (i32, i32)) -> bool {
     x >= rect.x && y >= rect.y && x < rect.x + rect.width && y < rect.y + rect.height
 }
@@ -528,7 +572,10 @@ mod tests {
     use super::*;
 
     /// The old fixed padding, so most layouts keep their earlier numbers.
-    const SPACING: Spacing = Spacing { edge: 12, between: 12 };
+    const SPACING: Spacing = Spacing {
+        edge: 12,
+        between: 12,
+    };
 
     const MONITOR: Rect = Rect {
         x: 0,
@@ -669,8 +716,14 @@ mod tests {
         let two = occupied(strip, DockEdge::Top, DockFill::End, 2, SPACING);
         assert_eq!((two.x, two.width), (2560 - 504, 504));
         // Too many for the edge: the whole strip is used and slots shrink.
-        assert_eq!(occupied(strip, DockEdge::Top, DockFill::Start, 20, SPACING), strip);
-        assert_eq!(occupied(strip, DockEdge::Top, DockFill::Start, 0, SPACING).width, 0);
+        assert_eq!(
+            occupied(strip, DockEdge::Top, DockFill::Start, 20, SPACING),
+            strip
+        );
+        assert_eq!(
+            occupied(strip, DockEdge::Top, DockFill::Start, 0, SPACING).width,
+            0
+        );
         // Only a panel that needs the whole edge reserves it.
         assert!(!fills(strip, DockEdge::Top, 1, SPACING));
         assert!(!fills(strip, DockEdge::Top, 10, SPACING));
@@ -688,7 +741,10 @@ mod tests {
         assert_eq!(slots[1].x, two.x + 12);
         assert_eq!(slots[0].height, 132);
         assert_eq!(slots[0].y, 12);
-        assert_eq!(slots_from(one, DockEdge::Top, DockFill::Start, 1, SPACING)[0].x, 12);
+        assert_eq!(
+            slots_from(one, DockEdge::Top, DockFill::Start, 1, SPACING)[0].x,
+            12
+        );
     }
 
     #[test]
@@ -957,11 +1013,11 @@ mod tests {
             ..wide
         };
         let shrunk = shrink_to(bottom, DockEdge::Bottom, &[shown]);
-        assert_eq!((shrunk.y, shrunk.y + shrunk.height), (1944 + 24, 1944 + 216));
-        let side = Rect {
-            x: 3456,
-            ..area
-        };
+        assert_eq!(
+            (shrunk.y, shrunk.y + shrunk.height),
+            (1944 + 24, 1944 + 216)
+        );
+        let side = Rect { x: 3456, ..area };
         let tall = Rect {
             x: 3456 + 100,
             ..wide
@@ -976,8 +1032,17 @@ mod tests {
         // Two windows inset by 8 each sit 16 apart.
         assert_eq!(snap_gap(8), 16);
         assert_eq!(snap_gap(0), 0);
-        let spacing = Spacing::from_gaps(crate::geometry::SnapGaps { inner: 5, outer: 20 });
-        assert_eq!(spacing, Spacing { edge: 20, between: 10 });
+        let spacing = Spacing::from_gaps(crate::geometry::SnapGaps {
+            inner: 5,
+            outer: 20,
+        });
+        assert_eq!(
+            spacing,
+            Spacing {
+                edge: 20,
+                between: 10
+            }
+        );
         // Previews sit the outer gap from the screen edge and corner, and the
         // spacing between snapped windows apart.
         let strip = panel_rect(MONITOR, DockEdge::Top, 15);
@@ -996,5 +1061,45 @@ mod tests {
         assert_eq!(hit_test(&two, inside), Some(1));
         assert_eq!(hit_test(&two, (panel.x + 1, panel.y + 1)), None);
         assert!(slots(panel, DockEdge::Bottom, 0, SPACING).is_empty());
+    }
+
+    #[test]
+    fn a_dragged_preview_takes_the_nearest_slot_along_the_edge() {
+        let panel = panel_rect(MONITOR, DockEdge::Bottom, 15);
+        let three = slots(panel, DockEdge::Bottom, 3, SPACING);
+        let middle = |r: Rect| (r.x + r.width / 2, r.y + r.height / 2);
+        let (x, y) = middle(three[1]);
+        assert_eq!(nearest_slot(&three, DockEdge::Bottom, (x, y)), Some(1));
+        // Off the panel, or past either end, still picks along the edge.
+        assert_eq!(nearest_slot(&three, DockEdge::Bottom, (x, 0)), Some(1));
+        assert_eq!(nearest_slot(&three, DockEdge::Bottom, (-500, y)), Some(0));
+        assert_eq!(nearest_slot(&three, DockEdge::Bottom, (99_999, y)), Some(2));
+        let side = panel_rect(MONITOR, DockEdge::Left, 15);
+        let down = slots(side, DockEdge::Left, 3, SPACING);
+        let (x, y) = middle(down[2]);
+        assert_eq!(nearest_slot(&down, DockEdge::Left, (x + 900, y)), Some(2));
+        assert_eq!(nearest_slot(&[], DockEdge::Left, (x, y)), None);
+    }
+
+    #[test]
+    fn reordering_moves_one_item_and_clamps_to_the_end() {
+        let mut order = vec![1, 2, 3, 4];
+        assert!(reorder(&mut order, &1, 2));
+        assert_eq!(order, [2, 3, 1, 4]);
+        assert!(reorder(&mut order, &4, 0));
+        assert_eq!(order, [4, 2, 3, 1]);
+        assert!(reorder(&mut order, &2, 99));
+        assert_eq!(order, [4, 3, 1, 2]);
+        assert!(!reorder(&mut order, &3, 1));
+        assert!(!reorder(&mut order, &9, 0));
+        assert_eq!(order, [4, 3, 1, 2]);
+    }
+
+    #[test]
+    fn on_screen_steps_follow_the_fill_end() {
+        assert_eq!(Toward::RightOrDown.offset(DockFill::Start), 1);
+        assert_eq!(Toward::LeftOrUp.offset(DockFill::Start), -1);
+        assert_eq!(Toward::RightOrDown.offset(DockFill::End), -1);
+        assert_eq!(Toward::LeftOrUp.offset(DockFill::End), 1);
     }
 }
