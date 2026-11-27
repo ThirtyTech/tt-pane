@@ -286,6 +286,10 @@ impl Settings {
     }
 
     fn invoke(&mut self, invocation: crate::shortcuts::Invocation, cx: &mut Context<Self>) {
+        if invocation.action == Action::DockPick {
+            self.pick_docked(invocation.pick.unwrap_or(crate::dock::PickStep::Start), cx);
+            return;
+        }
         if invocation.action == Action::ResizeMode {
             // Shortcuts holds the glow for as long as the mode lasts.
             let individual = self
@@ -315,6 +319,31 @@ impl Settings {
                 false,
                 cx,
             ),
+            Err(e) => self.message(format!("{e:#}"), true, cx),
+        }
+    }
+
+    /// One key of dock pick mode. The tray's next dock observation brings the
+    /// chosen window out; an empty dock or an error ends the mode.
+    fn pick_docked(&mut self, step: crate::dock::PickStep, cx: &mut Context<Self>) {
+        #[cfg(windows)]
+        let result = crate::dock::pick(&self.active, &self.path, step);
+        #[cfg(not(windows))]
+        let result: anyhow::Result<bool> = {
+            let _ = step;
+            Err(anyhow::anyhow!("The dock currently supports Windows only"))
+        };
+        let ended = !matches!(result, Ok(true));
+        if ended && let Some(shortcuts) = &mut self.shortcuts {
+            shortcuts.leave_pick();
+        }
+        match result {
+            Ok(true) => self.message(
+                "Dock: 1–9 or arrows bring out a window · Esc or Enter finishes",
+                false,
+                cx,
+            ),
+            Ok(false) => self.message("Nothing in the dock to pick", false, cx),
             Err(e) => self.message(format!("{e:#}"), true, cx),
         }
     }
@@ -637,7 +666,7 @@ fn binding_group(action: Action) -> &'static str {
         "Focus"
     } else if action.is_tiling() {
         "Tiling"
-    } else if action == Action::Dock {
+    } else if matches!(action, Action::Dock | Action::DockPick) {
         "Dock"
     } else {
         "Size"
@@ -943,6 +972,7 @@ impl Settings {
             .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+. (period).")))
             .when(selected.adjusts_width(), |el| el.child(help("Width change per press is set on the Snapping tab.")))
             .when(selected == Action::Dock, |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Experimental, Windows only. Sends the focused window to the dock panel as a live preview, or takes a docked window back out. Turn the dock on and choose its edge on the Dock tab.")))
+            .when(selected == Action::DockPick, |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Experimental, Windows only. Numbers the dock previews and brings one out: press 1–9 for that preview, or the arrows, H/J/K/L or Tab to step through them, each window coming out as you go. Pressing this shortcut again steps to the next one. Esc, Enter, any other shortcut or 10 seconds idle ends it, leaving the current window out.")))
             .child(help("Hover a shortcut to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."));
         div()
             .flex()

@@ -39,6 +39,8 @@ pub struct DockRequest {
     pub dragging: bool,
     /// The dragged window is over the panel.
     pub highlight: bool,
+    /// Dock pick mode is on: number the first nine previews.
+    pub numbered: bool,
 }
 
 /// Where the panel and its slots ended up, in physical screen pixels. There is
@@ -56,6 +58,10 @@ struct Shared {
     request: Option<DockRequest>,
     layout: Option<DockLayout>,
     clicks: Vec<u64>,
+    /// The window dock pick mode chose last, waiting for the next observation.
+    picked: Option<u64>,
+    /// Dock pick mode is on.
+    picking: bool,
     window: usize,
     thread: Option<JoinHandle<()>>,
 }
@@ -64,6 +70,8 @@ static SHARED: Mutex<Shared> = Mutex::new(Shared {
     request: None,
     layout: None,
     clicks: Vec::new(),
+    picked: None,
+    picking: false,
     window: 0,
     thread: None,
 });
@@ -145,6 +153,7 @@ pub fn hide_dock() {
     let mut shared = lock();
     shared.layout = None;
     shared.clicks.clear();
+    shared.picked = None;
 }
 
 /// The panel and slot rectangles last laid out, while the panel is shown.
@@ -152,9 +161,53 @@ pub fn dock_layout() -> Option<DockLayout> {
     lock().layout.clone()
 }
 
-/// Windows whose previews were clicked since the last call.
+/// Windows whose previews were clicked since the last call, then the one dock
+/// pick mode chose, which counts as the latest click.
 pub fn take_dock_clicks() -> Vec<u64> {
-    std::mem::take(&mut lock().clicks)
+    let mut shared = lock();
+    let mut clicks = std::mem::take(&mut shared.clicks);
+    clicks.extend(shared.picked.take());
+    clicks
+}
+
+/// Bring `handle` out of the dock at the next observation, as if its preview
+/// were clicked. A newer pick replaces one still waiting, so stepping quickly
+/// through the dock skips the windows in between.
+pub fn pick_dock(handle: u64) {
+    lock().picked = Some(handle);
+}
+
+/// The pick still waiting for the next observation.
+pub fn pending_dock_pick() -> Option<u64> {
+    lock().picked
+}
+
+/// Turn the numbered previews of dock pick mode on or off, right away.
+pub fn set_dock_picking(on: bool) {
+    let mut shared = lock();
+    if shared.picking == on {
+        return;
+    }
+    shared.picking = on;
+    if let Some(request) = &mut shared.request {
+        request.numbered = on;
+        if shared.window != 0 {
+            // SAFETY: Posting carries no pointers; a stale HWND is rejected by Win32.
+            unsafe {
+                let _ = PostMessageW(
+                    Some(HWND(shared.window as *mut _)),
+                    WM_DOCK_UPDATE,
+                    WPARAM(0),
+                    LPARAM(0),
+                );
+            }
+        }
+    }
+}
+
+/// Whether dock pick mode is on.
+pub fn dock_picking() -> bool {
+    lock().picking
 }
 
 /// Whether a dock panel exists in any process of this session.
@@ -465,6 +518,7 @@ struct Panel {
     drop: Option<Rect>,
     active: Option<u64>,
     highlight: bool,
+    numbered: bool,
 }
 
 impl Default for Panel {
@@ -483,6 +537,7 @@ impl Default for Panel {
             drop: None,
             active: None,
             highlight: false,
+            numbered: false,
         }
     }
 }
@@ -736,6 +791,7 @@ fn update(window: HWND) {
                 .flatten();
             panel.active = request.active;
             panel.highlight = request.highlight;
+            panel.numbered = request.numbered;
             for &(handle, slot) in &panel.slots {
                 let thumb = match panel.thumbs.get(&handle) {
                     Some(thumb) => *thumb,
@@ -747,7 +803,10 @@ fn update(window: HWND) {
                         _ => continue,
                     },
                 };
-                let inner = crate::geometry::inset_rect(slot, 3, 3, 3, 3);
+                // Thumbnails cover whatever is painted beneath them, so a
+                // numbered slot gives its number a band of its own.
+                let band = if panel.numbered { badge_band(slot) } else { 0 };
+                let inner = crate::geometry::inset_rect(slot, 3, 3 + band, 3, 3);
                 let destination = fit(
                     inner,
                     DwmQueryThumbnailSourceSize(thumb).unwrap_or_default(),
@@ -863,6 +922,11 @@ unsafe extern "system" fn procedure(
     }
 }
 
+/// The height of the band above a numbered preview that holds its number.
+fn badge_band(slot: Rect) -> u32 {
+    (slot.height / 5).clamp(14, 32) as u32
+}
+
 /// # Safety
 /// `dc` is the panel's paint DC on its own thread.
 unsafe fn paint_panel(dc: HDC, panel: &Panel) {
@@ -895,6 +959,9 @@ unsafe fn paint_panel(dc: HDC, panel: &Panel) {
                 }
             }
         }
+        if panel.numbered {
+            paint_numbers(dc, panel, &local);
+        }
         if let Some(rect) = panel.drop {
             let mut frame = local(rect);
             let brush = if panel.highlight { accent } else { slot };
@@ -913,6 +980,51 @@ unsafe fn paint_panel(dc: HDC, panel: &Panel) {
         let _ = DeleteObject(background.into());
         let _ = DeleteObject(slot.into());
         let _ = DeleteObject(accent.into());
+    }
+}
+
+/// # Safety
+/// `dc` is the panel's paint DC on its own thread.
+unsafe fn paint_numbers(dc: HDC, panel: &Panel, local: &dyn Fn(Rect) -> RECT) {
+    // SAFETY: The font is selected into this DC and deleted before returning;
+    // the text and rects are live locals.
+    unsafe {
+        let height = panel
+            .slots
+            .first()
+            .map_or(14, |(_, slot)| badge_band(*slot) as i32 - 2);
+        let font = CreateFontW(
+            height,
+            0,
+            0,
+            0,
+            FW_SEMIBOLD.0 as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY,
+            0,
+            w!("Segoe UI"),
+        );
+        let previous = SelectObject(dc, font.into());
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, ACCENT);
+        for (index, &(_, rect)) in panel.slots.iter().take(9).enumerate() {
+            let mut band = local(crate::geometry::inset_rect(rect, 3, 3, 3, 0));
+            band.bottom = band.top + badge_band(rect) as i32;
+            let mut text: Vec<u16> = (index + 1).to_string().encode_utf16().collect();
+            DrawTextW(
+                dc,
+                &mut text,
+                &mut band,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+            );
+        }
+        SelectObject(dc, previous);
+        let _ = DeleteObject(font.into());
     }
 }
 

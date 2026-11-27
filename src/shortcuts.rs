@@ -1,4 +1,4 @@
-use crate::{config::Config, geometry::Action, platform};
+use crate::{config::Config, dock::PickStep, geometry::Action, platform};
 use anyhow::Result;
 use global_hotkey::{
     GlobalHotKeyManager, HotKeyState,
@@ -39,6 +39,8 @@ pub struct Invocation {
     pub action: Action,
     pub window: Option<u64>,
     pub include_hidden: bool,
+    /// What a dock pick mode key asks for.
+    pub pick: Option<PickStep>,
 }
 
 struct HeldFocus {
@@ -78,6 +80,7 @@ impl FocusGesture {
                 action,
                 window,
                 include_hidden: false,
+                pick: None,
             });
         }
         // Ignore native repeat presses without restarting the hold timer.
@@ -89,6 +92,7 @@ impl FocusGesture {
                     action,
                     window,
                     include_hidden: false,
+                    pick: None,
                 },
                 fired: false,
             });
@@ -109,8 +113,8 @@ impl FocusGesture {
     }
 }
 
-/// Resize mode ends by itself after this long without a key, so plain letters
-/// are never held hostage if the user walks away.
+/// Resize and dock pick modes end by themselves after this long without a key,
+/// so plain keys are never held hostage if the user walks away.
 const RESIZE_IDLE: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Plain keys grabbed only while resize mode is on. None ends the mode, and
@@ -140,6 +144,66 @@ struct ResizeMode {
     individual: bool,
 }
 
+/// Plain keys grabbed only while dock pick mode is on. Digits pick a numbered
+/// preview, the arrows and H/J/K/L step through the dock, and None ends the mode.
+fn pick_keys() -> Vec<(HotKey, Option<PickStep>)> {
+    const DIGITS: [Code; 9] = [
+        Code::Digit1,
+        Code::Digit2,
+        Code::Digit3,
+        Code::Digit4,
+        Code::Digit5,
+        Code::Digit6,
+        Code::Digit7,
+        Code::Digit8,
+        Code::Digit9,
+    ];
+    const NUMPAD: [Code; 9] = [
+        Code::Numpad1,
+        Code::Numpad2,
+        Code::Numpad3,
+        Code::Numpad4,
+        Code::Numpad5,
+        Code::Numpad6,
+        Code::Numpad7,
+        Code::Numpad8,
+        Code::Numpad9,
+    ];
+    let plain = |code| HotKey::new(None, code);
+    let slots = DIGITS
+        .into_iter()
+        .enumerate()
+        .chain(NUMPAD.into_iter().enumerate())
+        .map(|(slot, code)| (plain(code), Some(PickStep::Slot(slot))));
+    let steps = [
+        (Code::ArrowLeft, Some(PickStep::Previous)),
+        (Code::ArrowUp, Some(PickStep::Previous)),
+        (Code::KeyH, Some(PickStep::Previous)),
+        (Code::KeyK, Some(PickStep::Previous)),
+        (Code::ArrowRight, Some(PickStep::Next)),
+        (Code::ArrowDown, Some(PickStep::Next)),
+        (Code::KeyL, Some(PickStep::Next)),
+        (Code::KeyJ, Some(PickStep::Next)),
+        (Code::Tab, Some(PickStep::Next)),
+        (Code::Escape, None),
+        (Code::Enter, None),
+    ]
+    .into_iter()
+    .map(|(code, step)| (plain(code), step));
+    slots
+        .chain(steps)
+        .chain([(
+            HotKey::new(Some(Modifiers::SHIFT), Code::Tab),
+            Some(PickStep::Previous),
+        )])
+        .collect()
+}
+
+struct PickMode {
+    keys: Vec<(HotKey, Option<PickStep>)>,
+    last: std::time::Instant,
+}
+
 /// In individual mode the divider moves become sizes of the window alone.
 fn individual(action: Action) -> Action {
     match action {
@@ -157,6 +221,7 @@ pub struct Shortcuts {
     registered: Vec<(HotKey, Action)>,
     gesture: FocusGesture,
     resize: Option<ResizeMode>,
+    pick: Option<PickMode>,
     /// Glow color held around the focused window during resize mode.
     glow: Option<u32>,
 }
@@ -172,6 +237,7 @@ impl Shortcuts {
             registered: Vec::new(),
             gesture: FocusGesture::default(),
             resize: None,
+            pick: None,
             glow: None,
         })
     }
@@ -184,17 +250,51 @@ impl Shortcuts {
         self.resize.as_ref().is_some_and(|mode| mode.individual)
     }
 
-    fn enter_resize(&mut self, now: std::time::Instant) {
-        let keys = resize_keys()
-            .into_iter()
-            // A user binding on the same key keeps working as configured.
+    pub fn picking(&self) -> bool {
+        self.pick.is_some()
+    }
+
+    /// Register a mode's plain keys. A user binding on the same key keeps
+    /// working as configured, and a key another application owns is skipped.
+    fn grab<T>(&self, keys: Vec<(HotKey, T)>) -> Vec<(HotKey, T)> {
+        keys.into_iter()
             .filter(|(key, _)| !self.registered.iter().any(|(own, _)| own == key))
             .filter(|(key, _)| {
                 self.manager
                     .as_ref()
                     .is_none_or(|manager| manager.register(*key).is_ok())
             })
-            .collect();
+            .collect()
+    }
+
+    fn release<T>(&self, keys: Vec<(HotKey, T)>) {
+        if let Some(manager) = &self.manager {
+            for (key, _) in keys {
+                let _ = manager.unregister(key);
+            }
+        }
+    }
+
+    fn enter_pick(&mut self, now: std::time::Instant) {
+        self.leave_resize();
+        let keys = self.grab(pick_keys());
+        self.pick = Some(PickMode { keys, last: now });
+        #[cfg(windows)]
+        platform::set_dock_picking(true);
+    }
+
+    /// End dock pick mode, such as when the dock turns out to be empty.
+    pub fn leave_pick(&mut self) {
+        if let Some(mode) = self.pick.take() {
+            self.release(mode.keys);
+            #[cfg(windows)]
+            platform::set_dock_picking(false);
+        }
+    }
+
+    fn enter_resize(&mut self, now: std::time::Instant) {
+        self.leave_pick();
+        let keys = self.grab(resize_keys());
         self.resize = Some(ResizeMode {
             keys,
             last: now,
@@ -209,14 +309,12 @@ impl Shortcuts {
     }
 
     fn leave_resize(&mut self) {
-        if let Some(mode) = self.resize.take()
-            && let Some(manager) = &self.manager
-        {
-            for (key, _) in mode.keys {
-                let _ = manager.unregister(key);
-            }
+        if let Some(mode) = self.resize.take() {
             #[cfg(windows)]
-            platform::release_focus_glow();
+            if self.manager.is_some() {
+                platform::release_focus_glow();
+            }
+            self.release(mode.keys);
         }
     }
 
@@ -237,6 +335,26 @@ impl Shortcuts {
         let window = platform::foreground_handle();
         #[cfg(not(windows))]
         let window = None;
+        if let Some(mode) = &mut self.pick
+            && let Some(&(_, step)) = mode.keys.iter().find(|(key, _)| key.id() == id)
+        {
+            if state != HotKeyState::Pressed {
+                return None;
+            }
+            mode.last = now;
+            return match step {
+                Some(step) => Some(Invocation {
+                    action: Action::DockPick,
+                    window,
+                    include_hidden: false,
+                    pick: Some(step),
+                }),
+                None => {
+                    self.leave_pick();
+                    None
+                }
+            };
+        }
         if let Some(mode) = &mut self.resize
             && let Some(&(_, step)) = mode.keys.iter().find(|(key, _)| key.id() == id)
         {
@@ -251,6 +369,7 @@ impl Shortcuts {
                         action: Action::ResizeMode,
                         window,
                         include_hidden: false,
+                        pick: None,
                     })
                 }
                 Some(action) => Some(Invocation {
@@ -261,6 +380,7 @@ impl Shortcuts {
                     },
                     window,
                     include_hidden: false,
+                    pick: None,
                 }),
                 None => {
                     self.leave_resize();
@@ -282,11 +402,35 @@ impl Shortcuts {
                 action,
                 window,
                 include_hidden: false,
+                pick: None,
             });
         }
-        // Any other shortcut ends resize mode before doing its own thing.
+        if action == Action::DockPick {
+            if state != HotKeyState::Pressed {
+                return None;
+            }
+            // Pressing it again steps to the next docked window.
+            let step = match &mut self.pick {
+                Some(mode) => {
+                    mode.last = now;
+                    PickStep::Next
+                }
+                None => {
+                    self.enter_pick(now);
+                    PickStep::Start
+                }
+            };
+            return Some(Invocation {
+                action,
+                window,
+                include_hidden: false,
+                pick: Some(step),
+            });
+        }
+        // Any other shortcut ends a mode before doing its own thing.
         if state == HotKeyState::Pressed {
             self.leave_resize();
+            self.leave_pick();
         }
         if cfg!(windows) {
             self.gesture.event(id, action, state, now, window)
@@ -295,6 +439,7 @@ impl Shortcuts {
                 action,
                 window: None,
                 include_hidden: false,
+                pick: None,
             })
         }
     }
@@ -307,6 +452,13 @@ impl Shortcuts {
         {
             self.leave_resize();
         }
+        if self
+            .pick
+            .as_ref()
+            .is_some_and(|mode| now.duration_since(mode.last) >= RESIZE_IDLE)
+        {
+            self.leave_pick();
+        }
         self.gesture.poll(now)
     }
 
@@ -314,6 +466,7 @@ impl Shortcuts {
     /// returned, so one conflict never disables the other shortcuts.
     pub fn replace(&mut self, config: &Config) -> Result<Vec<(Action, HotKey)>> {
         self.leave_resize();
+        self.leave_pick();
         self.glow = config
             .focus
             .glow_enabled
@@ -379,6 +532,7 @@ pub fn taken_message(config: &Config, taken: &[(Action, HotKey)]) -> Option<Stri
 impl Drop for Shortcuts {
     fn drop(&mut self) {
         self.leave_resize();
+        self.leave_pick();
         if let Some(manager) = &self.manager {
             for (key, _) in &self.registered {
                 let _ = manager.unregister(*key);
@@ -476,7 +630,8 @@ mod tests {
                 Some(Invocation {
                     action,
                     window: Some(42),
-                    include_hidden: false
+                    include_hidden: false,
+                    pick: None
                 })
             );
             assert_eq!(gesture.poll(start + HOLD_DURATION), None);
@@ -493,7 +648,8 @@ mod tests {
                 Some(Invocation {
                     action,
                     window: Some(42),
-                    include_hidden: true
+                    include_hidden: true,
+                    pick: None
                 })
             );
             assert_eq!(gesture.poll(start + HOLD_DURATION * 2), None);
@@ -534,7 +690,8 @@ mod tests {
             Some(Invocation {
                 action: Action::FocusDown,
                 window: Some(42),
-                include_hidden: false
+                include_hidden: false,
+                pick: None
             })
         );
         assert_eq!(gesture.poll(start + HOLD_DURATION), None);
@@ -543,6 +700,7 @@ mod tests {
             registered: Vec::new(),
             gesture,
             resize: None,
+            pick: None,
             glow: None,
         };
         shortcuts
@@ -561,6 +719,7 @@ mod tests {
             registered: configured_hotkeys(&config).unwrap(),
             gesture: FocusGesture::default(),
             resize: None,
+            pick: None,
             glow: None,
         };
         let id = |code| HotKey::new(None, code).id();
@@ -637,6 +796,122 @@ mod tests {
         assert!(shortcuts.resizing());
         shortcuts.poll(start + RESIZE_IDLE);
         assert!(!shortcuts.resizing());
+    }
+
+    #[test]
+    fn dock_pick_mode_maps_digits_and_steps_until_escape_another_shortcut_or_idle() {
+        use std::time::Instant;
+        let config = Config::default();
+        let mut shortcuts = Shortcuts {
+            manager: None,
+            registered: configured_hotkeys(&config).unwrap(),
+            gesture: FocusGesture::default(),
+            resize: None,
+            pick: None,
+            glow: None,
+        };
+        let id = |code| HotKey::new(None, code).id();
+        let pick = |invocation: Option<Invocation>| {
+            let invocation = invocation.unwrap();
+            assert_eq!(invocation.action, Action::DockPick);
+            invocation.pick.unwrap()
+        };
+        let start = Instant::now();
+        // Digits mean nothing until the mode starts.
+        assert_eq!(
+            shortcuts.event(id(Code::Digit1), HotKeyState::Pressed, start),
+            None
+        );
+        let Some(toggle) = shortcuts
+            .registered
+            .iter()
+            .find(|(_, a)| *a == Action::DockPick)
+            .map(|(key, _)| key.id())
+        else {
+            return; // No default outside Windows.
+        };
+        assert_eq!(
+            pick(shortcuts.event(toggle, HotKeyState::Pressed, start)),
+            PickStep::Start
+        );
+        assert!(shortcuts.picking());
+        for (code, step) in [
+            (Code::Digit1, PickStep::Slot(0)),
+            (Code::Digit9, PickStep::Slot(8)),
+            (Code::Numpad3, PickStep::Slot(2)),
+            (Code::ArrowLeft, PickStep::Previous),
+            (Code::KeyK, PickStep::Previous),
+            (Code::ArrowRight, PickStep::Next),
+            (Code::KeyJ, PickStep::Next),
+            (Code::Tab, PickStep::Next),
+        ] {
+            assert_eq!(
+                pick(shortcuts.event(id(code), HotKeyState::Pressed, start)),
+                step
+            );
+            assert_eq!(
+                shortcuts.event(id(code), HotKeyState::Released, start),
+                None
+            );
+        }
+        let back_tab = HotKey::new(Some(Modifiers::SHIFT), Code::Tab).id();
+        assert_eq!(
+            pick(shortcuts.event(back_tab, HotKeyState::Pressed, start)),
+            PickStep::Previous
+        );
+        // Pressing the shortcut again steps on instead of ending the mode.
+        assert_eq!(
+            pick(shortcuts.event(toggle, HotKeyState::Pressed, start)),
+            PickStep::Next
+        );
+        assert!(shortcuts.picking());
+        shortcuts.event(id(Code::Escape), HotKeyState::Pressed, start);
+        assert!(!shortcuts.picking());
+        shortcuts.event(toggle, HotKeyState::Pressed, start);
+        shortcuts.event(id(Code::Enter), HotKeyState::Pressed, start);
+        assert!(!shortcuts.picking());
+        // Another shortcut ends it and does its own thing.
+        let other = shortcuts
+            .registered
+            .iter()
+            .find(|(_, a)| *a == Action::Left)
+            .unwrap()
+            .0
+            .id();
+        shortcuts.event(toggle, HotKeyState::Pressed, start);
+        assert_eq!(
+            shortcuts
+                .event(other, HotKeyState::Pressed, start)
+                .unwrap()
+                .action,
+            Action::Left
+        );
+        assert!(!shortcuts.picking());
+        // Resize mode and pick mode replace each other.
+        if let Some(resize) = shortcuts
+            .registered
+            .iter()
+            .find(|(_, a)| *a == Action::ResizeMode)
+            .map(|(key, _)| key.id())
+        {
+            shortcuts.event(toggle, HotKeyState::Pressed, start);
+            shortcuts.event(resize, HotKeyState::Pressed, start);
+            assert!(shortcuts.resizing() && !shortcuts.picking());
+            shortcuts.event(toggle, HotKeyState::Pressed, start);
+            assert!(!shortcuts.resizing() && shortcuts.picking());
+            shortcuts.event(id(Code::Escape), HotKeyState::Pressed, start);
+        }
+        // Idling ends it; each key restarts the clock.
+        shortcuts.event(toggle, HotKeyState::Pressed, start);
+        shortcuts.event(
+            id(Code::Digit2),
+            HotKeyState::Pressed,
+            start + RESIZE_IDLE / 2,
+        );
+        shortcuts.poll(start + RESIZE_IDLE);
+        assert!(shortcuts.picking());
+        shortcuts.poll(start + RESIZE_IDLE * 2);
+        assert!(!shortcuts.picking());
     }
 
     #[test]

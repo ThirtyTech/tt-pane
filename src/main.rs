@@ -83,7 +83,7 @@ fn run(cli: Cli) -> Result<()> {
             println!(
                 "{}",
                 serde_json::json!({"schema_version": 1, "actions": Action::ALL.into_iter()
-                .filter(|a| *a != Action::ResizeMode)
+                .filter(|a| !a.is_mode())
                 .map(|a| serde_json::json!({"id": a.name(), "title": a.label()})).collect::<Vec<_>>()})
             );
             return Ok(());

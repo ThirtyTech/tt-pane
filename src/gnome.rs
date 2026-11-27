@@ -158,7 +158,7 @@ fn extension_running() -> bool {
 /// for nothing. Tiling actions run as one-shot `tt-pane apply` processes that
 /// share the tray's state under the cycle lock.
 fn supported(action: Action) -> bool {
-    !action.adjusts_pair() && action != Action::ResizeMode
+    !action.adjusts_pair() && !action.is_mode()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

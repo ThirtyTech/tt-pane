@@ -142,6 +142,9 @@ pub enum Action {
     SizeTaller,
     /// Move the window into the dock panel, or take a docked one back out.
     Dock,
+    /// A shortcut-only mode: digits, arrows or H/J/K/L bring docked windows out.
+    #[value(skip)]
+    DockPick,
 }
 
 impl Action {
@@ -158,7 +161,7 @@ impl Action {
         Self::Maximize,
     ];
 
-    pub const ALL: [Self; 36] = [
+    pub const ALL: [Self; 37] = [
         Self::Left,
         Self::Right,
         Self::Top,
@@ -195,6 +198,7 @@ impl Action {
         Self::SizeShorter,
         Self::SizeTaller,
         Self::Dock,
+        Self::DockPick,
     ];
 
     pub const TILING: [Self; 11] = [
@@ -220,6 +224,12 @@ impl Action {
             self,
             Self::FocusLeft | Self::FocusDown | Self::FocusUp | Self::FocusRight
         )
+    }
+
+    /// Shortcut-only modes that grab plain keys while they last. They have no
+    /// one-shot `tt-pane apply` form.
+    pub fn is_mode(self) -> bool {
+        matches!(self, Self::ResizeMode | Self::DockPick)
     }
 
     pub fn adjusts_pair(self) -> bool {
@@ -302,7 +312,8 @@ impl Action {
             | Self::SizeWider
             | Self::SizeShorter
             | Self::SizeTaller
-            | Self::Dock => None,
+            | Self::Dock
+            | Self::DockPick => None,
         }
     }
 
@@ -343,6 +354,7 @@ impl Action {
             Self::SizeShorter => "size-shorter",
             Self::SizeTaller => "size-taller",
             Self::Dock => "dock",
+            Self::DockPick => "dock-pick",
 
             Self::ResizeDown => "resize-down",
         }
@@ -385,6 +397,7 @@ impl Action {
             Self::SizeShorter => "Make window shorter",
             Self::SizeTaller => "Make window taller",
             Self::Dock => "Dock / undock window",
+            Self::DockPick => "Pick a docked window",
 
             Self::ResizeDown => "Move shared boundary down",
         }
@@ -419,7 +432,8 @@ impl Action {
             | Self::SizeWider
             | Self::SizeShorter
             | Self::SizeTaller
-            | Self::Dock => return current,
+            | Self::Dock
+            | Self::DockPick => return current,
             Self::ShrinkWidth | Self::ExpandWidth => {
                 return current.adjust_width(
                     area,

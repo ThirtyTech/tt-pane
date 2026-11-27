@@ -323,7 +323,8 @@ impl Default for Config {
 }
 
 // Windows-only defaults. Tiling uses Hyprland-style Super+Shift; the dock
-// (Windows only) uses Ctrl+Alt+D beside the positioning keys. Tiling is Windows-only, and
+// (Windows only) uses Ctrl+Alt+D beside the positioning keys, and Ctrl+Alt+Shift+D
+// to pick a docked window. Tiling is Windows-only, and
 // Super+Shift letters belong to the shell on GNOME and to apps (Cmd) on macOS.
 // Windows reserves Win+Shift+S/T/P/R/X, so the split toggle uses O (orientation)
 // and toggle-tiling uses G (grid). Resize mode uses E, since R is taken.
@@ -341,6 +342,7 @@ fn tiling_default_shortcut(action: Action) -> Option<&'static str> {
         Action::ToggleTiling => "Shift+Super+g",
         Action::ResizeMode => "Shift+Super+e",
         Action::Dock => "Ctrl+Alt+d",
+        Action::DockPick => "Ctrl+Alt+Shift+d",
         _ => return None,
     })
 }
@@ -404,6 +406,7 @@ impl Config {
                 || action.is_tiling()
                 || action == Action::ResizeMode
                 || action == Action::Dock
+                || action == Action::DockPick
         });
         config.validate()?;
         Ok((config, warnings))
@@ -1130,6 +1133,18 @@ duration_ms = 5000
         assert_eq!(
             dock.map(|b| b.shortcut.as_str()),
             Some(if cfg!(windows) { "Ctrl+Alt+d" } else { "" })
+        );
+        let pick = config
+            .bindings
+            .iter()
+            .find(|b| b.action == Action::DockPick);
+        assert_eq!(
+            pick.map(|b| b.shortcut.as_str()),
+            Some(if cfg!(windows) {
+                "Ctrl+Alt+Shift+d"
+            } else {
+                ""
+            })
         );
         let mut invalid = Config::default();
         invalid.dock.size_percent = 4;

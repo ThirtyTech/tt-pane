@@ -153,8 +153,9 @@ pub use windows::set_window_icon;
 #[cfg(windows)]
 pub use windows::{
     DockLayout, DockRequest, activate_handle, cursor_position, dock_layout, dock_monitor,
-    dock_running, docked_window, hide_dock, is_minimized, moving_window, park_target, park_window,
-    place_window, set_docked, show_dock, stow_window, take_dock_clicks,
+    dock_picking, dock_running, docked_window, hide_dock, is_minimized, moving_window, park_target,
+    park_window, pending_dock_pick, pick_dock, place_window, set_dock_picking, set_docked,
+    show_dock, stow_window, take_dock_clicks,
 };
 #[cfg(windows)]
 pub use windows::{

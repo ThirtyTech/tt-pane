@@ -20,6 +20,37 @@ struct Member {
     restore: Rect,
 }
 
+/// A key pressed in dock pick mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickStep {
+    /// The mode just started: keep the window that's out, or bring out the first.
+    Start,
+    Next,
+    Previous,
+    /// The numbered preview, from 0.
+    Slot(usize),
+}
+
+/// The member a pick step brings out, counting from `current` (the window out
+/// of the dock, or the one picked last). Steps wrap around the ends. `None`
+/// when there's nothing to bring out: an empty dock or an unnumbered slot.
+pub(crate) fn pick_target(members: &[u64], current: Option<u64>, step: PickStep) -> Option<u64> {
+    let count = members.len();
+    if count == 0 {
+        return None;
+    }
+    let index = current.and_then(|c| members.iter().position(|&m| m == c));
+    let chosen = match (step, index) {
+        (PickStep::Slot(slot), _) => slot,
+        (PickStep::Start, Some(index)) => index,
+        (PickStep::Start | PickStep::Next, None) => 0,
+        (PickStep::Previous, None) => count - 1,
+        (PickStep::Next, Some(index)) => (index + 1) % count,
+        (PickStep::Previous, Some(index)) => (index + count - 1) % count,
+    };
+    members.get(chosen).copied()
+}
+
 /// A snapped window cut back so it stops short of the panel.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Squeezed {
@@ -547,6 +578,30 @@ pub(crate) fn toggle(
     result
 }
 
+/// One key of dock pick mode: choose the window it names, which the tray
+/// brings out at its next observation. `Ok(false)` when the dock is empty, so
+/// the mode should end.
+#[cfg(windows)]
+pub(crate) fn pick(config: &crate::config::Config, path: &Path, step: PickStep) -> Result<bool> {
+    use crate::platform;
+    anyhow::ensure!(
+        config.dock.enabled,
+        "The dock is off. Turn it on in Settings → Dock."
+    );
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    // Saves are atomic, so reading needs no lock.
+    let dock = Dock::load(&path)?;
+    let members = dock.handles();
+    if members.is_empty() {
+        return Ok(false);
+    }
+    let current = platform::pending_dock_pick().or(dock.active());
+    if let Some(handle) = pick_target(&members, current, step) {
+        platform::pick_dock(handle);
+    }
+    Ok(true)
+}
+
 /// Positioning a docked window with another action takes it out of the dock.
 /// The caller holds the cycle lock.
 #[cfg(windows)]
@@ -631,6 +686,7 @@ pub fn observe(config: &crate::config::Config, path: &Path, drag: &mut DragTrack
         active: dock.active(),
         dragging: drag.dragging,
         highlight: drag.over,
+        numbered: platform::dock_picking(),
     })?;
     result
 }
@@ -1013,6 +1069,47 @@ mod tests {
         dock.step(&fake, &[]).unwrap();
         assert_eq!(fake.bounds(1), original);
         assert!(dock.minimized.is_empty());
+    }
+
+    #[test]
+    fn pick_steps_wrap_and_start_from_the_window_out_of_the_dock() {
+        let members = [10, 20, 30];
+        assert_eq!(pick_target(&[], None, PickStep::Start), None);
+        assert_eq!(pick_target(&members, None, PickStep::Start), Some(10));
+        assert_eq!(pick_target(&members, Some(20), PickStep::Start), Some(20));
+        assert_eq!(pick_target(&members, None, PickStep::Next), Some(10));
+        assert_eq!(pick_target(&members, None, PickStep::Previous), Some(30));
+        assert_eq!(pick_target(&members, Some(20), PickStep::Next), Some(30));
+        assert_eq!(pick_target(&members, Some(30), PickStep::Next), Some(10));
+        assert_eq!(
+            pick_target(&members, Some(10), PickStep::Previous),
+            Some(30)
+        );
+        assert_eq!(pick_target(&members, Some(10), PickStep::Slot(2)), Some(30));
+        assert_eq!(pick_target(&members, Some(10), PickStep::Slot(5)), None);
+        // A current window that has left the dock counts as none.
+        assert_eq!(pick_target(&members, Some(99), PickStep::Next), Some(10));
+    }
+
+    #[test]
+    fn stepping_through_picks_brings_each_out_and_returns_the_last() {
+        let fake = Fake::with(&[1, 2, 3]);
+        let mut dock = Dock::default();
+        for h in [1, 2, 3] {
+            dock.toggle(&fake, h).unwrap();
+        }
+        let center = Action::Center.target(ARENA, ARENA);
+        let first = pick_target(&dock.handles(), dock.active(), PickStep::Start).unwrap();
+        dock.step(&fake, &[first]).unwrap();
+        assert_eq!((dock.active(), fake.bounds(1)), (Some(1), center));
+        let next = pick_target(&dock.handles(), dock.active(), PickStep::Next).unwrap();
+        dock.step(&fake, &[next]).unwrap();
+        assert_eq!((dock.active(), fake.bounds(2)), (Some(2), center));
+        assert_eq!(fake.bounds(1), PARKED);
+        let slot = pick_target(&dock.handles(), dock.active(), PickStep::Slot(2)).unwrap();
+        dock.step(&fake, &[slot]).unwrap();
+        assert_eq!((dock.active(), fake.bounds(3)), (Some(3), center));
+        assert_eq!(fake.bounds(2), PARKED);
     }
 
     #[test]

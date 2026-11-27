@@ -361,8 +361,9 @@ fn apply_inner(
 ) -> Result<()> {
     config.validate()?;
     ensure!(
-        action != Action::ResizeMode,
-        "Resize mode is a shortcut mode; press its shortcut while tt-pane is running"
+        !action.is_mode(),
+        "{} is a shortcut mode; press its shortcut while tt-pane is running",
+        action.label()
     );
     platform::set_snap_gaps(config.gaps);
     let visibility = if include_hidden {
