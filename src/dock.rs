@@ -210,8 +210,8 @@ impl Dock {
     /// One observation: clicked previews, then focus changes.
     pub(crate) fn step(&mut self, native: &dyn Native, clicks: &[u64]) -> Result<()> {
         self.prune(native);
-        // Docked windows that aren't at the park spot, because the edge or fill
-        // changed or an older build parked them, move there now.
+        // Docked windows that aren't at the park spot, such as ones an older
+        // build parked elsewhere, move there now.
         for member in &self.members {
             if Some(member.handle) != self.active
                 && native
@@ -308,17 +308,15 @@ mod native {
     use super::*;
     use crate::platform;
 
-    /// The live desktop, parking windows at the configured edge's fill corner.
+    /// The live desktop. The edge keeps arena windows clear of the panel.
     pub(super) struct Desktop {
         pub edge: DockEdge,
-        pub fill: DockFill,
     }
 
     impl Desktop {
         pub fn new(config: &crate::config::Config) -> Self {
             Self {
                 edge: config.dock.edge,
-                fill: config.dock.fill,
             }
         }
     }
@@ -331,14 +329,13 @@ mod native {
             platform::set_docked(handle, docked)
         }
         fn park(&self, handle: u64) -> Result<()> {
-            platform::park_window(handle, self.edge, self.fill).map(|_| ())
+            platform::park_window(handle).map(|_| ())
         }
         fn parked(&self, bounds: Rect) -> bool {
             // Position only: an application may refuse the 1080p size, and
             // comparing sizes would re-park it on every observation.
-            platform::park_target(self.edge, self.fill).is_ok_and(|target| {
-                target.x.abs_diff(bounds.x) <= 2 && target.y.abs_diff(bounds.y) <= 2
-            })
+            let target = platform::park_target();
+            target.x.abs_diff(bounds.x) <= 2 && target.y.abs_diff(bounds.y) <= 2
         }
         fn place(&self, handle: u64, target: Rect, from: Option<Rect>) -> Result<()> {
             if let (Some(from), Some(_)) = (from, platform::snap_animation()) {
@@ -418,10 +415,9 @@ pub(crate) fn release(path: &Path, window: Option<u64>) -> Result<()> {
     };
     let mut dock = Dock::load(path)?;
     if dock.contains(handle) {
-        // Releasing never parks, so the edge and fill don't matter.
+        // Releasing never parks or enters the arena, so the edge doesn't matter.
         let desktop = native::Desktop {
             edge: DockEdge::default(),
-            fill: DockFill::default(),
         };
         dock.release(&desktop, handle)?;
         dock.save(path)?;
@@ -493,10 +489,9 @@ pub fn shutdown(path: &Path) -> Result<()> {
         let lock = cycle_lock(&path)?;
         lock.lock().context("Lock positioning cycle")?;
         let mut dock = Dock::load(&path)?;
-        // Restoring never parks, so the edge and fill don't matter.
+        // Restoring never parks or enters the arena, so the edge doesn't matter.
         let desktop = native::Desktop {
             edge: DockEdge::default(),
-            fill: DockFill::default(),
         };
         let result = dock.restore_all(&desktop);
         dock.save(&path)?;

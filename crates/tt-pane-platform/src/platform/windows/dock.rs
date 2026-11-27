@@ -216,45 +216,9 @@ pub fn place_window(handle: u64, target: Rect) -> Result<Rect> {
     super::apply(Some(handle), &mut |_, _, _| Ok(target))
 }
 
-/// Every monitor's bounds, in physical pixels.
-fn monitor_rects() -> Vec<Rect> {
-    unsafe extern "system" fn collect(
-        _monitor: HMONITOR,
-        _dc: HDC,
-        rect: *mut RECT,
-        data: LPARAM,
-    ) -> windows::core::BOOL {
-        // SAFETY: EnumDisplayMonitors passes a valid rect and our live Vec synchronously.
-        unsafe { (*(data.0 as *mut Vec<Rect>)).push(from_rect(*rect)) };
-        true.into()
-    }
-    let _dpi = DpiContext::enter();
-    let mut rects = Vec::new();
-    // SAFETY: The callback only borrows `rects` for the duration of this call.
-    unsafe {
-        let _ = EnumDisplayMonitors(
-            None,
-            None,
-            Some(collect),
-            LPARAM(&mut rects as *mut _ as isize),
-        );
-    }
-    rects
-}
-
-/// Where docked windows are parked at the preview's source size: mostly off
-/// the dock's monitor at the panel's fill corner, so Windows still treats them
-/// as on screen and keeps drawing them. Past every monitor if that corner
-/// touches another display.
-pub fn park_target(edge: DockEdge, fill: DockFill) -> Result<Rect> {
-    let (monitor, _) = dock_monitor()?;
-    let others: Vec<Rect> = monitor_rects()
-        .into_iter()
-        .filter(|rect| *rect != monitor)
-        .collect();
-    if let Some(rect) = dock::park_rect(monitor, edge, fill, &others) {
-        return Ok(rect);
-    }
+/// Where docked windows are parked: past every monitor, at the preview's
+/// source size, where DWM keeps composing them.
+pub fn park_target() -> Rect {
     let _dpi = DpiContext::enter();
     // SAFETY: GetSystemMetrics takes no pointers.
     let (x, y) = unsafe {
@@ -263,18 +227,38 @@ pub fn park_target(edge: DockEdge, fill: DockFill) -> Result<Rect> {
             GetSystemMetrics(SM_YVIRTUALSCREEN),
         )
     };
-    Ok(Rect {
+    Rect {
         x,
         y,
         width: dock::PREVIEW_SOURCE.0,
         height: dock::PREVIEW_SOURCE.1,
-    })
+    }
 }
 
-/// Park a docked window at `park_target`.
-pub fn park_window(handle: u64, edge: DockEdge, fill: DockFill) -> Result<Rect> {
-    let target = park_target(edge, fill)?;
-    crate::with_snap_animation(None, || place_window(handle, target))
+/// How long a window gets to lay itself out at 1080p before it is parked.
+/// Explorer needed about 150 ms to fill its file list.
+const STAGING_SETTLE: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Park a docked window. A window that isn't 1080p yet grows to it on the dock
+/// monitor first and gets a moment to redraw, because some applications
+/// (Explorer) leave content they lay out off screen blank. Moving an already
+/// laid-out window off screen keeps its content.
+pub fn park_window(handle: u64) -> Result<Rect> {
+    let target = park_target();
+    crate::with_snap_animation(None, || {
+        let current = docked_window(handle).map(|(_, bounds)| bounds);
+        let sized = current.is_some_and(|bounds| {
+            bounds.width.abs_diff(target.width) <= 2 && bounds.height.abs_diff(target.height) <= 2
+        });
+        if let Some(current) = current
+            && !sized
+        {
+            let (_, work) = dock_monitor()?;
+            place_window(handle, dock::staging_rect(current, work))?;
+            std::thread::sleep(STAGING_SETTLE);
+        }
+        place_window(handle, target)
+    })
 }
 
 /// Bring a window to the foreground and wait until Windows confirms it.

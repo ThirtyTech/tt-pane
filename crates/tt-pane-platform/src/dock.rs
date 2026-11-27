@@ -246,44 +246,20 @@ pub fn slots_from(panel: Rect, edge: DockEdge, fill: DockFill, count: usize) -> 
     slots
 }
 
-/// How much of a parked window stays on the monitor, in each direction.
-pub const PARK_SLIVER: i32 = 8;
-
-/// Where to park a docked window: nearly off the monitor past the panel's fill
-/// corner, with a `PARK_SLIVER` square left on screen under the panel (or the
-/// taskbar). Applications such as Explorer stop drawing a window that is on no
-/// monitor at all, which freezes its preview. `None` when that spot would show
-/// part of the window on one of the `others` monitors.
-pub fn park_rect(monitor: Rect, edge: DockEdge, fill: DockFill, others: &[Rect]) -> Option<Rect> {
-    let (w, h) = PREVIEW_SOURCE;
-    // The monitor corner at the fill end of the edge.
-    let (right, bottom) = match (edge, fill) {
-        (DockEdge::Top, DockFill::Start) | (DockEdge::Left, DockFill::Start) => (false, false),
-        (DockEdge::Top, DockFill::End) | (DockEdge::Right, DockFill::Start) => (true, false),
-        (DockEdge::Bottom, DockFill::Start) | (DockEdge::Left, DockFill::End) => (false, true),
-        (DockEdge::Bottom, DockFill::End) | (DockEdge::Right, DockFill::End) => (true, true),
-    };
-    let rect = Rect {
-        x: if right {
-            monitor.x + monitor.width - PARK_SLIVER
-        } else {
-            monitor.x - w + PARK_SLIVER
-        },
-        y: if bottom {
-            monitor.y + monitor.height - PARK_SLIVER
-        } else {
-            monitor.y - h + PARK_SLIVER
-        },
-        width: w,
-        height: h,
-    };
-    let overlaps = |o: &Rect| {
-        rect.x < o.x + o.width
-            && o.x < rect.x + rect.width
-            && rect.y < o.y + o.height
-            && o.y < rect.y + rect.height
-    };
-    (!others.iter().any(overlaps)).then_some(rect)
+/// Where a window grows to the preview's source size before it is parked: at
+/// its own top-left corner, pulled back inside `area` so all of it is on
+/// screen. Explorer, for one, only lays out the part of its file list that is
+/// on a monitor, so a window resized off screen keeps a blank list.
+pub fn staging_rect(current: Rect, area: Rect) -> Rect {
+    let (width, height) = PREVIEW_SOURCE;
+    let clamp =
+        |pos: i32, start: i32, room: i32, size: i32| pos.min(start + room - size).max(start);
+    Rect {
+        x: clamp(current.x, area.x, area.width, width),
+        y: clamp(current.y, area.y, area.height, height),
+        width,
+        height,
+    }
 }
 
 /// The index of the slot containing `point`.
@@ -477,26 +453,38 @@ mod tests {
     }
 
     #[test]
-    fn parked_windows_keep_a_covered_corner_on_the_monitor() {
-        let park = park_rect(MONITOR, DockEdge::Bottom, DockFill::Start, &[]).unwrap();
-        assert_eq!((park.x, park.y), (8 - 1920, 1440 - 8));
-        assert_eq!((park.width, park.height), PREVIEW_SOURCE);
-        let park = park_rect(MONITOR, DockEdge::Right, DockFill::End, &[]).unwrap();
-        assert_eq!((park.x, park.y), (2560 - 8, 1440 - 8));
-        let park = park_rect(MONITOR, DockEdge::Top, DockFill::Start, &[]).unwrap();
-        assert_eq!((park.x, park.y), (8 - 1920, 8 - 1080));
-        // A monitor beside that corner would show the window: park elsewhere.
-        let left = Rect {
-            x: -1920,
-            y: 1000,
-            width: 1920,
-            height: 1080,
+    fn windows_grow_to_1080p_where_all_of_them_is_on_screen() {
+        let current = Rect {
+            x: 2000,
+            y: 900,
+            width: 800,
+            height: 600,
+        };
+        // Pulled back so the whole 1920x1080 fits on the 2560x1440 monitor.
+        assert_eq!(
+            staging_rect(current, MONITOR),
+            Rect {
+                x: 640,
+                y: 360,
+                width: 1920,
+                height: 1080
+            }
+        );
+        let near_origin = Rect {
+            x: 100,
+            y: 50,
+            ..current
         };
         assert_eq!(
-            park_rect(MONITOR, DockEdge::Bottom, DockFill::Start, &[left]),
-            None
+            (
+                staging_rect(near_origin, MONITOR).x,
+                staging_rect(near_origin, MONITOR).y
+            ),
+            (100, 50)
         );
-        assert!(park_rect(MONITOR, DockEdge::Bottom, DockFill::End, &[left]).is_some());
+        // A window off to the left still stages on the monitor.
+        let off = Rect { x: -900, ..current };
+        assert_eq!(staging_rect(off, MONITOR).x, 0);
     }
 
     #[test]
