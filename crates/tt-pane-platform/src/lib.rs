@@ -4,6 +4,7 @@
 #![deny(clippy::undocumented_unsafe_blocks)]
 
 pub mod animation;
+pub mod dock;
 pub mod geometry;
 mod platform;
 pub mod tiling;

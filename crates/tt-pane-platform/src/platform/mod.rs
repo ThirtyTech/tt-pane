@@ -152,6 +152,12 @@ pub use macos::{
 pub use windows::set_window_icon;
 #[cfg(windows)]
 pub use windows::{
+    DockLayout, DockRequest, activate_handle, cursor_position, dock_layout, dock_monitor,
+    dock_running, docked_window, hide_dock, moving_window, park_window, place_window, set_docked,
+    show_dock, take_dock_clicks,
+};
+#[cfg(windows)]
+pub use windows::{
     WindowSnapshot, choose_glow_color, focus_snapshot, foreground_handle, hold_focus_glow,
     move_snapshot, release_focus_glow, show_focus_glow, wait_for_focus_glow, window_identity,
     window_snapshot,
@@ -160,6 +166,11 @@ pub use windows::{
 pub use windows::{attach_parent_console, ctrl_c_requested, quit_on_ctrl_c};
 #[cfg(windows)]
 pub use windows::{move_tiling_window, tiling_desktop};
+
+/// The dock needs live window thumbnails, which only Windows provides so far.
+pub fn dock_supported() -> bool {
+    cfg!(windows)
+}
 
 /// GNOME cannot tell a minimized window from a closed one, so unavailable
 /// members are released as before. macOS has no centered groups.

@@ -140,6 +140,8 @@ pub enum Action {
     SizeWider,
     SizeShorter,
     SizeTaller,
+    /// Move the window into the dock panel, or take a docked one back out.
+    Dock,
 }
 
 impl Action {
@@ -156,7 +158,7 @@ impl Action {
         Self::Maximize,
     ];
 
-    pub const ALL: [Self; 35] = [
+    pub const ALL: [Self; 36] = [
         Self::Left,
         Self::Right,
         Self::Top,
@@ -192,6 +194,7 @@ impl Action {
         Self::SizeWider,
         Self::SizeShorter,
         Self::SizeTaller,
+        Self::Dock,
     ];
 
     pub const TILING: [Self; 11] = [
@@ -298,7 +301,8 @@ impl Action {
             | Self::SizeNarrower
             | Self::SizeWider
             | Self::SizeShorter
-            | Self::SizeTaller => None,
+            | Self::SizeTaller
+            | Self::Dock => None,
         }
     }
 
@@ -338,6 +342,7 @@ impl Action {
             Self::SizeWider => "size-wider",
             Self::SizeShorter => "size-shorter",
             Self::SizeTaller => "size-taller",
+            Self::Dock => "dock",
 
             Self::ResizeDown => "resize-down",
         }
@@ -379,6 +384,7 @@ impl Action {
             Self::SizeWider => "Make window wider",
             Self::SizeShorter => "Make window shorter",
             Self::SizeTaller => "Make window taller",
+            Self::Dock => "Dock / undock window",
 
             Self::ResizeDown => "Move shared boundary down",
         }
@@ -412,7 +418,8 @@ impl Action {
             | Self::SizeNarrower
             | Self::SizeWider
             | Self::SizeShorter
-            | Self::SizeTaller => return current,
+            | Self::SizeTaller
+            | Self::Dock => return current,
             Self::ShrinkWidth | Self::ExpandWidth => {
                 return current.adjust_width(
                     area,

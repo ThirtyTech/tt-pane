@@ -1,7 +1,13 @@
 use crate::geometry::Rect;
+mod dock;
 mod glow;
 mod tiling;
 use anyhow::{Result, ensure};
+pub use dock::{
+    DockLayout, DockRequest, activate_handle, cursor_position, dock_layout, dock_monitor,
+    dock_running, docked_window, hide_dock, moving_window, park_window, place_window, set_docked,
+    show_dock, take_dock_clicks,
+};
 pub use glow::{
     choose_glow_color, hold_focus_glow, release_focus_glow, show_focus_glow, wait_for_focus_glow,
 };
@@ -47,6 +53,7 @@ pub fn window_snapshot(handle: u64) -> Result<Option<WindowSnapshot>> {
             || IsZoomed(window).as_bool()
             || window == GetDesktopWindow()
             || window == GetShellWindow()
+            || dock::is_docked(window)
             || (GetWindowLongPtrW(window, GWL_EXSTYLE) as u32
                 & (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0))
                 != 0
@@ -658,6 +665,7 @@ fn focus_candidates(
         let mut entered = Vec::new();
         for window in windows {
             if glow::is_glow(window)
+                || dock::is_docked(window)
                 || window == GetDesktopWindow()
                 || window == GetShellWindow()
                 || !IsWindowVisible(window).as_bool()

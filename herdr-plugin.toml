@@ -211,3 +211,9 @@ id = "size-taller"
 title = "Make window taller"
 contexts = ["workspace"]
 command = ["./target/plugin/release/tt-pane", "apply", "size-taller", "--json"]
+
+[[actions]]
+id = "dock"
+title = "Dock / undock window"
+contexts = ["workspace"]
+command = ["./target/plugin/release/tt-pane", "apply", "dock", "--json"]

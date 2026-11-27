@@ -41,6 +41,8 @@ pub struct Config {
     pub focus: Focus,
     #[serde(default)]
     pub animation: Animation,
+    #[serde(default)]
+    pub dock: Dock,
     pub bindings: Vec<Binding>,
 }
 
@@ -167,6 +169,30 @@ impl Animation {
     }
 }
 
+/// Experimental dock panel with live window previews (Windows). Off by default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Dock {
+    pub enabled: bool,
+    pub edge: crate::dock::DockEdge,
+    /// The panel's share of the monitor's height (top, bottom) or width (sides).
+    pub size_percent: u32,
+}
+
+impl Default for Dock {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            edge: crate::dock::DockEdge::Bottom,
+            size_percent: 15,
+        }
+    }
+}
+
+impl Dock {
+    pub const SIZE_RANGE: std::ops::RangeInclusive<u32> = 5..=40;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "FocusInput")]
 pub struct Focus {
@@ -277,6 +303,7 @@ impl Default for Config {
             width_resize: WidthResize::default(),
             focus: Focus::default(),
             animation: Animation::default(),
+            dock: Dock::default(),
             bindings: Action::ALL
                 .into_iter()
                 .zip(keys.into_iter().map(Some).chain(std::iter::repeat(None)))
@@ -292,7 +319,8 @@ impl Default for Config {
     }
 }
 
-// Hyprland-style Super+Shift defaults. Windows only: tiling is Windows-only, and
+// Windows-only defaults. Tiling uses Hyprland-style Super+Shift; the dock
+// (Windows only) uses Ctrl+Alt+D beside the positioning keys. Tiling is Windows-only, and
 // Super+Shift letters belong to the shell on GNOME and to apps (Cmd) on macOS.
 // Windows reserves Win+Shift+S/T/P/R/X, so the split toggle uses O (orientation)
 // and toggle-tiling uses G (grid). Resize mode uses E, since R is taken.
@@ -309,6 +337,7 @@ fn tiling_default_shortcut(action: Action) -> Option<&'static str> {
         Action::ToggleSplit => "Shift+Super+o",
         Action::ToggleTiling => "Shift+Super+g",
         Action::ResizeMode => "Shift+Super+e",
+        Action::Dock => "Ctrl+Alt+d",
         _ => return None,
     })
 }
@@ -368,7 +397,10 @@ impl Config {
         config.normalize_letter_keys();
         config.repair(&mut warnings);
         config.add_missing_bindings(|action| {
-            action.focuses() || action.is_tiling() || action == Action::ResizeMode
+            action.focuses()
+                || action.is_tiling()
+                || action == Action::ResizeMode
+                || action == Action::Dock
         });
         config.validate()?;
         Ok((config, warnings))
@@ -397,6 +429,12 @@ impl Config {
             "animation.duration_ms",
         ) {
             self.animation.duration_ms = defaults.animation.duration_ms;
+        }
+        if reset(
+            !Dock::SIZE_RANGE.contains(&self.dock.size_percent),
+            "dock.size_percent",
+        ) {
+            self.dock.size_percent = defaults.dock.size_percent;
         }
         if reset(self.focus.glow_rgb().is_none(), "focus.glow_color") {
             self.focus.glow_color = defaults.focus.glow_color;
@@ -501,6 +539,10 @@ impl Config {
         ensure!(
             Animation::DURATION_RANGE.contains(&self.animation.duration_ms),
             "Animation duration must be between 50 and 1000 ms"
+        );
+        ensure!(
+            Dock::SIZE_RANGE.contains(&self.dock.size_percent),
+            "Dock size must be between 5% and 40% of the screen"
         );
         ensure!(
             self.focus.minimum_visible_percent <= 99,
@@ -1057,6 +1099,35 @@ duration_ms = 5000
         assert!(warnings.iter().any(|w| w.contains("animation.duration_ms")));
         let mut invalid = Config::default();
         invalid.animation.duration_ms = 10;
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn dock_defaults_off_parses_edges_and_repairs_out_of_range_sizes() {
+        let config: Config = toml::from_str("version = 1\nbindings = []").unwrap();
+        assert!(!config.dock.enabled);
+        assert_eq!(config.dock.edge, crate::dock::DockEdge::Bottom);
+        assert_eq!(config.dock.size_percent, 15);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "version = 1\nbindings = []\n[dock]\nenabled = true\nedge = \"left\"\nsize_percent = 90\n",
+        )
+        .unwrap();
+        let (config, warnings) = Config::load_with_warnings(&path).unwrap();
+        assert!(config.dock.enabled);
+        assert_eq!(config.dock.edge, crate::dock::DockEdge::Left);
+        assert_eq!(config.dock.size_percent, 15);
+        assert!(warnings.iter().any(|w| w.contains("dock.size_percent")));
+        // Older configs gain the dock shortcut without losing their own.
+        let dock = config.bindings.iter().find(|b| b.action == Action::Dock);
+        assert_eq!(
+            dock.map(|b| b.shortcut.as_str()),
+            Some(if cfg!(windows) { "Ctrl+Alt+d" } else { "" })
+        );
+        let mut invalid = Config::default();
+        invalid.dock.size_percent = 4;
         assert!(invalid.validate().is_err());
     }
 

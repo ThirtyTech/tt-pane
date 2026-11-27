@@ -1,0 +1,702 @@
+//! Experimental dock (Windows): windows docked into a panel along one screen
+//! edge show as live previews. Clicking one brings that window into the arena
+//! (the work area the panel leaves), and focusing any other window sends it back.
+//!
+//! Membership lives in the `.dock.json` sidecar, guarded by the cycle lock like
+//! centered groups, so the CLI and the tray process share it. The tray process
+//! owns the panel and reconciles it with the saved state.
+#![cfg_attr(not(windows), allow(dead_code))]
+use crate::geometry::{Action, Rect};
+pub use crate::platform::dock::DockEdge;
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::{fs::File, io::Read, io::Write, path::Path};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Member {
+    handle: u64,
+    id: String,
+    /// Where the window was before it was docked; undocking puts it back.
+    restore: Rect,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Dock {
+    members: Vec<Member>,
+    /// The member shown in the arena.
+    active: Option<u64>,
+    /// A member that was docked while it had focus. It stays docked until the
+    /// foreground moves on, instead of popping straight back into the arena.
+    #[serde(default)]
+    settled: Option<u64>,
+}
+
+/// Native operations the dock needs, faked in tests.
+pub(crate) trait Native {
+    /// The id and visible bounds of a window that still exists.
+    fn identity(&self, handle: u64) -> Option<(String, Rect)>;
+    fn mark(&self, handle: u64, docked: bool) -> Result<()>;
+    fn park(&self, handle: u64) -> Result<()>;
+    /// Move a window to `target`, gliding from `from` when animation is on.
+    fn place(&self, handle: u64, target: Rect, from: Option<Rect>) -> Result<()>;
+    fn focus(&self, handle: u64) -> Result<()>;
+    fn arena(&self) -> Result<Rect>;
+    fn foreground(&self) -> Option<u64>;
+    /// The member's preview slot, where an activated window starts its glide.
+    fn slot(&self, handle: u64) -> Option<Rect>;
+}
+
+impl Dock {
+    fn sidecar(path: &Path) -> std::path::PathBuf {
+        crate::positioning::sidecar(path, ".dock.json")
+    }
+
+    pub fn exists(path: &Path) -> bool {
+        Self::sidecar(path).exists()
+    }
+
+    pub fn load(path: &Path) -> Result<Self> {
+        match File::open(Self::sidecar(path)) {
+            Ok(file) => Ok(serde_json::from_reader(file.take(128 * 1024)).unwrap_or_default()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => Err(e).context("Read docked windows"),
+        }
+    }
+
+    /// Save the dock, or remove its file once nothing is docked.
+    pub fn save(&self, path: &Path) -> Result<()> {
+        if self.members.is_empty() {
+            return match std::fs::remove_file(Self::sidecar(path)) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(e).context("Remove docked windows"),
+            };
+        }
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let mut file = tempfile::NamedTempFile::new_in(parent)?;
+        file.write_all(&serde_json::to_vec(self)?)?;
+        file.persist(Self::sidecar(path))
+            .map_err(|e| e.error)
+            .context("Save docked windows")?;
+        Ok(())
+    }
+
+    pub fn handles(&self) -> Vec<u64> {
+        self.members.iter().map(|m| m.handle).collect()
+    }
+
+    pub fn active(&self) -> Option<u64> {
+        self.active
+    }
+
+    pub fn contains(&self, handle: u64) -> bool {
+        self.members.iter().any(|m| m.handle == handle)
+    }
+
+    /// Forget members whose windows closed, or whose handle now names another window.
+    fn prune(&mut self, native: &dyn Native) {
+        self.members
+            .retain(|m| native.identity(m.handle).is_some_and(|(id, _)| id == m.id));
+        let members = self.handles();
+        self.active = self.active.filter(|h| members.contains(h));
+        self.settled = self.settled.filter(|h| members.contains(h));
+    }
+
+    /// Dock a window. `restore` overrides where undocking puts it back, such
+    /// as where a window dragged onto the panel started its drag.
+    fn dock(&mut self, native: &dyn Native, handle: u64, restore: Option<Rect>) -> Result<()> {
+        let (id, bounds) = native
+            .identity(handle)
+            .context("The window to dock is no longer open")?;
+        native.mark(handle, true)?;
+        if let Err(error) = native.park(handle) {
+            let _ = native.mark(handle, false);
+            return Err(error).context("Move the window into the dock");
+        }
+        self.members.push(Member {
+            handle,
+            id,
+            restore: restore.unwrap_or(bounds),
+        });
+        if native.foreground() == Some(handle) {
+            self.settled = Some(handle);
+        }
+        Ok(())
+    }
+
+    fn undock(&mut self, native: &dyn Native, handle: u64) -> Result<()> {
+        let Some(index) = self.members.iter().position(|m| m.handle == handle) else {
+            return Ok(());
+        };
+        let member = self.members.remove(index);
+        if self.active == Some(handle) {
+            self.active = None;
+        }
+        if self.settled == Some(handle) {
+            self.settled = None;
+        }
+        native.mark(handle, false)?;
+        native.place(handle, member.restore, None)
+    }
+
+    /// Take a member out without moving it, because the user positioned it.
+    fn release(&mut self, native: &dyn Native, handle: u64) -> Result<()> {
+        let before = self.members.len();
+        self.members.retain(|m| m.handle != handle);
+        if self.members.len() == before {
+            return Ok(());
+        }
+        if self.active == Some(handle) {
+            self.active = None;
+        }
+        if self.settled == Some(handle) {
+            self.settled = None;
+        }
+        native.mark(handle, false)
+    }
+
+    pub(crate) fn toggle(&mut self, native: &dyn Native, handle: u64) -> Result<()> {
+        self.prune(native);
+        if self.contains(handle) {
+            self.undock(native, handle)
+        } else {
+            self.dock(native, handle, None)
+        }
+    }
+
+    /// Dock a window dropped on the panel, remembering where its drag began.
+    pub(crate) fn dock_dropped(
+        &mut self,
+        native: &dyn Native,
+        handle: u64,
+        start: Option<Rect>,
+    ) -> Result<()> {
+        self.prune(native);
+        if self.contains(handle) {
+            return Ok(());
+        }
+        self.dock(native, handle, start)
+    }
+
+    /// Bring a member into the arena with the Center layout, sending the
+    /// previous one back to the dock.
+    fn activate(&mut self, native: &dyn Native, handle: u64) -> Result<()> {
+        if self.active == Some(handle) {
+            return native.focus(handle);
+        }
+        if let Some(previous) = self.active.take() {
+            native.park(previous)?;
+        }
+        let arena = native.arena()?;
+        let target = Action::Center.target(arena, arena);
+        native.place(handle, target, native.slot(handle))?;
+        self.active = Some(handle);
+        self.settled = None;
+        native.focus(handle)
+    }
+
+    fn return_active(&mut self, native: &dyn Native) -> Result<()> {
+        match self.active.take() {
+            Some(handle) => native.park(handle),
+            None => Ok(()),
+        }
+    }
+
+    /// One observation: clicked previews, then focus changes.
+    pub(crate) fn step(&mut self, native: &dyn Native, clicks: &[u64]) -> Result<()> {
+        self.prune(native);
+        if let Some(&clicked) = clicks.iter().rev().find(|h| self.contains(**h)) {
+            return self.activate(native, clicked);
+        }
+        let Some(foreground) = native.foreground() else {
+            return Ok(());
+        };
+        if self.settled == Some(foreground) {
+            return Ok(());
+        }
+        self.settled = None;
+        if self.active == Some(foreground) {
+            return Ok(());
+        }
+        if self.contains(foreground) {
+            // Alt+Tab or the taskbar picked a docked window.
+            return self.activate(native, foreground);
+        }
+        self.return_active(native)
+    }
+
+    /// Put every member back where it was before it was docked.
+    pub(crate) fn restore_all(&mut self, native: &dyn Native) -> Result<()> {
+        let mut failure = None;
+        for member in std::mem::take(&mut self.members) {
+            let result = native
+                .mark(member.handle, false)
+                .and_then(|()| native.place(member.handle, member.restore, None));
+            if let Err(error) = result
+                && native.identity(member.handle).is_some()
+            {
+                failure.get_or_insert(error);
+            }
+        }
+        self.active = None;
+        self.settled = None;
+        failure.map_or(Ok(()), Err)
+    }
+}
+
+/// Docks a window when a mouse move of it ends over the panel.
+#[derive(Debug, Default)]
+pub struct DragTracker {
+    moving: Option<u64>,
+    /// Where the moving window was when the drag was first seen.
+    start: Option<Rect>,
+    /// The dragged window is over the panel.
+    pub over: bool,
+}
+
+impl DragTracker {
+    /// Feed one observation. Returns a window dropped on the panel, and where
+    /// its drag began. `bounds` reads a window's bounds when a drag starts.
+    pub(crate) fn observe(
+        &mut self,
+        moving: Option<u64>,
+        cursor: Option<(i32, i32)>,
+        panel: Option<Rect>,
+        dock: &Dock,
+        bounds: impl Fn(u64) -> Option<Rect>,
+    ) -> Option<(u64, Option<Rect>)> {
+        let inside = match (cursor, panel) {
+            (Some(cursor), Some(panel)) => crate::platform::dock::contains(panel, cursor),
+            _ => false,
+        };
+        let dropped = match (self.moving, moving) {
+            (Some(previous), now) if now != Some(previous) && inside => {
+                Some((previous, self.start))
+            }
+            _ => None,
+        };
+        if moving != self.moving {
+            self.start = moving.and_then(&bounds);
+        }
+        self.moving = moving;
+        self.over = inside && moving.is_some_and(|h| !dock.contains(h));
+        dropped.filter(|(h, _)| !dock.contains(*h))
+    }
+}
+
+#[cfg(windows)]
+mod native {
+    use super::*;
+    use crate::platform;
+
+    pub(super) struct Desktop;
+
+    impl Native for Desktop {
+        fn identity(&self, handle: u64) -> Option<(String, Rect)> {
+            platform::docked_window(handle)
+        }
+        fn mark(&self, handle: u64, docked: bool) -> Result<()> {
+            platform::set_docked(handle, docked)
+        }
+        fn park(&self, handle: u64) -> Result<()> {
+            platform::park_window(handle).map(|_| ())
+        }
+        fn place(&self, handle: u64, target: Rect, from: Option<Rect>) -> Result<()> {
+            if let (Some(from), Some(_)) = (from, platform::snap_animation()) {
+                platform::with_snap_animation(None, || platform::place_window(handle, from))?;
+            }
+            platform::place_window(handle, target).map(|_| ())
+        }
+        fn focus(&self, handle: u64) -> Result<()> {
+            platform::activate_handle(handle)
+        }
+        fn arena(&self) -> Result<Rect> {
+            platform::dock_monitor().map(|(_, work)| work)
+        }
+        fn foreground(&self) -> Option<u64> {
+            platform::foreground_handle()
+        }
+        fn slot(&self, handle: u64) -> Option<Rect> {
+            platform::dock_layout()?
+                .slots
+                .into_iter()
+                .find(|(h, _)| *h == handle)
+                .map(|(_, rect)| rect)
+        }
+    }
+}
+
+#[cfg(windows)]
+fn cycle_lock(path: &Path) -> Result<File> {
+    Ok(std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(crate::positioning::sidecar(path, ".cycle.lock"))?)
+}
+
+/// `tt-pane apply dock`: dock the window, or undock a docked one. The caller
+/// holds the cycle lock.
+#[cfg(windows)]
+pub(crate) fn toggle(
+    config: &crate::config::Config,
+    path: &Path,
+    window: Option<u64>,
+) -> Result<()> {
+    anyhow::ensure!(
+        config.dock.enabled,
+        "The dock is off. Turn it on in Settings → Dock."
+    );
+    anyhow::ensure!(
+        crate::platform::dock_running(),
+        "The dock is shown by tt-pane in the tray. Start tt-pane first."
+    );
+    let handle = window
+        .or_else(crate::platform::foreground_handle)
+        .context("No window to dock")?;
+    let mut dock = Dock::load(path)?;
+    let result = dock.toggle(&native::Desktop, handle);
+    dock.save(path)?;
+    result
+}
+
+/// Positioning a docked window with another action takes it out of the dock.
+/// The caller holds the cycle lock.
+#[cfg(windows)]
+pub(crate) fn release(path: &Path, window: Option<u64>) -> Result<()> {
+    if !Dock::exists(path) {
+        return Ok(());
+    }
+    let Some(handle) = window.or_else(crate::platform::foreground_handle) else {
+        return Ok(());
+    };
+    let mut dock = Dock::load(path)?;
+    if dock.contains(handle) {
+        dock.release(&native::Desktop, handle)?;
+        dock.save(path)?;
+    }
+    Ok(())
+}
+
+/// The tray's periodic dock work: show or hide the panel, activate clicked
+/// previews, return the active window when focus moves, and dock dropped windows.
+#[cfg(windows)]
+pub fn observe(config: &crate::config::Config, path: &Path, drag: &mut DragTracker) -> Result<()> {
+    use crate::platform;
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if !config.dock.enabled {
+        platform::hide_dock();
+        *drag = DragTracker::default();
+        if Dock::exists(&path) {
+            return shutdown(&path);
+        }
+        return Ok(());
+    }
+    let lock = cycle_lock(&path)?;
+    if lock.try_lock().is_err() {
+        // A CLI action is running; clicks stay queued for the next observation.
+        return Ok(());
+    }
+    let mut dock = Dock::load(&path)?;
+    let before = dock.clone();
+    let layout = platform::dock_layout();
+    let dropped = drag.observe(
+        platform::moving_window(),
+        platform::cursor_position(),
+        layout.as_ref().map(|l| l.panel),
+        &dock,
+        |handle| platform::docked_window(handle).map(|(_, bounds)| bounds),
+    );
+    let clicks = platform::take_dock_clicks();
+    let result = platform::with_snap_animation(config.animation.duration(), || {
+        if let Some((handle, start)) = dropped {
+            dock.dock_dropped(&native::Desktop, handle, start)?;
+        }
+        dock.step(&native::Desktop, &clicks)
+    });
+    if dock != before {
+        dock.save(&path)?;
+    }
+    platform::show_dock(platform::DockRequest {
+        edge: config.dock.edge,
+        percent: config.dock.size_percent,
+        members: dock.handles(),
+        active: dock.active(),
+        highlight: drag.over,
+    })?;
+    result
+}
+
+/// Put every docked window back and remove the panel, for quitting or turning
+/// the dock off.
+#[cfg(windows)]
+pub fn shutdown(path: &Path) -> Result<()> {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let result = (|| {
+        if !Dock::exists(&path) {
+            return Ok(());
+        }
+        let lock = cycle_lock(&path)?;
+        lock.lock().context("Lock positioning cycle")?;
+        let mut dock = Dock::load(&path)?;
+        let result = dock.restore_all(&native::Desktop);
+        dock.save(&path)?;
+        result
+    })();
+    crate::platform::hide_dock();
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{cell::RefCell, collections::HashMap};
+
+    const ARENA: Rect = Rect {
+        x: 0,
+        y: 0,
+        width: 2000,
+        height: 1000,
+    };
+
+    #[derive(Default)]
+    struct Fake {
+        windows: RefCell<HashMap<u64, (String, Rect)>>,
+        marked: RefCell<Vec<u64>>,
+        parked: RefCell<Vec<u64>>,
+        log: RefCell<Vec<String>>,
+        foreground: RefCell<Option<u64>>,
+    }
+
+    const PARKED: Rect = Rect {
+        x: 9000,
+        y: 0,
+        width: 1920,
+        height: 1080,
+    };
+
+    impl Fake {
+        fn with(handles: &[u64]) -> Self {
+            let fake = Self::default();
+            for &h in handles {
+                fake.windows.borrow_mut().insert(
+                    h,
+                    (
+                        format!("win32:1:{h}"),
+                        Rect {
+                            x: h as i32,
+                            y: 10,
+                            width: 300,
+                            height: 200,
+                        },
+                    ),
+                );
+            }
+            fake
+        }
+        fn bounds(&self, handle: u64) -> Rect {
+            self.windows.borrow()[&handle].1
+        }
+        fn set_foreground(&self, handle: Option<u64>) {
+            *self.foreground.borrow_mut() = handle;
+        }
+    }
+
+    impl Native for Fake {
+        fn identity(&self, handle: u64) -> Option<(String, Rect)> {
+            self.windows.borrow().get(&handle).cloned()
+        }
+        fn mark(&self, handle: u64, docked: bool) -> Result<()> {
+            let mut marked = self.marked.borrow_mut();
+            marked.retain(|h| *h != handle);
+            if docked {
+                marked.push(handle);
+            }
+            Ok(())
+        }
+        fn park(&self, handle: u64) -> Result<()> {
+            self.parked.borrow_mut().push(handle);
+            self.windows.borrow_mut().get_mut(&handle).unwrap().1 = PARKED;
+            Ok(())
+        }
+        fn place(&self, handle: u64, target: Rect, from: Option<Rect>) -> Result<()> {
+            self.log
+                .borrow_mut()
+                .push(format!("place {handle} from {}", from.is_some()));
+            self.windows
+                .borrow_mut()
+                .get_mut(&handle)
+                .context("closed")?
+                .1 = target;
+            Ok(())
+        }
+        fn focus(&self, handle: u64) -> Result<()> {
+            self.set_foreground(Some(handle));
+            Ok(())
+        }
+        fn arena(&self) -> Result<Rect> {
+            Ok(ARENA)
+        }
+        fn foreground(&self) -> Option<u64> {
+            *self.foreground.borrow()
+        }
+        fn slot(&self, _handle: u64) -> Option<Rect> {
+            Some(Rect {
+                x: 10,
+                y: 900,
+                width: 160,
+                height: 90,
+            })
+        }
+    }
+
+    #[test]
+    fn docking_parks_and_marks_and_undocking_restores_the_window() {
+        let fake = Fake::with(&[1]);
+        let original = fake.bounds(1);
+        fake.set_foreground(Some(1));
+        let mut dock = Dock::default();
+        dock.toggle(&fake, 1).unwrap();
+        assert_eq!(dock.handles(), [1]);
+        assert_eq!(*fake.marked.borrow(), [1]);
+        assert_eq!(fake.bounds(1), PARKED);
+        // Still focused right after docking, it stays in the dock.
+        dock.step(&fake, &[]).unwrap();
+        assert_eq!(dock.active(), None);
+
+        dock.toggle(&fake, 1).unwrap();
+        assert!(dock.handles().is_empty());
+        assert!(fake.marked.borrow().is_empty());
+        assert_eq!(fake.bounds(1), original);
+    }
+
+    #[test]
+    fn clicking_a_preview_brings_it_to_the_center_and_returns_the_previous_one() {
+        let fake = Fake::with(&[1, 2, 3]);
+        let mut dock = Dock::default();
+        dock.toggle(&fake, 1).unwrap();
+        dock.toggle(&fake, 2).unwrap();
+        fake.set_foreground(Some(3));
+
+        dock.step(&fake, &[1]).unwrap();
+        assert_eq!(dock.active(), Some(1));
+        assert_eq!(fake.bounds(1), Action::Center.target(ARENA, ARENA));
+        assert_eq!(fake.foreground(), Some(1));
+        assert_eq!(fake.log.borrow().last().unwrap(), "place 1 from true");
+
+        dock.step(&fake, &[2]).unwrap();
+        assert_eq!(dock.active(), Some(2));
+        assert_eq!(fake.bounds(1), PARKED);
+        assert_eq!(fake.bounds(2), Action::Center.target(ARENA, ARENA));
+    }
+
+    #[test]
+    fn focusing_another_window_returns_the_active_one_and_alt_tab_activates() {
+        let fake = Fake::with(&[1, 2, 3]);
+        let mut dock = Dock::default();
+        dock.toggle(&fake, 1).unwrap();
+        dock.toggle(&fake, 2).unwrap();
+        dock.step(&fake, &[1]).unwrap();
+        // Unchanged focus keeps it in the arena.
+        dock.step(&fake, &[]).unwrap();
+        assert_eq!(dock.active(), Some(1));
+
+        fake.set_foreground(Some(3));
+        dock.step(&fake, &[]).unwrap();
+        assert_eq!(dock.active(), None);
+        assert_eq!(fake.bounds(1), PARKED);
+
+        // Choosing a docked window some other way (Alt+Tab) activates it too.
+        fake.set_foreground(Some(2));
+        dock.step(&fake, &[]).unwrap();
+        assert_eq!(dock.active(), Some(2));
+        assert_eq!(fake.bounds(2), Action::Center.target(ARENA, ARENA));
+    }
+
+    #[test]
+    fn closed_windows_and_reused_handles_leave_the_dock() {
+        let fake = Fake::with(&[1, 2]);
+        let mut dock = Dock::default();
+        dock.toggle(&fake, 1).unwrap();
+        dock.toggle(&fake, 2).unwrap();
+        dock.step(&fake, &[1]).unwrap();
+        fake.windows.borrow_mut().remove(&1);
+        fake.windows.borrow_mut().get_mut(&2).unwrap().0 = "win32:9:2".into();
+        dock.step(&fake, &[]).unwrap();
+        assert!(dock.handles().is_empty());
+        assert_eq!(dock.active(), None);
+    }
+
+    #[test]
+    fn restoring_puts_every_window_back_and_releasing_leaves_it_in_place() {
+        let fake = Fake::with(&[1, 2]);
+        let originals = [fake.bounds(1), fake.bounds(2)];
+        let mut dock = Dock::default();
+        dock.toggle(&fake, 1).unwrap();
+        dock.toggle(&fake, 2).unwrap();
+        dock.step(&fake, &[2]).unwrap();
+        dock.release(&fake, 2).unwrap();
+        assert_eq!(dock.handles(), [1]);
+        assert_eq!(dock.active(), None);
+        assert_eq!(fake.bounds(2), Action::Center.target(ARENA, ARENA));
+
+        dock.restore_all(&fake).unwrap();
+        assert!(dock.handles().is_empty());
+        assert!(fake.marked.borrow().is_empty());
+        assert_eq!(fake.bounds(1), originals[0]);
+    }
+
+    #[test]
+    fn dropping_a_dragged_window_on_the_panel_docks_it() {
+        let panel = Rect {
+            x: 0,
+            y: 900,
+            width: 2000,
+            height: 100,
+        };
+        let start = Rect {
+            x: 40,
+            y: 40,
+            width: 300,
+            height: 200,
+        };
+        let fake = Fake::with(&[5]);
+        let mut dock = Dock::default();
+        let mut drag = DragTracker::default();
+        let at = |drag: &mut DragTracker, moving, cursor, dock: &Dock| {
+            drag.observe(moving, Some(cursor), Some(panel), dock, |_| Some(start))
+        };
+        assert_eq!(at(&mut drag, Some(5), (50, 50), &dock), None);
+        assert!(!drag.over);
+        assert_eq!(at(&mut drag, Some(5), (50, 950), &dock), None);
+        assert!(drag.over);
+        let dropped = at(&mut drag, None, (50, 950), &dock);
+        assert_eq!(dropped, Some((5, Some(start))));
+        assert!(!drag.over);
+        // Undocking puts it back where the drag began, not over the panel.
+        dock.dock_dropped(&fake, 5, Some(start)).unwrap();
+        dock.toggle(&fake, 5).unwrap();
+        assert_eq!(fake.bounds(5), start);
+        // Released elsewhere, nothing is docked.
+        at(&mut drag, Some(6), (50, 950), &dock);
+        assert_eq!(at(&mut drag, None, (50, 50), &dock), None);
+    }
+
+    #[test]
+    fn saved_state_round_trips_and_an_empty_dock_removes_its_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let fake = Fake::with(&[1]);
+        let mut dock = Dock::default();
+        dock.toggle(&fake, 1).unwrap();
+        dock.save(&path).unwrap();
+        assert!(Dock::exists(&path));
+        assert_eq!(Dock::load(&path).unwrap(), dock);
+        Dock::default().save(&path).unwrap();
+        assert!(!Dock::exists(&path));
+    }
+}

@@ -4,6 +4,7 @@ pub mod autostart;
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub mod centered;
 pub mod config;
+pub mod dock;
 #[cfg(target_os = "linux")]
 pub mod gnome;
 #[cfg(all(target_os = "linux", feature = "gui"))]

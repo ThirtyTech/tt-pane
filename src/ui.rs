@@ -143,6 +143,8 @@ struct Settings {
     window: Option<WindowHandle<Settings>>,
     _tray: crate::tray::Tray,
     update: UpdateState,
+    #[cfg(windows)]
+    dock_drag: crate::dock::DragTracker,
 }
 
 #[derive(Default)]
@@ -570,15 +572,17 @@ enum Tab {
     Snapping,
     Tiling,
     Focus,
+    Dock,
     General,
 }
 
 impl Tab {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::Shortcuts,
         Self::Snapping,
         Self::Tiling,
         Self::Focus,
+        Self::Dock,
         Self::General,
     ];
 
@@ -588,6 +592,7 @@ impl Tab {
             Self::Snapping => "Snapping",
             Self::Tiling => "Tiling",
             Self::Focus => "Focus",
+            Self::Dock => "Dock",
             Self::General => "General",
         }
     }
@@ -612,6 +617,7 @@ impl Tab {
             }
             Self::Tiling => draft.tiling != active.tiling,
             Self::Focus => draft.focus != active.focus,
+            Self::Dock => draft.dock != active.dock,
             Self::General => {
                 draft.launch_at_login != active.launch_at_login
                     || draft.tray_icon != active.tray_icon
@@ -621,7 +627,7 @@ impl Tab {
 }
 
 /// Group headings on the Shortcuts tab, in display order.
-const BINDING_GROUPS: [&str; 4] = ["Snap", "Size", "Focus", "Tiling"];
+const BINDING_GROUPS: [&str; 5] = ["Snap", "Size", "Focus", "Tiling", "Dock"];
 
 /// The Shortcuts tab group an action is listed under.
 fn binding_group(action: Action) -> &'static str {
@@ -631,6 +637,8 @@ fn binding_group(action: Action) -> &'static str {
         "Focus"
     } else if action.is_tiling() {
         "Tiling"
+    } else if action == Action::Dock {
+        "Dock"
     } else {
         "Size"
     }
@@ -934,6 +942,7 @@ impl Settings {
             .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(MINT)).child("H: left, J: down, K: up, L: right. Tap H/J/K/L to navigate background windows by default. Inside a centered group, H/L rotate continuously. Hold for 400 ms to enter covered middle windows from an edge, or exit a middle window to a background edge window. Holds are Windows only; centered groups rotate on Windows and GNOME on Wayland.")))
             .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+. (period).")))
             .when(selected.adjusts_width(), |el| el.child(help("Width change per press is set on the Snapping tab.")))
+            .when(selected == Action::Dock, |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Experimental, Windows only. Sends the focused window to the dock panel as a live preview, or takes a docked window back out. Turn the dock on and choose its edge on the Dock tab.")))
             .child(help("Hover a shortcut to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."));
         div()
             .flex()
@@ -1353,6 +1362,86 @@ impl Settings {
         page
     }
 
+    fn dock_tab(&self, cx: &mut Context<Self>) -> Vec<Div> {
+        let dock = &self.draft.dock;
+        if !platform::dock_supported() {
+            return vec![page_note(
+                "The dock shows live window previews, which tt-pane supports on Windows so far.",
+                MUTED,
+            )];
+        }
+        vec![
+            section(
+                "Dock panel",
+                [
+                    setting(
+                        "Show the dock (experimental)",
+                        "A panel along one edge of the primary monitor holds docked windows as live previews. Click a preview to bring that window into the center; it returns to the dock when you focus another window.",
+                        switch("dock-enabled", dock.enabled).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.draft.dock.enabled = !this.draft.dock.enabled;
+                                this.message("Dock updated. Save to activate.", false, cx);
+                            },
+                        )),
+                    ),
+                    nested(setting(
+                        "Edge",
+                        "The screen edge the panel sits on.",
+                        segments(crate::dock::DockEdge::ALL.map(|edge| {
+                            segment(
+                                ("dock-edge", edge as usize),
+                                edge.label(),
+                                dock.edge == edge,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    if this.draft.dock.edge != edge {
+                                        this.draft.dock.edge = edge;
+                                        this.message(
+                                            "Dock edge updated. Save to activate.",
+                                            false,
+                                            cx,
+                                        );
+                                    }
+                                },
+                            ))
+                        })),
+                    )),
+                    nested(setting(
+                        "Size",
+                        "The panel’s share of the screen height (top, bottom) or width (sides). Default 15%.",
+                        stepper(
+                            step_button("dock-size-less", "−").on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.draft.dock.size_percent = this
+                                        .draft
+                                        .dock
+                                        .size_percent
+                                        .saturating_sub(1)
+                                        .max(*crate::config::Dock::SIZE_RANGE.start());
+                                    this.message("Dock size updated. Save to activate.", false, cx);
+                                },
+                            )),
+                            format!("{}%", dock.size_percent),
+                            step_button("dock-size-more", "+").on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.draft.dock.size_percent = (this.draft.dock.size_percent
+                                        + 1)
+                                    .min(*crate::config::Dock::SIZE_RANGE.end());
+                                    this.message("Dock size updated. Save to activate.", false, cx);
+                                },
+                            )),
+                        ),
+                    )),
+                ],
+            ),
+            page_note(
+                "Dock the focused window with Dock / undock window (Ctrl+Alt+D by default) or by dragging it onto the panel. Docked windows are rendered at 1920×1080 off screen and scaled into their previews. Turning the dock off or quitting tt-pane puts every docked window back where it was.",
+                MINT,
+            ),
+        ]
+    }
+
     fn general_tab(&self, cx: &mut Context<Self>) -> Vec<Div> {
         let mut page = vec![section(
             "Startup",
@@ -1483,6 +1572,7 @@ impl Render for Settings {
                     Tab::Snapping => self.snapping_tab(cx),
                     Tab::Tiling => self.tiling_tab(cx),
                     Tab::Focus => self.focus_tab(cx),
+                    Tab::Dock => self.dock_tab(cx),
                     _ => self.general_tab(cx),
                 };
                 div().flex().flex_col().flex_1().min_h_0().child(
@@ -2008,6 +2098,8 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             window: None,
             _tray: tray,
             update: UpdateState::default(),
+            #[cfg(windows)]
+            dock_drag: crate::dock::DragTracker::default(),
         });
         *reopened.borrow_mut() = Some(settings.clone());
         let on_close = settings.clone();
@@ -2028,6 +2120,8 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
         }
         cx.spawn(async move |cx| {
             let mut group_observed = std::time::Instant::now();
+            #[cfg(windows)]
+            let mut dock_observed = std::time::Instant::now();
             // Tiling and centered groups need window inspection: native on Windows
             // and macOS, the Shell extension on GNOME. Other Linux sessions have none.
             let observe_groups = platform::tiling_supported();
@@ -2037,6 +2131,7 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                     .update(|cx| {
                         #[cfg(windows)]
                         if platform::ctrl_c_requested() {
+                            let _ = crate::dock::shutdown(&settings.read(cx).path);
                             cx.quit();
                             return;
                         }
@@ -2058,6 +2153,8 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                                 });
                             }
                             if event.id.0 == crate::tray::QUIT {
+                                #[cfg(windows)]
+                                let _ = crate::dock::shutdown(&settings.read(cx).path);
                                 cx.quit();
                                 return;
                             }
@@ -2071,6 +2168,19 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                         }
                         settings.update(cx, |this, cx| {
                             this.poll_update(cx);
+                            // Previews react to clicks and focus changes, so the
+                            // dock observes more often than groups do.
+                            #[cfg(windows)]
+                            if dock_observed.elapsed() >= Duration::from_millis(50) {
+                                dock_observed = std::time::Instant::now();
+                                if let Err(e) = crate::dock::observe(
+                                    &this.active,
+                                    &this.path,
+                                    &mut this.dock_drag,
+                                ) {
+                                    this.message(format!("Dock: {e:#}"), true, cx);
+                                }
+                            }
                             if observe_groups
                                 && group_observed.elapsed() >= Duration::from_millis(100)
                             {
@@ -2150,7 +2260,7 @@ mod tab_tests {
     fn each_change_marks_only_its_own_tab() {
         let active = Config::default();
         type Change = fn(&mut Config);
-        let changes: [(Tab, Change); 6] = [
+        let changes: [(Tab, Change); 7] = [
             (Tab::Shortcuts, |c| c.bindings[0].shortcut.clear()),
             (Tab::Snapping, |c| c.gaps.outer += 1),
             (Tab::Snapping, |c| {
@@ -2160,6 +2270,7 @@ mod tab_tests {
             (Tab::Focus, |c| {
                 c.focus.include_middle_windows = !c.focus.include_middle_windows
             }),
+            (Tab::Dock, |c| c.dock.enabled = !c.dock.enabled),
             (Tab::General, |c| c.launch_at_login = !c.launch_at_login),
         ];
         for (changed, change) in changes {

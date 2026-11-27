@@ -398,6 +398,20 @@ fn apply_inner(
         .open(sidecar(&path, ".cycle.lock"))
         .context("Open positioning cycle lock")?;
     lock.lock().context("Lock positioning cycle")?;
+    #[cfg(windows)]
+    if action == Action::Dock {
+        return crate::dock::toggle(config, &path, window);
+    }
+    #[cfg(not(windows))]
+    ensure!(
+        action != Action::Dock,
+        "The dock currently supports Windows only"
+    );
+    // Positioning a docked window by any other means takes it out of the dock.
+    #[cfg(windows)]
+    if !action.focuses() {
+        crate::dock::release(&path, window)?;
+    }
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     if crate::tiling::action(config, &path, action, window)? {
         return Ok(());
