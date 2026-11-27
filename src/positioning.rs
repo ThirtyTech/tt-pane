@@ -541,8 +541,7 @@ fn apply_inner(
                 && platform::dock::intersects(area, panel)
             {
                 let original = cycle.last;
-                cycle.last =
-                    platform::dock::avoid(
+                cycle.last = platform::dock::avoid(
                     original,
                     panel,
                     config.dock.edge,
