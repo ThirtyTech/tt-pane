@@ -77,13 +77,18 @@ static SHARED: Mutex<Shared> = Mutex::new(Shared {
 });
 
 const CLASS: PCWSTR = w!("tt-pane.dock");
+const OVERLAY_CLASS: PCWSTR = w!("tt-pane.dock-numbers");
 const PANEL_PROP: PCWSTR = w!("tt-pane.dock-panel");
 const DOCKED_PROP: PCWSTR = w!("tt-pane.docked");
 const WM_DOCK_UPDATE: u32 = WM_APP + 0x40;
 const WM_DOCK_APPBAR: u32 = WM_APP + 0x41;
 const WM_DOCK_REPOSITION: u32 = WM_APP + 0x42;
 
-const BACKGROUND: COLORREF = COLORREF(0x001C_1818);
+/// The panel is a colour-keyed layered window: pixels painted in this colour
+/// are see-through and let clicks fall through to the desktop. It is nearly
+/// black so the anti-aliased edges of the pick-mode numbers blend into a dark
+/// outline rather than a coloured fringe.
+const TRANSPARENT_KEY: COLORREF = COLORREF(0x0001_0101);
 const SLOT: COLORREF = COLORREF(0x0042_3C3C);
 const ACCENT: COLORREF = COLORREF(0x00E8_F0F2);
 
@@ -632,11 +637,19 @@ struct Panel {
     reserved: Option<Rect>,
     rect: Rect,
     slots: Vec<(u64, Rect)>,
+    /// Where each thumbnail is drawn, in screen pixels. Painted opaque beneath
+    /// the thumbnail so the preview takes clicks; the rest of the panel is
+    /// transparent.
+    previews: Vec<Rect>,
     /// The empty slot shown while a window is dragged.
     drop: Option<Rect>,
     active: Option<u64>,
     highlight: bool,
     numbered: bool,
+    /// A click-through window owned by the panel that draws the pick-mode
+    /// numbers. Thumbnails cover anything the panel paints, so the numbers
+    /// need a window of their own above them.
+    overlay: HWND,
 }
 
 impl Default for Panel {
@@ -652,10 +665,12 @@ impl Default for Panel {
                 height: 0,
             },
             slots: Vec::new(),
+            previews: Vec::new(),
             drop: None,
             active: None,
             highlight: false,
             numbered: false,
+            overlay: HWND::default(),
         }
     }
 }
@@ -680,7 +695,7 @@ fn run() -> Result<()> {
         // Registering twice (a second panel after a hide) fails harmlessly.
         RegisterClassW(&class);
         let window = CreateWindowExW(
-            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_LAYERED,
             CLASS,
             w!("tt-pane dock"),
             WS_POPUP,
@@ -693,6 +708,35 @@ fn run() -> Result<()> {
             Some(instance.into()),
             None,
         )?;
+        SetLayeredWindowAttributes(window, TRANSPARENT_KEY, 0, LWA_COLORKEY)?;
+        let overlay_class = WNDCLASSW {
+            lpfnWndProc: Some(overlay_procedure),
+            hInstance: instance.into(),
+            lpszClassName: OVERLAY_CLASS,
+            ..Default::default()
+        };
+        RegisterClassW(&overlay_class);
+        // Owned by the panel, so it stays above it and goes away with it.
+        let overlay = CreateWindowExW(
+            WS_EX_TOOLWINDOW
+                | WS_EX_TOPMOST
+                | WS_EX_NOACTIVATE
+                | WS_EX_LAYERED
+                | WS_EX_TRANSPARENT,
+            OVERLAY_CLASS,
+            w!("tt-pane dock numbers"),
+            WS_POPUP,
+            0,
+            0,
+            1,
+            1,
+            Some(window),
+            None,
+            Some(instance.into()),
+            None,
+        )?;
+        SetLayeredWindowAttributes(overlay, TRANSPARENT_KEY, 0, LWA_COLORKEY)?;
+        PANEL.with(|cell| cell.borrow_mut().overlay = overlay);
         SetPropW(window, PANEL_PROP, Some(HANDLE(std::ptr::dangling_mut())))?;
         lock().window = window.0 as usize;
         update(window);
@@ -854,7 +898,9 @@ fn update(window: HWND) {
                 reserve(window, panel, request.edge, None);
                 let _ = ShowWindow(window, SW_HIDE);
                 panel.slots.clear();
+                panel.previews.clear();
                 panel.drop = None;
+                place_overlay(panel);
                 lock().layout = None;
                 return;
             }
@@ -910,6 +956,7 @@ fn update(window: HWND) {
             panel.active = request.active;
             panel.highlight = request.highlight;
             panel.numbered = request.numbered;
+            panel.previews.clear();
             for &(handle, slot) in &panel.slots {
                 let thumb = match panel.thumbs.get(&handle) {
                     Some(thumb) => *thumb,
@@ -921,10 +968,7 @@ fn update(window: HWND) {
                         _ => continue,
                     },
                 };
-                // Thumbnails cover whatever is painted beneath them, so a
-                // numbered slot gives its number a band of its own.
-                let band = if panel.numbered { badge_band(slot) } else { 0 };
-                let inner = crate::geometry::inset_rect(slot, 3, 3 + band, 3, 3);
+                let inner = crate::geometry::inset_rect(slot, 3, 3, 3, 3);
                 let destination = fit(
                     inner,
                     DwmQueryThumbnailSourceSize(thumb).unwrap_or_default(),
@@ -945,8 +989,10 @@ fn update(window: HWND) {
                     ..Default::default()
                 };
                 let _ = DwmUpdateThumbnailProperties(thumb, &properties);
+                panel.previews.push(destination);
             }
             let _ = InvalidateRect(Some(window), None, true);
+            place_overlay(panel);
         }
         lock().layout = Some(DockLayout {
             panel: panel.rect,
@@ -1040,9 +1086,9 @@ unsafe extern "system" fn procedure(
     }
 }
 
-/// The height of the band above a numbered preview that holds its number.
-fn badge_band(slot: Rect) -> u32 {
-    (slot.height / 5).clamp(14, 32) as u32
+/// The height of a pick-mode number centred on a preview.
+fn number_height(slot: Rect) -> i32 {
+    (slot.height * 2 / 5).clamp(18, 120)
 }
 
 /// # Safety
@@ -1057,7 +1103,7 @@ unsafe fn paint_panel(dc: HDC, panel: &Panel) {
     };
     // SAFETY: Brushes are created and deleted here; rects are live locals.
     unsafe {
-        let background = CreateSolidBrush(BACKGROUND);
+        let background = CreateSolidBrush(TRANSPARENT_KEY);
         let slot = CreateSolidBrush(SLOT);
         let accent = CreateSolidBrush(ACCENT);
         let whole = RECT {
@@ -1067,18 +1113,18 @@ unsafe fn paint_panel(dc: HDC, panel: &Panel) {
             bottom: panel.rect.height,
         };
         FillRect(dc, &whole, background);
+        // Hidden under the thumbnails, but keeps those pixels clickable.
+        for &preview in &panel.previews {
+            FillRect(dc, &local(preview), slot);
+        }
         for &(handle, rect) in &panel.slots {
             let mut frame = local(rect);
-            FillRect(dc, &frame, slot);
             if panel.active == Some(handle) {
                 for _ in 0..3 {
                     FrameRect(dc, &frame, accent);
                     let _ = InflateRect(&mut frame, -1, -1);
                 }
             }
-        }
-        if panel.numbered {
-            paint_numbers(dc, panel, &local);
         }
         if let Some(rect) = panel.drop {
             let mut frame = local(rect);
@@ -1101,48 +1147,129 @@ unsafe fn paint_panel(dc: HDC, panel: &Panel) {
     }
 }
 
+/// Places the pick-mode overlay over the panel while its previews are
+/// numbered, and hides it otherwise.
+///
 /// # Safety
-/// `dc` is the panel's paint DC on its own thread.
-unsafe fn paint_numbers(dc: HDC, panel: &Panel, local: &dyn Fn(Rect) -> RECT) {
-    // SAFETY: The font is selected into this DC and deleted before returning;
-    // the text and rects are live locals.
+/// Called on the panel's thread, which owns the overlay.
+unsafe fn place_overlay(panel: &Panel) {
+    if panel.overlay.is_invalid() {
+        return;
+    }
+    // SAFETY: The overlay belongs to this thread.
     unsafe {
-        let height = panel
-            .slots
-            .first()
-            .map_or(14, |(_, slot)| badge_band(*slot) as i32 - 2);
+        if panel.numbered && !panel.slots.is_empty() {
+            let _ = SetWindowPos(
+                panel.overlay,
+                Some(HWND_TOPMOST),
+                panel.rect.x,
+                panel.rect.y,
+                panel.rect.width,
+                panel.rect.height,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
+            let _ = InvalidateRect(Some(panel.overlay), None, true);
+        } else {
+            let _ = ShowWindow(panel.overlay, SW_HIDE);
+        }
+    }
+}
+
+/// # Safety
+/// Called by Win32 on the panel's thread with the overlay's messages.
+unsafe extern "system" fn overlay_procedure(
+    window: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    // SAFETY: Every call below uses this thread's own window and live locals.
+    unsafe {
+        match message {
+            WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+            WM_NCHITTEST => LRESULT(HTTRANSPARENT as isize),
+            WM_PAINT => {
+                let mut paint = PAINTSTRUCT::default();
+                let dc = BeginPaint(window, &mut paint);
+                let _ = PANEL.with(|cell| cell.try_borrow().map(|panel| paint_numbers(dc, &panel)));
+                let _ = EndPaint(window, &paint);
+                LRESULT(0)
+            }
+            WM_ERASEBKGND => LRESULT(1),
+            _ => DefWindowProcW(window, message, wparam, lparam),
+        }
+    }
+}
+
+/// Paints the overlay: white numbers outlined in black, centred on the first
+/// nine previews, over a transparent background.
+///
+/// # Safety
+/// `dc` is the overlay's paint DC on the panel's thread.
+unsafe fn paint_numbers(dc: HDC, panel: &Panel) {
+    // SAFETY: GDI objects are selected into this DC and deleted before
+    // returning; the text and rects are live locals.
+    unsafe {
+        let clear = CreateSolidBrush(TRANSPARENT_KEY);
+        let whole = RECT {
+            left: 0,
+            top: 0,
+            right: panel.rect.width,
+            bottom: panel.rect.height,
+        };
+        FillRect(dc, &whole, clear);
+        let _ = DeleteObject(clear.into());
+        let Some(&(_, first)) = panel.slots.first() else {
+            return;
+        };
+        let height = number_height(first);
         let font = CreateFontW(
             height,
             0,
             0,
             0,
-            FW_SEMIBOLD.0 as i32,
+            FW_BOLD.0 as i32,
             0,
             0,
             0,
             DEFAULT_CHARSET,
-            OUT_DEFAULT_PRECIS,
+            OUT_TT_PRECIS,
             CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY,
+            ANTIALIASED_QUALITY,
             0,
             w!("Segoe UI"),
         );
-        let previous = SelectObject(dc, font.into());
+        let pen = CreatePen(PS_SOLID, (height / 10).max(3), COLORREF(0x0000_0000));
+        let fill = CreateSolidBrush(COLORREF(0x00FF_FFFF));
+        let previous_font = SelectObject(dc, font.into());
+        let previous_pen = SelectObject(dc, pen.into());
+        let previous_brush = SelectObject(dc, fill.into());
         SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, ACCENT);
-        for (index, &(_, rect)) in panel.slots.iter().take(9).enumerate() {
-            let mut band = local(crate::geometry::inset_rect(rect, 3, 3, 3, 0));
-            band.bottom = band.top + badge_band(rect) as i32;
-            let mut text: Vec<u16> = (index + 1).to_string().encode_utf16().collect();
-            DrawTextW(
-                dc,
-                &mut text,
-                &mut band,
-                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
-            );
+        for (index, &(_, slot)) in panel.slots.iter().take(9).enumerate() {
+            let text: Vec<u16> = (index + 1).to_string().encode_utf16().collect();
+            let mut size = SIZE::default();
+            let _ = GetTextExtentPoint32W(dc, &text, &mut size);
+            let x = slot.x - panel.rect.x + (slot.width - size.cx) / 2;
+            let y = slot.y - panel.rect.y + (slot.height - size.cy) / 2;
+            // Stroke the outline first, then fill the same outline on top, so
+            // the black stroke sits outside the white face.
+            for stroke in [true, false] {
+                let _ = BeginPath(dc);
+                let _ = TextOutW(dc, x, y, &text);
+                let _ = EndPath(dc);
+                if stroke {
+                    let _ = StrokePath(dc);
+                } else {
+                    let _ = FillPath(dc);
+                }
+            }
         }
-        SelectObject(dc, previous);
+        SelectObject(dc, previous_font);
+        SelectObject(dc, previous_pen);
+        SelectObject(dc, previous_brush);
         let _ = DeleteObject(font.into());
+        let _ = DeleteObject(pen.into());
+        let _ = DeleteObject(fill.into());
     }
 }
 
