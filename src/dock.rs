@@ -564,13 +564,17 @@ pub fn observe(config: &crate::config::Config, path: &Path, drag: &mut DragTrack
     });
     let area = platform::dock_layout().and_then(|layout| layout.area);
     if area != dock.panel() {
-        dock.refit(
-            &desktop,
-            area,
-            config.dock.edge,
-            config.gaps.outer,
-            &snapped_windows(config, &path, area),
-        );
+        // Squeezed windows glide to their new size like any other snap.
+        let snapped = snapped_windows(config, &path, area);
+        platform::with_snap_animation(config.animation.duration(), || {
+            dock.refit(
+                &desktop,
+                area,
+                config.dock.edge,
+                config.gaps.outer,
+                &snapped,
+            )
+        });
     }
     if dock != before {
         dock.save(&path)?;
@@ -599,7 +603,7 @@ fn snapped_windows(
     let Some(area) = area else {
         return Vec::new();
     };
-    if config.tiling.enabled || crate::positioning::sidecar(path, ".tiling.json").exists() {
+    if crate::tiling::active(config, path) {
         return Vec::new();
     }
     let (Ok((_, work)), Ok(desktop)) = (platform::dock_monitor(), platform::tiling_desktop())

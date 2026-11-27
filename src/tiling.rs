@@ -549,6 +549,14 @@ fn lock(path: &Path) -> Result<File> {
         .open(sidecar(path, ".cycle.lock"))?)
 }
 
+/// Whether automatic tiling is arranging windows now: on in the settings, or
+/// turned on with Toggle tiling. The `.tiling.json` sidecar outlives tiling
+/// being turned off, so its existence alone doesn't say.
+pub(crate) fn active(config: &Config, path: &Path) -> bool {
+    config.tiling.enabled
+        || State::load(path).is_ok_and(|state| state.active || state.override_enabled == Some(true))
+}
+
 pub fn observe(config: &Config, path: &Path) -> Result<()> {
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     if !platform::tiling_supported()
@@ -1818,6 +1826,26 @@ mod tests {
         // Native snaps without gaps count too.
         assert!(at(-1200, 0, 600, 800).is_some());
         assert_eq!(free_region(AREA, &[]), None);
+    }
+
+    #[test]
+    fn a_leftover_sidecar_does_not_count_as_tiling() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut config = Config::default();
+        assert!(!active(&config, &path));
+        // Tiling was used once and turned off again: the file stays behind.
+        State::default().save(&path).unwrap();
+        assert!(!active(&config, &path));
+        let toggled = State {
+            override_enabled: Some(true),
+            ..State::default()
+        };
+        toggled.save(&path).unwrap();
+        assert!(active(&config, &path));
+        State::default().save(&path).unwrap();
+        config.tiling.enabled = true;
+        assert!(active(&config, &path));
     }
 
     #[test]
