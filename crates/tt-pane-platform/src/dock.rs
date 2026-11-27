@@ -286,6 +286,56 @@ pub fn park_rect(
     (!others.iter().any(|other| intersects(rect, *other))).then_some(rect)
 }
 
+/// Where to park a docked window of `size` when the panel's corner touches
+/// another display: peeking `PARK_SLIVER` into a gap of the virtual screen (the
+/// box around all `monitors`) where no monitor is, so nothing of it shows.
+/// Chrome counts a window anywhere in that box as on screen and keeps drawing.
+/// `None` when the monitors leave no such gap along the box's edges.
+pub fn gap_park_rect(monitors: &[Rect], (width, height): (i32, i32)) -> Option<Rect> {
+    let first = monitors.first()?;
+    let (mut left, mut top) = (first.x, first.y);
+    let (mut right, mut bottom) = (first.x + first.width, first.y + first.height);
+    for m in monitors {
+        left = left.min(m.x);
+        top = top.min(m.y);
+        right = right.max(m.x + m.width);
+        bottom = bottom.max(m.y + m.height);
+    }
+    let virtual_screen = Rect {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    };
+    // Along the top and bottom, try spots beside each monitor and at the box's
+    // ends; the same down the sides.
+    let xs: Vec<i32> = monitors
+        .iter()
+        .flat_map(|m| [m.x - width, m.x + m.width])
+        .chain([left, right - width])
+        .collect();
+    let ys: Vec<i32> = monitors
+        .iter()
+        .flat_map(|m| [m.y - height, m.y + m.height])
+        .chain([top, bottom - height])
+        .collect();
+    let along = |y: i32| xs.iter().map(move |&x| (x, y));
+    let down = |x: i32| ys.iter().map(move |&y| (x, y));
+    along(top - height + PARK_SLIVER)
+        .chain(along(bottom - PARK_SLIVER))
+        .chain(down(left - width + PARK_SLIVER))
+        .chain(down(right - PARK_SLIVER))
+        .map(|(x, y)| Rect {
+            x,
+            y,
+            width,
+            height,
+        })
+        .find(|rect| {
+            intersects(*rect, virtual_screen) && !monitors.iter().any(|m| intersects(*rect, *m))
+        })
+}
+
 /// Where a window grows to the preview's source size before it is parked: at
 /// its own top-left corner, pulled back inside `area` so all of it is on
 /// screen. Explorer, for one, only lays out the part of its file list that is
@@ -552,6 +602,45 @@ mod tests {
             None
         );
         assert!(park_rect(MONITOR, DockEdge::Bottom, DockFill::End, size, &[left]).is_some());
+    }
+
+    #[test]
+    fn blocked_corners_park_in_a_gap_of_the_virtual_screen() {
+        let rect = |x, y, width, height| Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        // A 4K primary with monitors offset around it, as on a real desk: the
+        // top-left corner touches the upper-left monitor.
+        let primary = rect(0, 0, 3840, 2160);
+        let monitors = [
+            rect(3840, 454, 1920, 1080),
+            primary,
+            rect(-1920, 913, 1920, 1080),
+            rect(-1932, -167, 1920, 1080),
+        ];
+        let others = [monitors[0], monitors[2], monitors[3]];
+        assert_eq!(
+            park_rect(
+                primary,
+                DockEdge::Top,
+                DockFill::Start,
+                PREVIEW_SOURCE,
+                &others
+            ),
+            None
+        );
+        let park = gap_park_rect(&monitors, PREVIEW_SOURCE).unwrap();
+        assert_eq!((park.width, park.height), PREVIEW_SOURCE);
+        // It touches the box around the monitors, but no monitor shows it.
+        assert!(park.y + park.height > -167 && park.x < 5760 && park.x + park.width > -1932);
+        assert!(!monitors.iter().any(|m| intersects(park, *m)));
+        // Monitors that fill their box leave no gap.
+        assert_eq!(gap_park_rect(&[MONITOR], PREVIEW_SOURCE), None);
+        let beside = rect(2560, 0, 2560, 1440);
+        assert_eq!(gap_park_rect(&[MONITOR, beside], PREVIEW_SOURCE), None);
     }
 
     #[test]

@@ -301,8 +301,9 @@ fn monitor_rects() -> Vec<Rect> {
 /// Where a docked window of `size` is parked: mostly off the dock's monitor at
 /// the panel's fill corner, with a sliver left on screen under the panel.
 /// Chrome stops drawing a window that is on no screen at all, which freezes its
-/// preview. Past every monitor if that corner touches another display, or
-/// without `live` previews, which saves the power those windows spend drawing.
+/// preview. If that corner touches another display, peeking into a gap between
+/// monitors instead. Past every monitor when there is no such gap, or without
+/// `live` previews, which saves the power those windows spend drawing.
 pub fn park_target(edge: DockEdge, fill: DockFill, size: (i32, i32), live: bool) -> Result<Rect> {
     if live {
         let (monitor, _) = dock_monitor()?;
@@ -311,6 +312,10 @@ pub fn park_target(edge: DockEdge, fill: DockFill, size: (i32, i32), live: bool)
             .filter(|rect| *rect != monitor)
             .collect();
         if let Some(rect) = dock::park_rect(monitor, edge, fill, size, &others) {
+            return Ok(rect);
+        }
+        let monitors: Vec<Rect> = others.into_iter().chain([monitor]).collect();
+        if let Some(rect) = dock::gap_park_rect(&monitors, size) {
             return Ok(rect);
         }
     }
