@@ -179,6 +179,11 @@ pub struct Dock {
     pub fill: crate::dock::DockFill,
     /// The panel's share of the monitor's height (top, bottom) or width (sides).
     pub size_percent: u32,
+    /// Park docked windows with a corner left on screen under the panel, so
+    /// Chrome and other Chromium apps keep drawing them and their previews
+    /// stay current. Off parks them fully off screen, where those apps stop
+    /// drawing, which saves power (on battery, say) but freezes their previews.
+    pub live_previews: bool,
 }
 
 impl Default for Dock {
@@ -188,6 +193,7 @@ impl Default for Dock {
             edge: crate::dock::DockEdge::Bottom,
             fill: crate::dock::DockFill::Start,
             size_percent: 10,
+            live_previews: true,
         }
     }
 }
@@ -1115,11 +1121,12 @@ duration_ms = 5000
         assert_eq!(config.dock.edge, crate::dock::DockEdge::Bottom);
         assert_eq!(config.dock.fill, crate::dock::DockFill::Start);
         assert_eq!(config.dock.size_percent, 10);
+        assert!(config.dock.live_previews);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(
             &path,
-            "version = 1\nbindings = []\n[dock]\nenabled = true\nedge = \"left\"\nfill = \"end\"\nsize_percent = 90\n",
+            "version = 1\nbindings = []\n[dock]\nenabled = true\nedge = \"left\"\nfill = \"end\"\nsize_percent = 90\nlive_previews = false\n",
         )
         .unwrap();
         let (config, warnings) = Config::load_with_warnings(&path).unwrap();
@@ -1128,6 +1135,7 @@ duration_ms = 5000
         assert_eq!(config.dock.fill, crate::dock::DockFill::End);
         assert_eq!(config.dock.size_percent, 10);
         assert!(warnings.iter().any(|w| w.contains("dock.size_percent")));
+        assert!(!config.dock.live_previews);
         // Older configs gain the dock shortcut without losing their own.
         let dock = config.bindings.iter().find(|b| b.action == Action::Dock);
         assert_eq!(

@@ -1486,6 +1486,16 @@ impl Settings {
                             )),
                         ),
                     )),
+                    nested(setting(
+                        "Keep previews current",
+                        "Leaves a small corner of each docked window on screen under the panel, so Chrome and other Chromium-based apps keep drawing it and its preview shows new mail or edits. Turn off to save power, for example on battery; those previews then freeze until you bring the window out. On by default.",
+                        switch("dock-live-previews", dock.live_previews).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.draft.dock.live_previews = !this.draft.dock.live_previews;
+                                this.message("Dock previews updated. Save to activate.", false, cx);
+                            },
+                        )),
+                    )),
                 ],
             ),
             page_note(

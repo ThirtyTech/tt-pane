@@ -482,6 +482,8 @@ mod native {
     pub(super) struct Desktop {
         pub edge: DockEdge,
         pub fill: DockFill,
+        /// Park with a corner on screen so Chromium apps keep drawing.
+        pub live: bool,
     }
 
     impl Desktop {
@@ -489,6 +491,7 @@ mod native {
             Self {
                 edge: config.dock.edge,
                 fill: config.dock.fill,
+                live: config.dock.live_previews,
             }
         }
     }
@@ -501,18 +504,24 @@ mod native {
             platform::set_docked(handle, docked)
         }
         fn park(&self, handle: u64) -> Result<()> {
-            platform::park_window(handle, self.edge, self.fill).map(|_| ())
+            platform::park_window(handle, self.edge, self.fill, self.live).map(|_| ())
         }
         fn stow(&self, handle: u64, slot: Option<Rect>) -> Result<()> {
-            platform::stow_window(handle, slot, self.edge, self.fill).map(|_| ())
+            platform::stow_window(handle, slot, self.edge, self.fill, self.live).map(|_| ())
         }
         fn parked(&self, bounds: Rect) -> bool {
             // Position only, for the window's own size: an application may
             // refuse the 1080p size, and a stowed window keeps its size, so
             // comparing sizes would re-park it on every observation.
-            platform::park_target(self.edge, self.fill, (bounds.width, bounds.height)).is_ok_and(
-                |target| target.x.abs_diff(bounds.x) <= 2 && target.y.abs_diff(bounds.y) <= 2,
+            platform::park_target(
+                self.edge,
+                self.fill,
+                (bounds.width, bounds.height),
+                self.live,
             )
+            .is_ok_and(|target| {
+                target.x.abs_diff(bounds.x) <= 2 && target.y.abs_diff(bounds.y) <= 2
+            })
         }
         fn place(&self, handle: u64, target: Rect, from: Option<Rect>) -> Result<()> {
             match from {
@@ -625,6 +634,7 @@ pub(crate) fn release(path: &Path, window: Option<u64>) -> Result<()> {
         let desktop = native::Desktop {
             edge: DockEdge::default(),
             fill: DockFill::default(),
+            live: true,
         };
         dock.release(&desktop, handle)?;
         dock.save(path)?;
@@ -745,6 +755,7 @@ pub fn shutdown(path: &Path) -> Result<()> {
         let desktop = native::Desktop {
             edge: DockEdge::default(),
             fill: DockFill::default(),
+            live: true,
         };
         let result = dock.restore_all(&desktop);
         dock.save(&path)?;

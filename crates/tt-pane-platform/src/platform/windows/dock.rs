@@ -301,15 +301,18 @@ fn monitor_rects() -> Vec<Rect> {
 /// Where a docked window of `size` is parked: mostly off the dock's monitor at
 /// the panel's fill corner, with a sliver left on screen under the panel.
 /// Chrome stops drawing a window that is on no screen at all, which freezes its
-/// preview. Past every monitor if that corner touches another display.
-pub fn park_target(edge: DockEdge, fill: DockFill, size: (i32, i32)) -> Result<Rect> {
-    let (monitor, _) = dock_monitor()?;
-    let others: Vec<Rect> = monitor_rects()
-        .into_iter()
-        .filter(|rect| *rect != monitor)
-        .collect();
-    if let Some(rect) = dock::park_rect(monitor, edge, fill, size, &others) {
-        return Ok(rect);
+/// preview. Past every monitor if that corner touches another display, or
+/// without `live` previews, which saves the power those windows spend drawing.
+pub fn park_target(edge: DockEdge, fill: DockFill, size: (i32, i32), live: bool) -> Result<Rect> {
+    if live {
+        let (monitor, _) = dock_monitor()?;
+        let others: Vec<Rect> = monitor_rects()
+            .into_iter()
+            .filter(|rect| *rect != monitor)
+            .collect();
+        if let Some(rect) = dock::park_rect(monitor, edge, fill, size, &others) {
+            return Ok(rect);
+        }
     }
     let _dpi = DpiContext::enter();
     // SAFETY: GetSystemMetrics takes no pointers.
@@ -335,8 +338,8 @@ const STAGING_SETTLE: std::time::Duration = std::time::Duration::from_millis(200
 /// monitor first and gets a moment to redraw, because some applications
 /// (Explorer) leave content they lay out off screen blank. Moving an already
 /// laid-out window off screen keeps its content.
-pub fn park_window(handle: u64, edge: DockEdge, fill: DockFill) -> Result<Rect> {
-    let target = park_target(edge, fill, dock::PREVIEW_SOURCE)?;
+pub fn park_window(handle: u64, edge: DockEdge, fill: DockFill, live: bool) -> Result<Rect> {
+    let target = park_target(edge, fill, dock::PREVIEW_SOURCE, live)?;
     crate::with_snap_animation(None, || {
         let current = docked_window(handle).map(|(_, bounds)| bounds);
         let sized = current.is_some_and(|bounds| {
@@ -363,10 +366,11 @@ pub fn stow_window(
     slot: Option<Rect>,
     edge: DockEdge,
     fill: DockFill,
+    live: bool,
 ) -> Result<Rect> {
     let (_, bounds) =
         docked_window(handle).ok_or_else(|| anyhow::anyhow!("Window is no longer available"))?;
-    let target = park_target(edge, fill, (bounds.width, bounds.height))?;
+    let target = park_target(edge, fill, (bounds.width, bounds.height), live)?;
     let glide = match (slot, crate::snap_animation()) {
         (Some(slot), Some(duration)) => {
             Glide::new(handle, bounds).ok().map(|g| (g, slot, duration))
