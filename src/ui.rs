@@ -2194,7 +2194,7 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                     .update(|cx| {
                         #[cfg(windows)]
                         if platform::ctrl_c_requested() {
-                            let _ = crate::dock::shutdown(&settings.read(cx).path);
+                            let _ = crate::dock::shutdown(&settings.read(cx).path, true);
                             cx.quit();
                             return;
                         }
@@ -2217,7 +2217,7 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                             }
                             if event.id.0 == crate::tray::QUIT {
                                 #[cfg(windows)]
-                                let _ = crate::dock::shutdown(&settings.read(cx).path);
+                                let _ = crate::dock::shutdown(&settings.read(cx).path, true);
                                 cx.quit();
                                 return;
                             }

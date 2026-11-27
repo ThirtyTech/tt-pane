@@ -20,6 +20,18 @@ struct Member {
     restore: Rect,
 }
 
+/// A window that was docked when tt-pane quit. Quitting puts it back on
+/// screen; the next start docks it again, unless it closed or moved since.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Resumed {
+    handle: u64,
+    id: String,
+    /// Where it was before it was docked, for undocking it after the restart.
+    restore: Rect,
+    /// Where quitting left it. A window found elsewhere was moved, and stays out.
+    left: Rect,
+}
+
 /// A key pressed in dock pick mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PickStep {
@@ -81,6 +93,9 @@ pub(crate) struct Dock {
     /// it was docked as soon as it is restored, rather than to its parking spot.
     #[serde(default)]
     minimized: Vec<Member>,
+    /// Windows docked when tt-pane last quit, docked again by the next start.
+    #[serde(default)]
+    resume: Vec<Resumed>,
 }
 
 /// Native operations the dock needs, faked in tests.
@@ -125,9 +140,13 @@ impl Dock {
     }
 
     /// Save the dock, or remove its file once it tracks nothing: no docked,
-    /// minimized-out or squeezed windows.
+    /// minimized-out, squeezed or resuming windows.
     pub fn save(&self, path: &Path) -> Result<()> {
-        if self.members.is_empty() && self.minimized.is_empty() && self.squeezed.is_empty() {
+        if self.members.is_empty()
+            && self.minimized.is_empty()
+            && self.squeezed.is_empty()
+            && self.resume.is_empty()
+        {
             return match std::fs::remove_file(Self::sidecar(path)) {
                 Ok(()) => Ok(()),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -386,6 +405,7 @@ impl Dock {
     /// One observation: minimized windows, clicked previews, then focus changes.
     pub(crate) fn step(&mut self, native: &dyn Native, clicks: &[u64]) -> Result<()> {
         self.prune(native);
+        self.resume(native);
         // Before anything parks: parking would restore a minimized window.
         self.follow_minimized(native);
         // Docked windows that aren't at their park spot, because the edge, fill
@@ -421,15 +441,49 @@ impl Dock {
         self.return_active(native)
     }
 
-    /// Put every member back where it was before it was docked.
-    pub(crate) fn restore_all(&mut self, native: &dyn Native) -> Result<()> {
+    /// Dock again, in their old order, the windows that were docked when
+    /// tt-pane last quit. Windows that closed, whose handle now names another
+    /// window, or that were moved since are forgotten.
+    fn resume(&mut self, native: &dyn Native) {
+        for entry in std::mem::take(&mut self.resume) {
+            if self.contains(entry.handle) {
+                continue;
+            }
+            let Some((id, bounds)) = native.identity(entry.handle) else {
+                continue;
+            };
+            if id == entry.id && crate::positioning::near(bounds, entry.left) {
+                let _ = self.dock(native, entry.handle, Some(entry.restore));
+            }
+        }
+    }
+
+    /// Put every member back where it was before it was docked. With
+    /// `remember`, for quitting, the next start docks them again; without it,
+    /// for turning the dock off, they're forgotten.
+    pub(crate) fn restore_all(&mut self, native: &dyn Native, remember: bool) -> Result<()> {
         let mut failure = None;
+        // A start that never got to resume, such as one with the dock off,
+        // leaves nothing older to carry over.
+        self.resume.clear();
         for member in std::mem::take(&mut self.members) {
             let result = native
                 .mark(member.handle, false)
                 .and_then(|()| native.place(member.handle, member.restore, None));
+            let identity = native.identity(member.handle);
+            if remember
+                && let Some((id, left)) = &identity
+                && *id == member.id
+            {
+                self.resume.push(Resumed {
+                    handle: member.handle,
+                    id: member.id,
+                    restore: member.restore,
+                    left: *left,
+                });
+            }
             if let Err(error) = result
-                && native.identity(member.handle).is_some()
+                && identity.is_some()
             {
                 failure.get_or_insert(error);
             }
@@ -666,7 +720,7 @@ pub fn observe(config: &crate::config::Config, path: &Path, drag: &mut DragTrack
         platform::hide_dock();
         *drag = DragTracker::default();
         if Dock::exists(&path) {
-            return shutdown(&path);
+            return shutdown(&path, false);
         }
         return Ok(());
     }
@@ -754,9 +808,10 @@ fn snapped_windows(
 }
 
 /// Put every docked window back and remove the panel, for quitting or turning
-/// the dock off.
+/// the dock off. With `remember`, for quitting, the next start docks the
+/// windows again.
 #[cfg(windows)]
-pub fn shutdown(path: &Path) -> Result<()> {
+pub fn shutdown(path: &Path, remember: bool) -> Result<()> {
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let result = (|| {
         if !Dock::exists(&path) {
@@ -772,7 +827,7 @@ pub fn shutdown(path: &Path) -> Result<()> {
             fill: DockFill::default(),
             live: true,
         };
-        let result = dock.restore_all(&desktop);
+        let result = dock.restore_all(&desktop, remember);
         dock.save(&path)?;
         result
     })();
@@ -1070,7 +1125,7 @@ mod tests {
             height: 500,
         };
         fake.windows.borrow_mut().get_mut(&7).unwrap().1 = moved;
-        dock.restore_all(&fake).unwrap();
+        dock.restore_all(&fake, false).unwrap();
         assert_eq!(fake.bounds(7), moved);
         // A snap that tt-pane cut back itself is remembered the same way.
         dock.remember_squeeze(7, "win32:1:7", right_half, moved);
@@ -1203,10 +1258,83 @@ mod tests {
         assert_eq!(dock.active(), None);
         assert_eq!(fake.bounds(2), Action::Center.target(ARENA, ARENA));
 
-        dock.restore_all(&fake).unwrap();
+        dock.restore_all(&fake, false).unwrap();
         assert!(dock.handles().is_empty());
         assert!(fake.marked.borrow().is_empty());
         assert_eq!(fake.bounds(1), originals[0]);
+    }
+
+    #[test]
+    fn quitting_puts_windows_back_and_the_next_start_docks_them_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let fake = Fake::with(&[1, 2, 3]);
+        let originals = [fake.bounds(1), fake.bounds(2)];
+        let mut dock = Dock::default();
+        dock.toggle(&fake, 1).unwrap();
+        dock.toggle(&fake, 2).unwrap();
+        fake.set_foreground(Some(3));
+        dock.step(&fake, &[2]).unwrap();
+
+        dock.restore_all(&fake, true).unwrap();
+        assert!(dock.handles().is_empty());
+        assert!(fake.marked.borrow().is_empty());
+        assert_eq!([fake.bounds(1), fake.bounds(2)], originals);
+        // The file outlives the quit, for the next start.
+        dock.save(&path).unwrap();
+        assert!(Dock::exists(&path));
+
+        let mut dock = Dock::load(&path).unwrap();
+        fake.set_foreground(Some(3));
+        dock.step(&fake, &[]).unwrap();
+        assert_eq!(dock.handles(), [1, 2]);
+        assert_eq!(dock.active(), None);
+        assert_eq!(*fake.marked.borrow(), [1, 2]);
+        assert_eq!(
+            [fake.bounds(1), fake.bounds(2)],
+            [parked_at(0), parked_at(1)]
+        );
+        // Undocking after the restart still puts it back where it began.
+        dock.toggle(&fake, 2).unwrap();
+        assert_eq!(fake.bounds(2), originals[1]);
+        assert!(dock.resume.is_empty());
+    }
+
+    #[test]
+    fn the_next_start_forgets_windows_that_closed_changed_or_moved() {
+        let fake = Fake::with(&[1, 2, 3, 4]);
+        let mut dock = Dock::default();
+        for handle in 1..=4 {
+            dock.toggle(&fake, handle).unwrap();
+        }
+        dock.restore_all(&fake, true).unwrap();
+        fake.windows.borrow_mut().remove(&1);
+        fake.windows.borrow_mut().get_mut(&2).unwrap().0 = "win32:9:2".into();
+        fake.windows.borrow_mut().get_mut(&3).unwrap().1.x += 50;
+
+        dock.step(&fake, &[]).unwrap();
+        assert_eq!(dock.handles(), [4]);
+        assert_eq!(fake.bounds(4), parked_at(0));
+        assert!(dock.resume.is_empty());
+    }
+
+    #[test]
+    fn turning_the_dock_off_forgets_windows_instead_of_docking_them_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let fake = Fake::with(&[1]);
+        let mut dock = Dock::default();
+        dock.toggle(&fake, 1).unwrap();
+        dock.restore_all(&fake, false).unwrap();
+        assert!(dock.resume.is_empty());
+
+        // Quit, then started with the dock off: nothing is carried over.
+        dock.toggle(&fake, 1).unwrap();
+        dock.restore_all(&fake, true).unwrap();
+        assert_eq!(dock.resume.len(), 1);
+        dock.restore_all(&fake, false).unwrap();
+        dock.save(&path).unwrap();
+        assert!(!Dock::exists(&path));
     }
 
     #[test]
