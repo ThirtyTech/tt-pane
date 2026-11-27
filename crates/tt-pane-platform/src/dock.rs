@@ -249,17 +249,34 @@ pub fn slots_from(panel: Rect, edge: DockEdge, fill: DockFill, count: usize) -> 
 /// How much of a parked window stays on the monitor, in each direction.
 pub const PARK_SLIVER: i32 = 8;
 
+/// How far each docked window's park spot moves from the previous one's, along
+/// both axes. Chrome stops drawing a window that others cover completely, even
+/// off screen, so docked windows must not park on top of each other. Stepping
+/// diagonally leaves every window one corner no other docked window covers.
+pub const PARK_STEP: i32 = 2;
+
+/// Docked windows past this many share the last park spot.
+pub const PARK_STEPS: usize = 32;
+
+/// How far the park spot for the docked window at `step` moves inward.
+fn park_offset(step: usize) -> i32 {
+    PARK_STEP * step.min(PARK_STEPS - 1) as i32
+}
+
 /// Where to park a docked window of `size`: nearly off the monitor past the
 /// panel's fill corner, with a `PARK_SLIVER` square left on screen under the
 /// panel. Chrome (and other Chromium apps) treat a window that is on no screen
 /// at all as hidden and stop drawing it, which freezes its preview; a covered
-/// sliver keeps them drawing. `None` when that spot would show part of the
-/// window on one of the `others` monitors.
+/// sliver keeps them drawing. Each `step` (the window's place in the dock)
+/// moves the spot `PARK_STEP` further onto the monitor, still under the panel.
+/// `None` when that spot would show part of the window on one of the `others`
+/// monitors.
 pub fn park_rect(
     monitor: Rect,
     edge: DockEdge,
     fill: DockFill,
     (width, height): (i32, i32),
+    step: usize,
     others: &[Rect],
 ) -> Option<Rect> {
     // The monitor corner at the fill end of the edge.
@@ -269,16 +286,17 @@ pub fn park_rect(
         (DockEdge::Bottom, DockFill::Start) | (DockEdge::Left, DockFill::End) => (false, true),
         (DockEdge::Bottom, DockFill::End) | (DockEdge::Right, DockFill::End) => (true, true),
     };
+    let offset = park_offset(step);
     let rect = Rect {
         x: if right {
-            monitor.x + monitor.width - PARK_SLIVER
+            monitor.x + monitor.width - PARK_SLIVER - offset
         } else {
-            monitor.x - width + PARK_SLIVER
+            monitor.x - width + PARK_SLIVER + offset
         },
         y: if bottom {
-            monitor.y + monitor.height - PARK_SLIVER
+            monitor.y + monitor.height - PARK_SLIVER - offset
         } else {
-            monitor.y - height + PARK_SLIVER
+            monitor.y - height + PARK_SLIVER + offset
         },
         width,
         height,
@@ -290,8 +308,9 @@ pub fn park_rect(
 /// another display: peeking `PARK_SLIVER` into a gap of the virtual screen (the
 /// box around all `monitors`) where no monitor is, so nothing of it shows.
 /// Chrome counts a window anywhere in that box as on screen and keeps drawing.
+/// Each `step` moves the spot `PARK_STEP` further in, as in `park_rect`.
 /// `None` when the monitors leave no such gap along the box's edges.
-pub fn gap_park_rect(monitors: &[Rect], (width, height): (i32, i32)) -> Option<Rect> {
+pub fn gap_park_rect(monitors: &[Rect], (width, height): (i32, i32), step: usize) -> Option<Rect> {
     let first = monitors.first()?;
     let (mut left, mut top) = (first.x, first.y);
     let (mut right, mut bottom) = (first.x + first.width, first.y + first.height);
@@ -319,12 +338,14 @@ pub fn gap_park_rect(monitors: &[Rect], (width, height): (i32, i32)) -> Option<R
         .flat_map(|m| [m.y - height, m.y + m.height])
         .chain([top, bottom - height])
         .collect();
-    let along = |y: i32| xs.iter().map(move |&x| (x, y));
-    let down = |x: i32| ys.iter().map(move |&y| (x, y));
-    along(top - height + PARK_SLIVER)
-        .chain(along(bottom - PARK_SLIVER))
-        .chain(down(left - width + PARK_SLIVER))
-        .chain(down(right - PARK_SLIVER))
+    // Each spot moves inward by the step's offset, and along the edge too.
+    let o = park_offset(step);
+    let along = |y: i32| xs.iter().map(move |&x| (x + o, y));
+    let down = |x: i32| ys.iter().map(move |&y| (x, y + o));
+    along(top - height + PARK_SLIVER + o)
+        .chain(along(bottom - PARK_SLIVER - o))
+        .chain(down(left - width + PARK_SLIVER + o))
+        .chain(down(right - PARK_SLIVER - o))
         .map(|(x, y)| Rect {
             x,
             y,
@@ -580,15 +601,15 @@ mod tests {
     #[test]
     fn parked_windows_keep_a_covered_corner_on_the_monitor() {
         let size = PREVIEW_SOURCE;
-        let park = park_rect(MONITOR, DockEdge::Bottom, DockFill::Start, size, &[]).unwrap();
+        let park = park_rect(MONITOR, DockEdge::Bottom, DockFill::Start, size, 0, &[]).unwrap();
         assert_eq!((park.x, park.y), (8 - 1920, 1440 - 8));
         assert_eq!((park.width, park.height), PREVIEW_SOURCE);
-        let park = park_rect(MONITOR, DockEdge::Right, DockFill::End, size, &[]).unwrap();
+        let park = park_rect(MONITOR, DockEdge::Right, DockFill::End, size, 0, &[]).unwrap();
         assert_eq!((park.x, park.y), (2560 - 8, 1440 - 8));
-        let park = park_rect(MONITOR, DockEdge::Top, DockFill::Start, size, &[]).unwrap();
+        let park = park_rect(MONITOR, DockEdge::Top, DockFill::Start, size, 0, &[]).unwrap();
         assert_eq!((park.x, park.y), (8 - 1920, 8 - 1080));
         // A window stowed at its own size still leaves just the sliver on screen.
-        let park = park_rect(MONITOR, DockEdge::Left, DockFill::Start, (800, 600), &[]).unwrap();
+        let park = park_rect(MONITOR, DockEdge::Left, DockFill::Start, (800, 600), 0, &[]).unwrap();
         assert_eq!((park.x, park.y), (8 - 800, 8 - 600));
         // A monitor beside that corner would show the window: park elsewhere.
         let left = Rect {
@@ -598,10 +619,10 @@ mod tests {
             height: 1080,
         };
         assert_eq!(
-            park_rect(MONITOR, DockEdge::Bottom, DockFill::Start, size, &[left]),
+            park_rect(MONITOR, DockEdge::Bottom, DockFill::Start, size, 0, &[left]),
             None
         );
-        assert!(park_rect(MONITOR, DockEdge::Bottom, DockFill::End, size, &[left]).is_some());
+        assert!(park_rect(MONITOR, DockEdge::Bottom, DockFill::End, size, 0, &[left]).is_some());
     }
 
     #[test]
@@ -628,19 +649,72 @@ mod tests {
                 DockEdge::Top,
                 DockFill::Start,
                 PREVIEW_SOURCE,
+                0,
                 &others
             ),
             None
         );
-        let park = gap_park_rect(&monitors, PREVIEW_SOURCE).unwrap();
+        let park = gap_park_rect(&monitors, PREVIEW_SOURCE, 0).unwrap();
         assert_eq!((park.width, park.height), PREVIEW_SOURCE);
         // It touches the box around the monitors, but no monitor shows it.
         assert!(park.y + park.height > -167 && park.x < 5760 && park.x + park.width > -1932);
         assert!(!monitors.iter().any(|m| intersects(park, *m)));
         // Monitors that fill their box leave no gap.
-        assert_eq!(gap_park_rect(&[MONITOR], PREVIEW_SOURCE), None);
+        assert_eq!(gap_park_rect(&[MONITOR], PREVIEW_SOURCE, 0), None);
         let beside = rect(2560, 0, 2560, 1440);
-        assert_eq!(gap_park_rect(&[MONITOR, beside], PREVIEW_SOURCE), None);
+        assert_eq!(gap_park_rect(&[MONITOR, beside], PREVIEW_SOURCE, 0), None);
+    }
+
+    #[test]
+    fn every_docked_window_keeps_a_corner_no_other_covers() {
+        // Chrome stops drawing a window the others cover completely, so each
+        // parked window needs a point that none of the others contain.
+        let contains = |r: Rect, (x, y): (i32, i32)| {
+            x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height
+        };
+        let check = |spots: Vec<Rect>| {
+            for (i, spot) in spots.iter().enumerate() {
+                let corners = [
+                    (spot.x, spot.y),
+                    (spot.x + spot.width - 1, spot.y),
+                    (spot.x, spot.y + spot.height - 1),
+                    (spot.x + spot.width - 1, spot.y + spot.height - 1),
+                ];
+                assert!(
+                    corners.iter().any(|&corner| spots
+                        .iter()
+                        .enumerate()
+                        .all(|(j, other)| j == i || !contains(*other, corner))),
+                    "window {i} is covered by the others"
+                );
+            }
+        };
+        for (edge, fill) in [
+            (DockEdge::Top, DockFill::Start),
+            (DockEdge::Bottom, DockFill::End),
+            (DockEdge::Right, DockFill::Start),
+        ] {
+            let spots: Vec<Rect> = (0..6)
+                .map(|step| park_rect(MONITOR, edge, fill, PREVIEW_SOURCE, step, &[]).unwrap())
+                .collect();
+            // Each step moves the window further under the panel's corner.
+            assert_ne!(spots[0], spots[1]);
+            check(spots);
+        }
+        let beside = Rect {
+            x: 2560,
+            y: 400,
+            width: 1920,
+            height: 1080,
+        };
+        let monitors = [MONITOR, beside];
+        let spots: Vec<Rect> = (0..6)
+            .map(|step| gap_park_rect(&monitors, PREVIEW_SOURCE, step).unwrap())
+            .collect();
+        for spot in &spots {
+            assert!(!monitors.iter().any(|m| intersects(*spot, *m)));
+        }
+        check(spots);
     }
 
     #[test]

@@ -88,12 +88,15 @@ pub(crate) trait Native {
     /// The id and visible bounds of a window that still exists.
     fn identity(&self, handle: u64) -> Option<(String, Rect)>;
     fn mark(&self, handle: u64, docked: bool) -> Result<()>;
-    fn park(&self, handle: u64) -> Result<()>;
-    /// Send a window in the arena back to the dock, gliding into `slot` when
-    /// animation is on.
-    fn stow(&self, handle: u64, slot: Option<Rect>) -> Result<()>;
-    /// Whether `bounds` is where `park` puts windows.
-    fn parked(&self, bounds: Rect) -> bool;
+    /// Park a window at its own spot for `step`, its place in the dock, so
+    /// docked windows don't cover each other (Chrome stops drawing a window
+    /// others cover completely).
+    fn park(&self, handle: u64, step: usize) -> Result<()>;
+    /// Send a window in the arena back to the dock at its current size,
+    /// gliding into `slot` when animation is on.
+    fn stow(&self, handle: u64, slot: Option<Rect>, step: usize) -> Result<()>;
+    /// Whether `bounds` is where the window at `step` is parked.
+    fn parked(&self, bounds: Rect, step: usize) -> bool;
     /// Move a window to `target`, gliding from `from` when animation is on.
     fn place(&self, handle: u64, target: Rect, from: Option<Rect>) -> Result<()>;
     fn focus(&self, handle: u64) -> Result<()>;
@@ -246,7 +249,7 @@ impl Dock {
             .identity(handle)
             .context("The window to dock is no longer open")?;
         native.mark(handle, true)?;
-        if let Err(error) = native.park(handle) {
+        if let Err(error) = native.park(handle, self.step_of(handle)) {
             let _ = native.mark(handle, false);
             return Err(error).context("Move the window into the dock");
         }
@@ -259,6 +262,14 @@ impl Dock {
             self.settled = Some(handle);
         }
         Ok(())
+    }
+
+    /// A member's place in the dock, or the next place for a new one.
+    fn step_of(&self, handle: u64) -> usize {
+        self.members
+            .iter()
+            .position(|m| m.handle == handle)
+            .unwrap_or(self.members.len())
     }
 
     fn undock(&mut self, native: &dyn Native, handle: u64) -> Result<()> {
@@ -322,7 +333,7 @@ impl Dock {
             return native.focus(handle);
         }
         if let Some(previous) = self.active.take() {
-            native.stow(previous, native.slot(previous))?;
+            native.stow(previous, native.slot(previous), self.step_of(previous))?;
         }
         let arena = native.arena()?;
         let target = Action::Center.target(arena, arena);
@@ -334,7 +345,7 @@ impl Dock {
 
     fn return_active(&mut self, native: &dyn Native) -> Result<()> {
         match self.active.take() {
-            Some(handle) => native.stow(handle, native.slot(handle)),
+            Some(handle) => native.stow(handle, native.slot(handle), self.step_of(handle)),
             None => Ok(()),
         }
     }
@@ -377,15 +388,17 @@ impl Dock {
         self.prune(native);
         // Before anything parks: parking would restore a minimized window.
         self.follow_minimized(native);
-        // Docked windows that aren't at the park spot, because the edge or fill
-        // changed or an older build parked them elsewhere, move there now.
-        for member in &self.members {
+        // Docked windows that aren't at their park spot, because the edge, fill
+        // or their place in the dock changed or an older build parked them
+        // elsewhere, move there now. They keep their size, so a window that is
+        // already laid out doesn't flash on screen to grow to 1080p again.
+        for (step, member) in self.members.iter().enumerate() {
             if Some(member.handle) != self.active
                 && native
                     .identity(member.handle)
-                    .is_some_and(|(_, bounds)| !native.parked(bounds))
+                    .is_some_and(|(_, bounds)| !native.parked(bounds, step))
             {
-                let _ = native.park(member.handle);
+                let _ = native.stow(member.handle, None, step);
             }
         }
         if let Some(&clicked) = clicks.iter().rev().find(|h| self.contains(**h)) {
@@ -503,13 +516,13 @@ mod native {
         fn mark(&self, handle: u64, docked: bool) -> Result<()> {
             platform::set_docked(handle, docked)
         }
-        fn park(&self, handle: u64) -> Result<()> {
-            platform::park_window(handle, self.edge, self.fill, self.live).map(|_| ())
+        fn park(&self, handle: u64, step: usize) -> Result<()> {
+            platform::park_window(handle, self.edge, self.fill, self.live, step).map(|_| ())
         }
-        fn stow(&self, handle: u64, slot: Option<Rect>) -> Result<()> {
-            platform::stow_window(handle, slot, self.edge, self.fill, self.live).map(|_| ())
+        fn stow(&self, handle: u64, slot: Option<Rect>, step: usize) -> Result<()> {
+            platform::stow_window(handle, slot, self.edge, self.fill, self.live, step).map(|_| ())
         }
-        fn parked(&self, bounds: Rect) -> bool {
+        fn parked(&self, bounds: Rect, step: usize) -> bool {
             // Position only, for the window's own size: an application may
             // refuse the 1080p size, and a stowed window keeps its size, so
             // comparing sizes would re-park it on every observation.
@@ -518,6 +531,7 @@ mod native {
                 self.fill,
                 (bounds.width, bounds.height),
                 self.live,
+                step,
             )
             .is_ok_and(|target| {
                 target.x.abs_diff(bounds.x) <= 2 && target.y.abs_diff(bounds.y) <= 2
@@ -794,6 +808,14 @@ mod tests {
         height: 1080,
     };
 
+    /// Where the fake parks the window at `step`: each place its own spot.
+    fn parked_at(step: usize) -> Rect {
+        Rect {
+            x: PARKED.x + 2 * step as i32,
+            ..PARKED
+        }
+    }
+
     impl Fake {
         fn with(handles: &[u64]) -> Self {
             let fake = Self::default();
@@ -833,18 +855,18 @@ mod tests {
             }
             Ok(())
         }
-        fn parked(&self, bounds: Rect) -> bool {
-            bounds == PARKED
+        fn parked(&self, bounds: Rect, step: usize) -> bool {
+            bounds == parked_at(step)
         }
-        fn stow(&self, handle: u64, slot: Option<Rect>) -> Result<()> {
+        fn stow(&self, handle: u64, slot: Option<Rect>, step: usize) -> Result<()> {
             self.log
                 .borrow_mut()
                 .push(format!("stow {handle} to {}", slot.is_some()));
-            self.park(handle)
+            self.park(handle, step)
         }
-        fn park(&self, handle: u64) -> Result<()> {
+        fn park(&self, handle: u64, step: usize) -> Result<()> {
             self.parked.borrow_mut().push(handle);
-            self.windows.borrow_mut().get_mut(&handle).unwrap().1 = PARKED;
+            self.windows.borrow_mut().get_mut(&handle).unwrap().1 = parked_at(step);
             Ok(())
         }
         fn place(&self, handle: u64, target: Rect, from: Option<Rect>) -> Result<()> {
@@ -1130,7 +1152,27 @@ mod tests {
         let slot = pick_target(&dock.handles(), dock.active(), PickStep::Slot(2)).unwrap();
         dock.step(&fake, &[slot]).unwrap();
         assert_eq!((dock.active(), fake.bounds(3)), (Some(3), center));
-        assert_eq!(fake.bounds(2), PARKED);
+        assert_eq!(fake.bounds(2), parked_at(1));
+    }
+
+    #[test]
+    fn docked_windows_park_apart_and_close_up_when_one_leaves() {
+        let fake = Fake::with(&[1, 2, 3]);
+        let mut dock = Dock::default();
+        for h in [1, 2, 3] {
+            dock.toggle(&fake, h).unwrap();
+        }
+        // Each window has its own spot, so none covers another completely.
+        let spots: Vec<Rect> = [1, 2, 3].map(|h| fake.bounds(h)).to_vec();
+        assert_eq!(spots, [parked_at(0), parked_at(1), parked_at(2)]);
+        // Undocking the first moves the others up a place, keeping their size.
+        dock.toggle(&fake, 1).unwrap();
+        dock.step(&fake, &[]).unwrap();
+        assert_eq!(
+            (fake.bounds(2), fake.bounds(3)),
+            (parked_at(0), parked_at(1))
+        );
+        assert!(fake.log.borrow().contains(&"stow 2 to false".to_string()));
     }
 
     #[test]

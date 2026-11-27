@@ -303,19 +303,27 @@ fn monitor_rects() -> Vec<Rect> {
 /// Chrome stops drawing a window that is on no screen at all, which freezes its
 /// preview. If that corner touches another display, peeking into a gap between
 /// monitors instead. Past every monitor when there is no such gap, or without
-/// `live` previews, which saves the power those windows spend drawing.
-pub fn park_target(edge: DockEdge, fill: DockFill, size: (i32, i32), live: bool) -> Result<Rect> {
+/// `live` previews, which saves the power those windows spend drawing. `step`
+/// is the window's place in the dock, so docked windows don't park on top of
+/// each other: Chrome stops drawing a window the others cover completely.
+pub fn park_target(
+    edge: DockEdge,
+    fill: DockFill,
+    size: (i32, i32),
+    live: bool,
+    step: usize,
+) -> Result<Rect> {
     if live {
         let (monitor, _) = dock_monitor()?;
         let others: Vec<Rect> = monitor_rects()
             .into_iter()
             .filter(|rect| *rect != monitor)
             .collect();
-        if let Some(rect) = dock::park_rect(monitor, edge, fill, size, &others) {
+        if let Some(rect) = dock::park_rect(monitor, edge, fill, size, step, &others) {
             return Ok(rect);
         }
         let monitors: Vec<Rect> = others.into_iter().chain([monitor]).collect();
-        if let Some(rect) = dock::gap_park_rect(&monitors, size) {
+        if let Some(rect) = dock::gap_park_rect(&monitors, size, step) {
             return Ok(rect);
         }
     }
@@ -343,8 +351,14 @@ const STAGING_SETTLE: std::time::Duration = std::time::Duration::from_millis(200
 /// monitor first and gets a moment to redraw, because some applications
 /// (Explorer) leave content they lay out off screen blank. Moving an already
 /// laid-out window off screen keeps its content.
-pub fn park_window(handle: u64, edge: DockEdge, fill: DockFill, live: bool) -> Result<Rect> {
-    let target = park_target(edge, fill, dock::PREVIEW_SOURCE, live)?;
+pub fn park_window(
+    handle: u64,
+    edge: DockEdge,
+    fill: DockFill,
+    live: bool,
+    step: usize,
+) -> Result<Rect> {
+    let target = park_target(edge, fill, dock::PREVIEW_SOURCE, live, step)?;
     crate::with_snap_animation(None, || {
         let current = docked_window(handle).map(|(_, bounds)| bounds);
         let sized = current.is_some_and(|bounds| {
@@ -372,10 +386,11 @@ pub fn stow_window(
     edge: DockEdge,
     fill: DockFill,
     live: bool,
+    step: usize,
 ) -> Result<Rect> {
     let (_, bounds) =
         docked_window(handle).ok_or_else(|| anyhow::anyhow!("Window is no longer available"))?;
-    let target = park_target(edge, fill, (bounds.width, bounds.height), live)?;
+    let target = park_target(edge, fill, (bounds.width, bounds.height), live, step)?;
     let glide = match (slot, crate::snap_animation()) {
         (Some(slot), Some(duration)) => {
             Glide::new(handle, bounds).ok().map(|g| (g, slot, duration))
