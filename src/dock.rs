@@ -82,6 +82,53 @@ pub(crate) fn pick_target(members: &[u64], current: Option<u64>, step: PickStep)
     members.get(chosen).copied()
 }
 
+/// The window dock pick mode chose last and its place in the dock then, so
+/// the next pick mode starts there instead of at the first preview.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LastPick {
+    handle: u64,
+    slot: usize,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+impl LastPick {
+    fn of(members: &[u64], handle: u64) -> Option<Self> {
+        let slot = members.iter().position(|&m| m == handle)?;
+        Some(Self { handle, slot })
+    }
+
+    /// The member to start from: the same window if it's still docked, or
+    /// else whichever now holds its place (the last one, if the dock shrank).
+    fn resume(self, members: &[u64]) -> Option<u64> {
+        if members.contains(&self.handle) {
+            return Some(self.handle);
+        }
+        let last = members.len().checked_sub(1)?;
+        members.get(self.slot.min(last)).copied()
+    }
+}
+
+#[cfg(windows)]
+static LAST_PICK: std::sync::Mutex<Option<LastPick>> = std::sync::Mutex::new(None);
+
+/// The window a pick step counts from: the one waiting to come out, the one
+/// out of the dock, or, as pick mode starts, the one picked last time.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn pick_current(
+    members: &[u64],
+    pending: Option<u64>,
+    active: Option<u64>,
+    last: Option<LastPick>,
+    step: PickStep,
+) -> Option<u64> {
+    pending.or(active).or_else(|| {
+        matches!(step, PickStep::Start)
+            .then(|| last.and_then(|last| last.resume(members)))
+            .flatten()
+    })
+}
+
 /// A snapped window cut back so it stops short of the panel.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Squeezed {
@@ -734,9 +781,17 @@ pub(crate) fn pick(config: &crate::config::Config, path: &Path, step: PickStep) 
     if members.is_empty() {
         return Ok(false);
     }
-    let current = platform::pending_dock_pick().or(dock.active());
+    let mut last = LAST_PICK.lock().unwrap_or_else(|e| e.into_inner());
+    let current = pick_current(
+        &members,
+        platform::pending_dock_pick(),
+        dock.active(),
+        *last,
+        step,
+    );
     if let Some(handle) = pick_target(&members, current, step.in_order(config.dock.fill)) {
         platform::pick_dock(handle);
+        *last = LastPick::of(&members, handle);
     }
     Ok(true)
 }
@@ -1268,6 +1323,37 @@ mod tests {
         dock.step(&fake, &[slot]).unwrap();
         assert_eq!((dock.active(), fake.bounds(3)), (Some(3), center));
         assert_eq!(fake.bounds(2), parked_at(1));
+    }
+
+    #[test]
+    fn pick_mode_starts_from_the_window_picked_last() {
+        let members = [10, 20, 30];
+        let start = |last| {
+            let current = pick_current(&members, None, None, last, PickStep::Start);
+            pick_target(&members, current, PickStep::Start)
+        };
+        assert_eq!(start(None), Some(10));
+        assert_eq!(start(LastPick::of(&members, 20)), Some(20));
+        // A window still out of the dock, or waiting to come out, comes first.
+        let last = LastPick::of(&members, 20);
+        assert_eq!(
+            pick_current(&members, None, Some(30), last, PickStep::Start),
+            Some(30)
+        );
+        assert_eq!(
+            pick_current(&members, Some(10), None, last, PickStep::Start),
+            Some(10)
+        );
+        // Only the start of the mode goes back to the last pick.
+        assert_eq!(
+            pick_current(&members, None, None, last, PickStep::Next),
+            None
+        );
+        // The window left the dock: start from the place it had.
+        let gone = LastPick::of(&[10, 20, 99], 99);
+        assert_eq!(start(gone), Some(30));
+        assert_eq!(gone.unwrap().resume(&[10]), Some(10));
+        assert_eq!(gone.unwrap().resume(&[]), None);
     }
 
     #[test]
