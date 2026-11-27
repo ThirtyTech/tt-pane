@@ -88,7 +88,7 @@ Turn on **Settings → Snapping → Animation → Animate snapping** and save to
 
 ## Experimental dock (Windows)
 
-Turn on **Settings → Dock → Show the dock** and save to add a panel along one edge of the primary monitor (bottom by default; top, left or right, at 5–40% of the screen, 15% by default). Dock the focused window with **Ctrl+Alt+D**, or drag a window onto the panel. Each docked window shows as a live preview, rendered at 1920×1080 off screen. Click a preview to bring that window into the Center position of the remaining screen; focusing any other window sends it back. Ctrl+Alt+D on a docked window undocks it, and turning the dock off or quitting puts every docked window back. It is off by default. See the [configuration reference](docs-site/src/content/docs/configuration.md#dock-experimental--windows).
+Turn on **Settings → Dock → Show the dock** and save to add a panel along one edge of the primary monitor (bottom by default; top, left or right, 5–40% of the screen thick, 10% by default). The panel is only as long as its docked windows need, growing from the end you choose (**Fill from**), and disappears when nothing is docked. Dock the focused window with **Ctrl+Alt+D**, or drag a window onto the panel. Each docked window shows as a live preview, rendered at 1920×1080 off screen. Click a preview to bring that window into the Center position of the remaining screen; focusing any other window sends it back. Ctrl+Alt+D on a docked window undocks it, and turning the dock off or quitting puts every docked window back. It is off by default. See the [configuration reference](docs-site/src/content/docs/configuration.md#dock-experimental--windows).
 
 ## Experimental automatic tiling
 

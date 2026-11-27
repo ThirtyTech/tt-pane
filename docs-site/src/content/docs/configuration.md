@@ -54,7 +54,8 @@ duration_ms = 160
 [dock]
 enabled = false
 edge = "bottom" # or "top", "left", "right"
-size_percent = 15
+fill = "start" # left or top end; "end" for right or bottom
+size_percent = 10
 
 [[bindings]]
 action = "left"
@@ -126,13 +127,16 @@ Tiling, swaps and shared-boundary resizes still move windows instantly.
 **Settings → Dock → Show the dock** adds a panel along one edge of the primary monitor. Windows you dock appear in it as live previews; click one to bring that window into the middle of the screen. It goes back to the dock as soon as you focus another window. The dock is off by default, including for existing configurations.
 
 - **Edge** puts the panel on the top, bottom, left or right of the screen (`edge`, default `"bottom"`).
-- **Size** is the panel's share of the screen height for the top and bottom, or of its width for the sides (`size_percent`, 5–40, default 15).
+- **Fill from** chooses the end of the edge the panel grows from: **Left** or **Right** on the top and bottom, **Top** or **Bottom** on the sides (`fill`, `"start"` for left or top, `"end"` for right or bottom; default `"start"`).
+- **Size** is the panel's thickness: its share of the screen height for the top and bottom, or of its width for the sides (`size_percent`, 5–40, default 10).
 
-The panel reserves its strip the way the taskbar does, and sits beside the taskbar when both are on the same edge. Maximized windows, snaps, Center, centered groups and automatic tiling all use the space that's left, the *arena*.
+The panel is only as long as its docked windows need. With the top edge filling from the left, the first window docks in the top-left corner and each new one adds a slot to its right. Once the edge is full, the slots shrink so every window fits. With nothing docked the panel disappears and gives its space back. While you drag a window, an empty slot appears at the end of the panel (at the fill corner when nothing is docked) for you to drop it on.
+
+While something is docked, the panel reserves space the way the taskbar does, and it sits beside the taskbar when both are on the same edge. Maximized windows, snaps, Center, centered groups and automatic tiling all use the space that's left, the *arena*. Windows reserves the panel's thickness along the whole edge, even where the panel is shorter, so the arena loses that full strip.
 
 **Docking a window.** Press **Ctrl + Alt + D** (**Dock / undock window**) to dock the focused window, or drag a window by its title bar and drop it on the panel. The same shortcut on a docked window takes it out of the dock and puts it back where it was before you docked it. A window dragged onto the panel goes back to where the drag started. From the command line, `tt-pane apply dock` (or `--window HWND`) does the same. tt-pane must be running in the tray, since that process shows the panel.
 
-**Previews.** A docked window is resized to 1920×1080 and moved off screen, where Windows keeps drawing it. Its preview is a live thumbnail of that window, scaled to fit its slot. Slots are 16:9, fill the panel's thickness and shrink so every docked window fits. Some applications stop drawing while they're off screen, and their preview shows the last thing they drew.
+**Previews.** A docked window is resized to 1920×1080 and moved almost entirely off the screen, past the panel's fill corner. A small corner of it stays on screen, hidden under the panel or the taskbar, because applications such as Explorer stop drawing a window that is on no screen at all. If another monitor sits beside that corner, the window is parked past every monitor instead. Its preview is a live thumbnail of that window, scaled to fit its slot. Slots are 16:9 and fill the panel's thickness. An application that still stops drawing when it's covered shows the last thing it drew.
 
 **The arena.** Clicking a preview moves its window to the Center position in the arena (half the arena's width and height, centered) and focuses it; its slot is outlined while it's out. With [animated snapping](#animated-snapping-experimental) on, the window glides out of its preview. Focusing any other window, by clicking it, with Alt + Tab or with the taskbar, sends it back to the dock. Choosing a docked window with Alt + Tab or the taskbar brings it into the arena too. Only one docked window is out at a time.
 
