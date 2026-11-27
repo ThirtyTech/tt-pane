@@ -14,6 +14,8 @@ use std::{
 use zbus::blocking::Connection;
 
 const BUS_NAME: &str = "net.thirtytech.TtPane";
+/// How long a call to the extension may take before it counts as lost.
+const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 const OBJECT_PATH: &str = "/net/thirtytech/TtPane";
 const INTERFACE: &str = "net.thirtytech.TtPane";
 
@@ -60,7 +62,13 @@ pub(super) fn connection() -> Result<Connection> {
     if let Some(connection) = shared.as_ref() {
         return Ok(connection.clone());
     }
-    let connection = Connection::session().context("Connect to the D-Bus session bus")?;
+    // A call GNOME Shell never answers, such as one made while the shell
+    // restarts or the session ends, would otherwise wait forever, and the
+    // dock waits with the positioning lock held. A busy shell can take most
+    // of a second, so this only gives up on calls that are lost.
+    let connection = zbus::blocking::connection::Builder::session()
+        .and_then(|builder| builder.method_timeout(CALL_TIMEOUT).build())
+        .context("Connect to the D-Bus session bus")?;
     *shared = Some(connection.clone());
     Ok(connection)
 }
@@ -91,7 +99,9 @@ where
             }
             // The extension's thrown errors arrive as the method error's message.
             zbus::Error::MethodError(_, Some(message), _) => anyhow::anyhow!("{message}"),
-            _ => anyhow::Error::new(error).context("Call the tt-pane GNOME Shell extension"),
+            _ => anyhow::Error::new(error).context(format!(
+                "Call {method} on the tt-pane GNOME Shell extension"
+            )),
         })?;
     reply
         .body()
