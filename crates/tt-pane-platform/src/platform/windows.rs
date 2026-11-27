@@ -5,8 +5,8 @@ mod tiling;
 use anyhow::{Result, ensure};
 pub use dock::{
     DockLayout, DockRequest, activate_handle, cursor_position, dock_layout, dock_monitor,
-    dock_running, docked_window, hide_dock, moving_window, park_target, park_window, place_window,
-    set_docked, show_dock, stow_window, take_dock_clicks,
+    dock_running, docked_window, hide_dock, is_minimized, moving_window, park_target, park_window,
+    place_window, set_docked, show_dock, stow_window, take_dock_clicks,
 };
 pub use glow::{
     choose_glow_color, hold_focus_glow, release_focus_glow, show_focus_glow, wait_for_focus_glow,

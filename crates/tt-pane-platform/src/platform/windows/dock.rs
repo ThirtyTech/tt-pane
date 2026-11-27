@@ -420,6 +420,12 @@ impl Drop for Glide {
 }
 
 /// Bring a window to the foreground and wait until Windows confirms it.
+/// Whether a window is minimized.
+pub fn is_minimized(handle: u64) -> bool {
+    // SAFETY: Win32 validates the opaque handle; no pointers are passed.
+    hwnd(handle).is_ok_and(|window| unsafe { IsIconic(window).as_bool() })
+}
+
 pub fn activate_handle(handle: u64) -> Result<()> {
     super::activate_window(hwnd(handle)?)
 }

@@ -46,6 +46,10 @@ pub(crate) struct Dock {
     panel: Option<Rect>,
     #[serde(default)]
     squeezed: Vec<Squeezed>,
+    /// Windows minimized out of the dock. Each goes back to where it was before
+    /// it was docked as soon as it is restored, rather than to its parking spot.
+    #[serde(default)]
+    minimized: Vec<Member>,
 }
 
 /// Native operations the dock needs, faked in tests.
@@ -64,6 +68,7 @@ pub(crate) trait Native {
     fn focus(&self, handle: u64) -> Result<()>;
     fn arena(&self) -> Result<Rect>;
     fn foreground(&self) -> Option<u64>;
+    fn minimized(&self, handle: u64) -> bool;
     /// The member's preview slot, where an activated window starts its glide.
     fn slot(&self, handle: u64) -> Option<Rect>;
 }
@@ -85,9 +90,10 @@ impl Dock {
         }
     }
 
-    /// Save the dock, or remove its file once nothing is docked.
+    /// Save the dock, or remove its file once it tracks nothing: no docked,
+    /// minimized-out or squeezed windows.
     pub fn save(&self, path: &Path) -> Result<()> {
-        if self.members.is_empty() {
+        if self.members.is_empty() && self.minimized.is_empty() && self.squeezed.is_empty() {
             return match std::fs::remove_file(Self::sidecar(path)) {
                 Ok(()) => Ok(()),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -302,9 +308,44 @@ impl Dock {
         }
     }
 
-    /// One observation: clicked previews, then focus changes.
+    /// Minimizing a docked window takes it out of the dock. Restoring it later
+    /// puts it back where it was before it was docked.
+    fn follow_minimized(&mut self, native: &dyn Native) {
+        let mut waiting = Vec::new();
+        for member in std::mem::take(&mut self.minimized) {
+            match native.identity(member.handle) {
+                Some((id, _)) if id == member.id => {
+                    if native.minimized(member.handle) {
+                        waiting.push(member);
+                    } else {
+                        let _ = native.place(member.handle, member.restore, None);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for member in std::mem::take(&mut self.members) {
+            if !native.minimized(member.handle) {
+                self.members.push(member);
+                continue;
+            }
+            if self.active == Some(member.handle) {
+                self.active = None;
+            }
+            if self.settled == Some(member.handle) {
+                self.settled = None;
+            }
+            let _ = native.mark(member.handle, false);
+            waiting.push(member);
+        }
+        self.minimized = waiting;
+    }
+
+    /// One observation: minimized windows, clicked previews, then focus changes.
     pub(crate) fn step(&mut self, native: &dyn Native, clicks: &[u64]) -> Result<()> {
         self.prune(native);
+        // Before anything parks: parking would restore a minimized window.
+        self.follow_minimized(native);
         // Docked windows that aren't at the park spot, such as ones an older
         // build parked elsewhere, move there now.
         for member in &self.members {
@@ -457,6 +498,9 @@ mod native {
         }
         fn foreground(&self) -> Option<u64> {
             platform::foreground_handle()
+        }
+        fn minimized(&self, handle: u64) -> bool {
+            platform::is_minimized(handle)
         }
         fn slot(&self, handle: u64) -> Option<Rect> {
             platform::dock_layout()?
@@ -663,6 +707,7 @@ mod tests {
         parked: RefCell<Vec<u64>>,
         log: RefCell<Vec<String>>,
         foreground: RefCell<Option<u64>>,
+        minimized: RefCell<Vec<u64>>,
     }
 
     const PARKED: Rect = Rect {
@@ -745,6 +790,9 @@ mod tests {
         }
         fn foreground(&self) -> Option<u64> {
             *self.foreground.borrow()
+        }
+        fn minimized(&self, handle: u64) -> bool {
+            self.minimized.borrow().contains(&handle)
         }
         fn slot(&self, _handle: u64) -> Option<Rect> {
             Some(Rect {
@@ -928,6 +976,43 @@ mod tests {
         dock.remember_squeeze(7, "win32:1:7", right_half, moved);
         dock.refit(&fake, None, DockEdge::Right, 0, &[]);
         assert_eq!(fake.bounds(7), right_half);
+    }
+
+    #[test]
+    fn minimizing_a_docked_window_takes_it_out_and_restoring_puts_it_back() {
+        let fake = Fake::with(&[1, 2]);
+        let original = fake.bounds(1);
+        let mut dock = Dock::default();
+        dock.toggle(&fake, 1).unwrap();
+        dock.toggle(&fake, 2).unwrap();
+        dock.step(&fake, &[1]).unwrap();
+        assert_eq!(dock.active(), Some(1));
+
+        // Minimizing the window in the arena moves focus on; it must not be parked.
+        fake.minimized.borrow_mut().push(1);
+        fake.set_foreground(Some(2));
+        let parked_before = fake.parked.borrow().len();
+        dock.step(&fake, &[]).unwrap();
+        assert_eq!(dock.handles(), [2]);
+        assert_eq!(dock.active(), Some(2));
+        assert!(!fake.marked.borrow().contains(&1));
+        assert!(!fake.parked.borrow()[parked_before..].contains(&1));
+
+        // Still minimized: nothing moves, and the file keeps tracking it.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        dock.toggle(&fake, 2).unwrap();
+        assert!(dock.handles().is_empty());
+        dock.save(&path).unwrap();
+        assert!(Dock::exists(&path));
+        dock = Dock::load(&path).unwrap();
+        dock.step(&fake, &[]).unwrap();
+        assert_ne!(fake.bounds(1), original);
+        // Restored: back where it was before it was docked, and no longer tracked.
+        fake.minimized.borrow_mut().clear();
+        dock.step(&fake, &[]).unwrap();
+        assert_eq!(fake.bounds(1), original);
+        assert!(dock.minimized.is_empty());
     }
 
     #[test]
