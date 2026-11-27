@@ -146,7 +146,7 @@ The panel floats above other windows in its own corner and reserves no space. Sn
 
 **Leaving the dock.** Closing a docked window removes it. So does minimizing it, from the arena or with its taskbar button: when you restore it, it goes back to where it was before you docked it. Positioning a docked window with any other tt-pane action, for example snapping the one in the arena to the left half, takes it out of the dock where it is. Docked windows are left out of automatic tiling, centered groups and directional focus.
 
-Turning the dock off and saving, or quitting tt-pane, puts every docked window back where it was before it was docked. Membership is saved in `<config-path>.dock.json`, so if tt-pane stops without quitting, the next start shows the same docked windows again, or puts them back if the dock has been turned off.
+Turning the dock off and saving, or quitting tt-pane, puts every docked window back where it was before it was docked. Quitting (the tray's **Quit**, or Ctrl+C in the terminal you started it from) also remembers them, and the next start docks them again in the same order, so restarting tt-pane leaves the dock as it was. A window that has closed since, or that you moved after quitting, stays out. Membership is saved in `<config-path>.dock.json`, so if tt-pane stops without quitting, the next start shows the same docked windows again, or puts them back if the dock has been turned off. Snapped windows beside the panel shrink to stay clear of it again once it is back.
 
 The dock is Windows only for now, because it relies on Windows' live window thumbnails.
 
