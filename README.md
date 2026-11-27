@@ -86,9 +86,9 @@ cargo build --release --no-default-features
 
 Turn on **Settings → Snapping → Animation → Animate snapping** and save to have snaps glide the window into place from wherever it is, snapped or not. Motion follows a fast-slow-fast curve over 160 ms (`[animation] duration_ms`, 50–1000). A window larger than its target shrinks early, so the application relayouts fewer times. Focusing an offset window in a centered group glides it into the center too. It is off by default; tiling moves stay instant. See the [configuration reference](docs-site/src/content/docs/configuration.md#animated-snapping-experimental).
 
-## Experimental dock (Windows)
+## Experimental dock (Windows and GNOME)
 
-Turn on **Settings → Dock → Show the dock** and save to add a panel along one edge of the primary monitor (bottom by default; top, left or right, 5–40% of the screen thick, 10% by default). The panel is only as long as its docked windows need, growing from the end you choose (**Fill from**), and disappears when nothing is docked. Dock the focused window with **Ctrl+Alt+D**, or drag a window onto the panel. Each docked window shows as a live preview, rendered at 1920×1080 just off the screen and kept up to date. Click a preview to bring that window into the Center position of the remaining screen; focusing any other window sends it back. To choose one from the keyboard, press **Ctrl+Alt+P**: the previews get numbers, **1**–**9** bring out that window, and the arrows or H/J/K/L step through the dock; **Esc** finishes. Ctrl+Alt+D on a docked window undocks it, and turning the dock off or quitting puts every docked window back; after quitting, the next start docks them again. It is off by default. See the [configuration reference](docs-site/src/content/docs/configuration.md#dock-experimental--windows).
+Turn on **Settings → Dock → Show the dock** and save to add a panel along one edge of the primary monitor (bottom by default; top, left or right, 5–40% of the screen thick, 10% by default). The panel is only as long as its docked windows need, growing from the end you choose (**Fill from**), and disappears when nothing is docked. Dock the focused window with **Ctrl+Alt+D**, or drag a window onto the panel. Each docked window shows as a live preview, rendered at 1920×1080 just off the screen and kept up to date. Click a preview to bring that window into the Center position of the remaining screen; focusing any other window sends it back. To choose one from the keyboard, press **Ctrl+Alt+P**: the previews get numbers, **1**–**9** bring out that window, and the arrows or H/J/K/L step through the dock; **Esc** finishes. Ctrl+Alt+D on a docked window undocks it, and turning the dock off or quitting puts every docked window back; after quitting, the next start docks them again. On GNOME (X11 and Wayland) the tt-pane Shell extension draws the dock, so restart GNOME Shell once after turning it on (Alt+F2, r in X11, or log out and back in); pick mode works in X11 sessions only. It is off by default. See the [configuration reference](docs-site/src/content/docs/configuration.md#dock-experimental--windows-and-gnome).
 
 ## Experimental automatic tiling
 
@@ -119,8 +119,8 @@ The new toggle-float, swap-left/down/up/right, toggle-split, split-grow/shrink, 
 | Ctrl+Alt+J | Focus down |
 | Ctrl+Alt+K | Focus up |
 | Ctrl+Alt+L | Focus right |
-| Ctrl+Alt+D | Dock / undock window (Windows; turn the dock on first) |
-| Ctrl+Alt+P | Pick a docked window: 1–9, arrows or H/J/K/L bring one out; Esc finishes (Windows) |
+| Ctrl+Alt+D | Dock / undock window (Windows and GNOME; turn the dock on first) |
+| Ctrl+Alt+P | Pick a docked window: 1–9, arrows or H/J/K/L bring one out; Esc finishes (Windows, GNOME on X11) |
 
 The digit shortcuts use number-row keys (Digit0 through Digit9). The minus shortcut uses the `-` key; expansion uses the single key normally labeled `=` and `+`. **Shift is not required**. Ctrl+Alt+Shift+= also expands, unless that combination is explicitly assigned to another action. The recorder also supports distinct numpad keys when explicitly assigned. macOS uses the same Control+Option defaults; Command shortcuts can be recorded too. System and application shortcuts can reserve combinations; choose alternatives where needed. Some applications impose minimum window sizes, so requested bounds are not always achievable.
 

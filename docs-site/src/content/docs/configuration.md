@@ -123,7 +123,7 @@ In a centered group (Windows and GNOME on Wayland), focusing an offset member gl
 
 Tiling, swaps and shared-boundary resizes still move windows instantly.
 
-## Dock (experimental) — Windows
+## Dock (experimental) — Windows and GNOME
 
 **Settings → Dock → Show the dock** adds a panel along one edge of the primary monitor. Windows you dock appear in it as live previews; click one to bring that window into the middle of the screen. It goes back to the dock as soon as you focus another window. The dock is off by default, including for existing configurations.
 
@@ -150,7 +150,19 @@ The panel floats above other windows in its own corner and reserves no space. Sn
 
 Turning the dock off and saving, or quitting tt-pane, puts every docked window back where it was before it was docked. Quitting (the tray's **Quit**, or Ctrl+C in the terminal you started it from) also remembers them, and the next start docks them again in the same order, so restarting tt-pane leaves the dock as it was. A window that has closed since, or that you moved after quitting, stays out. Membership is saved in `<config-path>.dock.json`, so if tt-pane stops without quitting, the next start shows the same docked windows again, or puts them back if the dock has been turned off. Snapped windows beside the panel shrink to stay clear of it again once it is back.
 
-The dock is Windows only for now, because it relies on Windows' live window thumbnails.
+The dock works on Windows and on GNOME, in X11 and Wayland sessions. It needs live window thumbnails, which other Linux desktops and macOS don't offer tt-pane yet.
+
+### On GNOME
+
+On GNOME the tt-pane Shell extension draws the dock, in X11 and Wayland sessions alike, and everything above works the same way, with these differences:
+
+- **Setting up.** In a Wayland session, **Set up GNOME** installs the extension as before, and **Ctrl + Alt + D** becomes a GNOME shortcut like the others. In an X11 session tt-pane keeps its own shortcuts, and saving with the dock on, or starting tt-pane with it on, installs the extension. GNOME loads a newly installed or updated extension only when GNOME Shell restarts: press **Alt + F2**, type **r** and press **Enter** (X11 only), or log out and back in. Until then the status line says the extension isn't running. GNOME 42 to 44, as on Ubuntu 22.04 and Pop!_OS 22.04, get the extension in the older format those versions load.
+- **Previews** are live copies of the windows drawn by GNOME Shell, and stay current whether or not the window is on screen, so **Keep previews current** has no effect: there is no power to save by turning it off. A window you dock moves to 1920×1080 past the bottom corner of the primary monitor on the panel's fill side (bottom left or bottom right; the other one if that corner touches another monitor), without first growing on screen. GNOME always keeps part of a window on screen, so a corner of it stays there: tt-pane hides it, puts it below every other window, and lets clicks through it to whatever is underneath.
+- **Glides** run in GNOME Shell: a live copy of the window grows out of its preview, and the window takes its place when it gets there.
+- **Reserving space.** Once the docked windows fill the edge, GNOME's work area excludes the panel's strip: maximized windows, snaps, Center and automatic tiling all keep clear of it. On X11, tiling also sees the strip through the `_TT_PANE_DOCK_STRUT` property tt-pane sets on the root window.
+- **Pick mode** (**Ctrl + Alt + P**) works in X11 sessions only. GNOME shortcuts in a Wayland session start a command and can't hold the keys a mode needs, the same as resize mode.
+- **If tt-pane stops**, even when it crashes or is killed, the extension notices and puts every docked window back where it was when you docked it. Disabling the extension does the same. The next start docks them again.
+- `tt-pane apply dock` takes no `--window` on GNOME; it docks or undocks the focused window.
 
 ## Launch at login
 
