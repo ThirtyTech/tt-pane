@@ -405,10 +405,7 @@ pub fn stow_window(
     };
     let result = crate::with_snap_animation(None, || place_window(handle, target));
     if let Some((glide, slot, duration)) = glide {
-        let to = fit(
-            crate::geometry::inset_rect(slot, PAD, PAD, PAD, PAD),
-            glide.source(),
-        );
+        let to = preview(slot, glide.source(), edge);
         glide.run(bounds, to, duration);
     }
     result
@@ -422,12 +419,13 @@ pub fn stow_window(
 pub fn lift_window(handle: u64, slot: Rect, target: Rect) -> Result<Rect> {
     let glide = crate::snap_animation().and_then(|duration| {
         let (_, parked) = docked_window(handle)?;
-        let from = fit(
-            crate::geometry::inset_rect(slot, PAD, PAD, PAD, PAD),
+        let from = preview(
+            slot,
             SIZE {
                 cx: parked.width,
                 cy: parked.height,
             },
+            current_edge(),
         );
         Glide::new(handle, from)
             .ok()
@@ -641,7 +639,7 @@ struct Panel {
     /// Where each thumbnail is drawn, in screen pixels. Painted opaque beneath
     /// the thumbnail so the preview takes clicks; the rest of the panel is
     /// transparent.
-    previews: Vec<Rect>,
+    previews: Vec<(u64, Rect)>,
     /// The empty slot shown while a window is dragged.
     drop: Option<Rect>,
     active: Option<u64>,
@@ -865,6 +863,30 @@ fn fit(slot: Rect, source: SIZE) -> Rect {
     }
 }
 
+/// Where a window's preview is drawn in `slot`: its own aspect ratio inside the
+/// slot's padding, pushed against the screen edge. The panel is transparent, so
+/// any space the shape leaves goes on the inner side, where the snaps beside the
+/// panel close it up, instead of showing as a gap above and below.
+fn preview(slot: Rect, source: SIZE, edge: DockEdge) -> Rect {
+    let inner = crate::geometry::inset_rect(slot, PAD, PAD, PAD, PAD);
+    let mut out = fit(inner, source);
+    match edge {
+        DockEdge::Top => out.y = inner.y,
+        DockEdge::Bottom => out.y = inner.y + inner.height - out.height,
+        DockEdge::Left => out.x = inner.x,
+        DockEdge::Right => out.x = inner.x + inner.width - out.width,
+    }
+    out
+}
+
+/// The edge the panel is on now, for previews drawn outside an update.
+fn current_edge() -> DockEdge {
+    lock()
+        .request
+        .as_ref()
+        .map_or(DockEdge::Bottom, |request| request.edge)
+}
+
 fn update(window: HWND) {
     let Some(request) = lock().request.clone() else {
         // SAFETY: The window belongs to this thread.
@@ -883,7 +905,7 @@ fn update(window: HWND) {
         let panel = &mut *panel;
         let docked = request.members.len();
         let count = docked + usize::from(request.dragging);
-        let area;
+        let mut area;
         // SAFETY: Thumbnails are registered to this thread's window and released
         // here or on destroy. Property structs are live locals.
         unsafe {
@@ -969,10 +991,10 @@ fn update(window: HWND) {
                         _ => continue,
                     },
                 };
-                let inner = crate::geometry::inset_rect(slot, PAD, PAD, PAD, PAD);
-                let destination = fit(
-                    inner,
+                let destination = preview(
+                    slot,
                     DwmQueryThumbnailSourceSize(thumb).unwrap_or_default(),
+                    request.edge,
                 );
                 let properties = DWM_THUMBNAIL_PROPERTIES {
                     dwFlags: DWM_TNP_RECTDESTINATION
@@ -990,7 +1012,14 @@ fn update(window: HWND) {
                     ..Default::default()
                 };
                 let _ = DwmUpdateThumbnailProperties(thumb, &properties);
-                panel.previews.push(destination);
+                panel.previews.push((handle, destination));
+            }
+            // Snaps keep clear of what the previews show, not the empty space
+            // a wide window leaves in its slot. A full edge is reserved with
+            // the shell as a whole strip, so it stays as it is.
+            if !full {
+                let shown: Vec<Rect> = panel.previews.iter().map(|&(_, rect)| rect).collect();
+                area = area.map(|area| dock::shrink_to(area, request.edge, &shown, PAD));
             }
             let _ = InvalidateRect(Some(window), None, true);
             place_overlay(panel);
@@ -1115,11 +1144,12 @@ unsafe fn paint_panel(dc: HDC, panel: &Panel) {
         };
         FillRect(dc, &whole, background);
         // Hidden under the thumbnails, but keeps those pixels clickable.
-        for &preview in &panel.previews {
+        for &(handle, preview) in &panel.previews {
             FillRect(dc, &local(preview), slot);
-        }
-        for &(handle, rect) in &panel.slots {
-            let mut frame = local(rect);
+            // The outline hugs the preview, in the padding around it.
+            let mut frame = local(preview);
+            let pad = PAD as i32;
+            let _ = InflateRect(&mut frame, pad, pad);
             if panel.active == Some(handle) {
                 for _ in 0..3 {
                     FrameRect(dc, &frame, accent);
@@ -1246,7 +1276,13 @@ unsafe fn paint_numbers(dc: HDC, panel: &Panel) {
         let previous_pen = SelectObject(dc, pen.into());
         let previous_brush = SelectObject(dc, fill.into());
         SetBkMode(dc, TRANSPARENT);
-        for (index, &(_, slot)) in panel.slots.iter().take(9).enumerate() {
+        for (index, &(handle, slot)) in panel.slots.iter().take(9).enumerate() {
+            // Centred on the preview, which may not fill its slot.
+            let slot = panel
+                .previews
+                .iter()
+                .find(|(shown, _)| *shown == handle)
+                .map_or(slot, |&(_, rect)| rect);
             let text: Vec<u16> = (index + 1).to_string().encode_utf16().collect();
             let mut size = SIZE::default();
             let _ = GetTextExtentPoint32W(dc, &text, &mut size);

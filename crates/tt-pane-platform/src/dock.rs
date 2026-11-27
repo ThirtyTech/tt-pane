@@ -389,6 +389,40 @@ pub fn snap_gap(inner: u32) -> u32 {
     inner.saturating_mul(2).saturating_sub(SLOT_PADDING)
 }
 
+/// `area` with its inner side (the one facing the middle of the screen) pulled
+/// back to `pad` past the furthest of the `previews`. Windows wider or taller
+/// than their slot leave the rest of the slot empty, and snaps beside the panel
+/// should close up to what's shown. Unchanged with no previews.
+pub fn shrink_to(area: Rect, edge: DockEdge, previews: &[Rect], pad: u32) -> Rect {
+    let pad = pad as i32;
+    let mut out = area;
+    match edge {
+        DockEdge::Top => {
+            if let Some(bottom) = previews.iter().map(|p| p.y + p.height).max() {
+                out.height = (bottom + pad - area.y).clamp(1, area.height);
+            }
+        }
+        DockEdge::Bottom => {
+            if let Some(top) = previews.iter().map(|p| p.y).min() {
+                out.y = (top - pad).clamp(area.y, area.y + area.height - 1);
+                out.height = area.y + area.height - out.y;
+            }
+        }
+        DockEdge::Left => {
+            if let Some(right) = previews.iter().map(|p| p.x + p.width).max() {
+                out.width = (right + pad - area.x).clamp(1, area.width);
+            }
+        }
+        DockEdge::Right => {
+            if let Some(left) = previews.iter().map(|p| p.x).min() {
+                out.x = (left - pad).clamp(area.x, area.x + area.width - 1);
+                out.width = area.x + area.width - out.x;
+            }
+        }
+    }
+    out
+}
+
 /// `rect` cut back so it stops `gap` short of the panel on `edge`, when the two
 /// overlap. A rectangle that doesn't touch the panel is returned unchanged, so a
 /// short panel only squeezes the windows it actually covers.
@@ -803,6 +837,42 @@ mod tests {
         assert_eq!(avoid(full, left, DockEdge::Left, 5).x, left.width + 5);
         let top = panel_rect(MONITOR, DockEdge::Top, 10);
         assert_eq!(avoid(full, top, DockEdge::Top, 0).y, top.height);
+    }
+
+    #[test]
+    fn the_area_shrinks_to_the_previews_on_its_inner_side() {
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 384,
+            height: 216,
+        };
+        // A 2:1 window's preview, pushed against the top edge.
+        let wide = Rect {
+            x: 3,
+            y: 3,
+            width: 378,
+            height: 189,
+        };
+        assert_eq!(shrink_to(area, DockEdge::Top, &[wide], 3).height, 195);
+        let bottom = Rect { y: 1944, ..area };
+        let shown = Rect {
+            y: 1944 + 24,
+            ..wide
+        };
+        let shrunk = shrink_to(bottom, DockEdge::Bottom, &[shown], 3);
+        assert_eq!((shrunk.y, shrunk.y + shrunk.height), (1944 + 21, 1944 + 216));
+        let side = Rect {
+            x: 3456,
+            ..area
+        };
+        let tall = Rect {
+            x: 3456 + 100,
+            ..wide
+        };
+        let right = shrink_to(side, DockEdge::Right, &[tall], 3);
+        assert_eq!((right.x, right.x + right.width), (3456 + 97, 3456 + 384));
+        assert_eq!(shrink_to(area, DockEdge::Left, &[], 3), area);
     }
 
     #[test]
