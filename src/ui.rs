@@ -143,8 +143,10 @@ struct Settings {
     window: Option<WindowHandle<Settings>>,
     _tray: crate::tray::Tray,
     update: UpdateState,
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(windows)]
     dock_drag: crate::dock::DragTracker,
+    #[cfg(target_os = "linux")]
+    dock_observer: Option<crate::dock::Observer>,
 }
 
 #[derive(Default)]
@@ -2201,8 +2203,10 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             window: None,
             _tray: tray,
             update: UpdateState::default(),
-            #[cfg(any(windows, target_os = "linux"))]
+            #[cfg(windows)]
             dock_drag: crate::dock::DragTracker::default(),
+            #[cfg(target_os = "linux")]
+            dock_observer: platform::dock_supported().then(crate::dock::Observer::start),
         });
         *reopened.borrow_mut() = Some(settings.clone());
         let on_close = settings.clone();
@@ -2256,6 +2260,12 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                                 });
                             }
                             if event.id.0 == crate::tray::QUIT {
+                                #[cfg(target_os = "linux")]
+                                settings.update(cx, |this, _| {
+                                    if let Some(observer) = &mut this.dock_observer {
+                                        observer.stop();
+                                    }
+                                });
                                 #[cfg(any(windows, target_os = "linux"))]
                                 if platform::dock_supported() {
                                     let _ = crate::dock::shutdown(&settings.read(cx).path, true);
@@ -2280,14 +2290,25 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                                 && dock_observed.elapsed() >= Duration::from_millis(50)
                             {
                                 dock_observed = std::time::Instant::now();
-                                if let Err(e) = crate::dock::observe(
+                                // On GNOME the dock observes on its own thread,
+                                // which only needs the current settings.
+                                #[cfg(windows)]
+                                let error = crate::dock::observe(
                                     &this.active,
                                     &this.path,
                                     &mut this.dock_drag,
-                                ) {
-                                    // A lasting failure, such as the GNOME
-                                    // extension not loaded yet, is reported once.
-                                    let text = format!("Dock: {e:#}");
+                                )
+                                .err()
+                                .map(|e| format!("{e:#}"));
+                                #[cfg(target_os = "linux")]
+                                let error = this.dock_observer.as_ref().and_then(|observer| {
+                                    observer.update(&this.active, &this.path);
+                                    observer.take_error()
+                                });
+                                // A lasting failure, such as the GNOME
+                                // extension not loaded yet, is reported once.
+                                if let Some(e) = error {
+                                    let text = format!("Dock: {e}");
                                     if this.status != text {
                                         this.message(text, true, cx);
                                     }

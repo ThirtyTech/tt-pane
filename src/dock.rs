@@ -917,6 +917,104 @@ fn snapped_windows(
         .collect()
 }
 
+/// The tray's dock observations on a thread of their own. On GNOME every
+/// observation asks GNOME Shell several things over D-Bus, and the shell can
+/// take most of a second to answer while it is busy; glides also sleep
+/// between their steps. On the tray's event loop that froze tt-pane's own
+/// shortcuts and windows, so on Linux the loop only hands over the settings.
+#[cfg(target_os = "linux")]
+pub struct Observer {
+    shared: std::sync::Arc<ObserverShared>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct ObserverShared {
+    /// The settings to observe with, and the config path; none until the
+    /// first `update`.
+    settings: std::sync::Mutex<Option<(crate::config::Config, std::path::PathBuf)>>,
+    /// The latest observation's error, until the tray takes it.
+    error: std::sync::Mutex<Option<String>>,
+    stop: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(target_os = "linux")]
+impl Observer {
+    pub const INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
+    pub fn start() -> Self {
+        let shared = std::sync::Arc::new(ObserverShared::default());
+        let thread = std::thread::Builder::new()
+            .name("tt-pane dock".into())
+            .spawn({
+                let shared = shared.clone();
+                move || {
+                    use std::sync::atomic::Ordering;
+                    let mut drag = DragTracker::default();
+                    while !shared.stop.load(Ordering::Acquire) {
+                        std::thread::sleep(Self::INTERVAL);
+                        let settings = shared
+                            .settings
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .clone();
+                        let Some((config, path)) = settings else {
+                            continue;
+                        };
+                        if shared.stop.load(Ordering::Acquire) {
+                            break;
+                        }
+                        // Positioning keeps the gaps per thread.
+                        crate::platform::set_snap_gaps(config.gaps);
+                        if let Err(error) = observe(&config, &path, &mut drag) {
+                            *shared.error.lock().unwrap_or_else(|e| e.into_inner()) =
+                                Some(format!("{error:#}"));
+                        }
+                    }
+                }
+            })
+            .ok();
+        Self { shared, thread }
+    }
+
+    /// Observe with these settings from now on.
+    pub fn update(&self, config: &crate::config::Config, path: &Path) {
+        *self
+            .shared
+            .settings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some((config.clone(), path.to_path_buf()));
+    }
+
+    /// The error of an observation since the last call, if one failed.
+    pub fn take_error(&self) -> Option<String> {
+        self.shared
+            .error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+    }
+
+    /// Wait for the observation underway, and observe no more, so `shutdown`
+    /// has the dock to itself.
+    pub fn stop(&mut self) {
+        self.shared
+            .stop
+            .store(true, std::sync::atomic::Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for Observer {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 /// Put every docked window back and remove the panel, for quitting or turning
 /// the dock off. With `remember`, for quitting, the next start docks the
 /// windows again.
