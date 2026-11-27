@@ -719,6 +719,7 @@ pub fn observe(config: &crate::config::Config, path: &Path, drag: &mut DragTrack
         dragging: drag.dragging,
         highlight: drag.over,
         numbered: platform::dock_picking(),
+        gaps: config.gaps,
     })?;
     result
 }

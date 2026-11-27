@@ -41,6 +41,8 @@ pub struct DockRequest {
     pub highlight: bool,
     /// Dock pick mode is on: number the first nine previews.
     pub numbered: bool,
+    /// The window gaps, which the previews are laid out with.
+    pub gaps: crate::geometry::SnapGaps,
 }
 
 /// Where the panel and its slots ended up, in physical screen pixels. There is
@@ -91,7 +93,6 @@ const WM_DOCK_REPOSITION: u32 = WM_APP + 0x42;
 const TRANSPARENT_KEY: COLORREF = COLORREF(0x0001_0101);
 const SLOT: COLORREF = COLORREF(0x0042_3C3C);
 const ACCENT: COLORREF = COLORREF(0x00E8_F0F2);
-const PAD: u32 = dock::SLOT_PADDING;
 
 fn lock() -> std::sync::MutexGuard<'static, Shared> {
     SHARED
@@ -405,7 +406,7 @@ pub fn stow_window(
     };
     let result = crate::with_snap_animation(None, || place_window(handle, target));
     if let Some((glide, slot, duration)) = glide {
-        let to = preview(slot);
+        let to = slot;
         glide.run(bounds, to, duration);
     }
     result
@@ -419,7 +420,7 @@ pub fn stow_window(
 pub fn lift_window(handle: u64, slot: Rect, target: Rect) -> Result<Rect> {
     let glide = crate::snap_animation().and_then(|duration| {
         docked_window(handle)?;
-        let from = preview(slot);
+        let from = slot;
         Glide::new(handle, from)
             .ok()
             .map(|glide| (glide, from, duration))
@@ -854,13 +855,6 @@ fn reserve(window: HWND, panel: &mut Panel, edge: DockEdge, rect: Option<Rect>) 
     }
 }
 
-/// Where a window's preview is drawn in `slot`: the whole slot inside its
-/// padding. The thumbnail is cropped to this shape (see `thumbnail_source`), so
-/// a preview keeps the same size whatever shape its window takes, for example
-/// when it comes back from the arena at a different size than it was docked.
-fn preview(slot: Rect) -> Rect {
-    crate::geometry::inset_rect(slot, PAD, PAD, PAD, PAD)
-}
 
 /// The part of `source` a thumbnail drawn at `width` × `height` shows, relative
 /// to the source window's own rectangle: its visible frame, without the
@@ -923,6 +917,7 @@ fn update(window: HWND) {
         };
         let panel = &mut *panel;
         let docked = request.members.len();
+        let spacing = dock::Spacing::from_gaps(request.gaps);
         let count = docked + usize::from(request.dragging);
         let mut area;
         // SAFETY: Thumbnails are registered to this thread's window and released
@@ -954,7 +949,7 @@ fn update(window: HWND) {
             else {
                 return;
             };
-            let full = docked > 0 && dock::fills(strip, request.edge, docked);
+            let full = docked > 0 && dock::fills(strip, request.edge, docked, spacing);
             if full != panel.registered {
                 if full {
                     let mut data = appbar(window);
@@ -976,10 +971,10 @@ fn update(window: HWND) {
                 if full {
                     strip
                 } else {
-                    dock::occupied(strip, request.edge, request.fill, docked)
+                    dock::occupied(strip, request.edge, request.fill, docked, spacing)
                 }
             });
-            panel.rect = dock::occupied(strip, request.edge, request.fill, count);
+            panel.rect = dock::occupied(strip, request.edge, request.fill, count, spacing);
             let _ = SetWindowPos(
                 window,
                 Some(HWND_TOPMOST),
@@ -989,7 +984,7 @@ fn update(window: HWND) {
                 panel.rect.height,
                 SWP_NOACTIVATE | SWP_SHOWWINDOW,
             );
-            let rects = dock::slots_from(panel.rect, request.edge, request.fill, count);
+            let rects = dock::slots_from(panel.rect, request.edge, request.fill, count, spacing);
             panel.slots = request.members.iter().copied().zip(rects.clone()).collect();
             panel.drop = request
                 .dragging
@@ -1010,7 +1005,7 @@ fn update(window: HWND) {
                         _ => continue,
                     },
                 };
-                let destination = preview(slot);
+                let destination = slot;
                 let Ok(source) = hwnd(handle) else {
                     continue;
                 };
@@ -1038,7 +1033,7 @@ fn update(window: HWND) {
             // the shell as a whole strip, so it stays as it is.
             if !full {
                 let shown: Vec<Rect> = panel.previews.iter().map(|&(_, rect)| rect).collect();
-                area = area.map(|area| dock::shrink_to(area, request.edge, &shown, PAD));
+                area = area.map(|area| dock::shrink_to(area, request.edge, &shown));
             }
             let _ = InvalidateRect(Some(window), None, true);
             place_overlay(panel);
@@ -1348,27 +1343,3 @@ unsafe fn paint_numbers(dc: HDC, panel: &Panel) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn previews_fill_their_slot_inside_the_padding() {
-        let slot = Rect {
-            x: 10,
-            y: 20,
-            width: 320,
-            height: 180,
-        };
-        let pad = PAD as i32;
-        assert_eq!(
-            preview(slot),
-            Rect {
-                x: 10 + pad,
-                y: 20 + pad,
-                width: 320 - 2 * pad,
-                height: 180 - 2 * pad,
-            }
-        );
-    }
-}

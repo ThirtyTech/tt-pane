@@ -58,8 +58,35 @@ impl DockFill {
 /// The size docked windows are rendered at before they are scaled into a slot.
 pub const PREVIEW_SOURCE: (i32, i32) = (1920, 1080);
 
-/// Spacing between slots and around them, in physical pixels.
-const PADDING: i32 = 12;
+/// Where previews sit in the panel, in physical pixels. They follow the
+/// window gaps, so the dock lines up with snapped windows: the outer gap from
+/// the screen's edge and corner, and the spacing between two snapped windows
+/// between previews. The panel is transparent, so its inner side needs none;
+/// snaps beside it keep their own distance from the previews.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Spacing {
+    /// From the screen edge and from the panel's fill end.
+    pub edge: i32,
+    /// Between neighbouring previews.
+    pub between: i32,
+}
+
+impl Spacing {
+    pub fn from_gaps(gaps: crate::geometry::SnapGaps) -> Self {
+        Self {
+            edge: gaps.outer.min(1000) as i32,
+            between: gaps.inner.saturating_mul(2).min(1000) as i32,
+        }
+    }
+
+    /// Where the slots start across the panel, measured from its screen side.
+    fn across(self, edge: DockEdge, across: i64, cross: i64) -> i64 {
+        match edge {
+            DockEdge::Top | DockEdge::Left => i64::from(self.edge),
+            DockEdge::Bottom | DockEdge::Right => across - i64::from(self.edge) - cross,
+        }
+    }
+}
 /// Previews never shrink below this width, even when many windows are docked.
 const MIN_SLOT_WIDTH: i32 = 48;
 
@@ -106,28 +133,29 @@ pub fn arena(area: Rect, panel: Rect, edge: DockEdge) -> Rect {
     arena
 }
 
-/// `count` 16:9 slots laid out along the panel and centered on it. Slots shrink
-/// so they all fit; past the minimum size the last ones are clipped by the panel.
-pub fn slots(panel: Rect, edge: DockEdge, count: usize) -> Vec<Rect> {
+/// `count` 16:9 slots laid out along the panel and centered on it, `spacing`
+/// from its screen side. Slots shrink so they all fit; past the minimum size
+/// the last ones are clipped by the panel.
+pub fn slots(panel: Rect, edge: DockEdge, count: usize, spacing: Spacing) -> Vec<Rect> {
     if count == 0 {
         return Vec::new();
     }
     let n = count as i64;
     let (source_w, source_h) = (i64::from(PREVIEW_SOURCE.0), i64::from(PREVIEW_SOURCE.1));
-    let pad = i64::from(PADDING);
+    let (pad, gap) = (i64::from(spacing.edge), i64::from(spacing.between));
     let (along, across) = if edge.horizontal() {
         (i64::from(panel.width), i64::from(panel.height))
     } else {
         (i64::from(panel.height), i64::from(panel.width))
     };
-    let thickness = (across - 2 * pad).max(1);
+    let thickness = (across - pad).max(1);
     // Size of a slot along the panel when it fills the panel's thickness.
     let natural = if edge.horizontal() {
         thickness * source_w / source_h
     } else {
         thickness * source_h / source_w
     };
-    let fit = ((along - pad * (n + 1)) / n).max(1);
+    let fit = ((along - 2 * pad - gap * (n - 1)) / n).max(1);
     let min_length = if edge.horizontal() {
         i64::from(MIN_SLOT_WIDTH)
     } else {
@@ -144,13 +172,13 @@ pub fn slots(panel: Rect, edge: DockEdge, count: usize) -> Vec<Rect> {
         };
         (length, cross)
     };
-    let total = n * length + (n - 1) * pad;
+    let total = n * length + (n - 1) * gap;
     let start = (along - total) / 2;
     let start = start.max(pad);
-    let offset_across = (across - cross) / 2;
+    let offset_across = spacing.across(edge, across, cross);
     (0..n)
         .map(|i| {
-            let along_pos = start + i * (length + pad);
+            let along_pos = start + i * (length + gap);
             if edge.horizontal() {
                 Rect {
                     x: panel.x + along_pos as i32,
@@ -192,14 +220,20 @@ pub fn strip_within(monitor: Rect, area: Rect, edge: DockEdge, percent: u32) -> 
 
 /// The part of `strip` that `count` full-size slots need, starting from the
 /// `fill` end. Past the strip's length the whole strip is used and slots shrink.
-pub fn occupied(strip: Rect, edge: DockEdge, fill: DockFill, count: usize) -> Rect {
-    let pad = i64::from(PADDING);
+pub fn occupied(
+    strip: Rect,
+    edge: DockEdge,
+    fill: DockFill,
+    count: usize,
+    spacing: Spacing,
+) -> Rect {
+    let (pad, gap) = (i64::from(spacing.edge), i64::from(spacing.between));
     let (along, across) = if edge.horizontal() {
         (i64::from(strip.width), i64::from(strip.height))
     } else {
         (i64::from(strip.height), i64::from(strip.width))
     };
-    let thickness = (across - 2 * pad).max(1);
+    let thickness = (across - pad).max(1);
     let (source_w, source_h) = (i64::from(PREVIEW_SOURCE.0), i64::from(PREVIEW_SOURCE.1));
     let natural = if edge.horizontal() {
         thickness * source_w / source_h
@@ -210,7 +244,7 @@ pub fn occupied(strip: Rect, edge: DockEdge, fill: DockFill, count: usize) -> Re
     let length = if n == 0 {
         0
     } else {
-        (n * natural + (n + 1) * pad).clamp(0, along) as i32
+        (n * natural + 2 * pad + (n - 1) * gap).clamp(0, along) as i32
     };
     let mut rect = strip;
     if edge.horizontal() {
@@ -228,8 +262,8 @@ pub fn occupied(strip: Rect, edge: DockEdge, fill: DockFill, count: usize) -> Re
 }
 
 /// Whether `count` full-size slots need the whole length of `strip`.
-pub fn fills(strip: Rect, edge: DockEdge, count: usize) -> bool {
-    let used = occupied(strip, edge, DockFill::Start, count);
+pub fn fills(strip: Rect, edge: DockEdge, count: usize, spacing: Spacing) -> bool {
+    let used = occupied(strip, edge, DockFill::Start, count, spacing);
     if edge.horizontal() {
         used.width >= strip.width
     } else {
@@ -238,8 +272,14 @@ pub fn fills(strip: Rect, edge: DockEdge, count: usize) -> bool {
 }
 
 /// Slots in fill order: the first docked window sits at the `fill` end.
-pub fn slots_from(panel: Rect, edge: DockEdge, fill: DockFill, count: usize) -> Vec<Rect> {
-    let mut slots = slots(panel, edge, count);
+pub fn slots_from(
+    panel: Rect,
+    edge: DockEdge,
+    fill: DockFill,
+    count: usize,
+    spacing: Spacing,
+) -> Vec<Rect> {
+    let mut slots = slots(panel, edge, count, spacing);
     if fill == DockFill::End {
         slots.reverse();
     }
@@ -378,15 +418,10 @@ pub fn intersects(a: Rect, b: Rect) -> bool {
     a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
 }
 
-/// The space between a slot's edge and the preview drawn in it. The panel is
-/// transparent, so this shows as part of the gap beside a snapped window.
-pub const SLOT_PADDING: u32 = 3;
-
-/// How far a snap stops short of the panel: the same spacing as between two
-/// snapped windows (each inset by `inner`), counting the slot padding that
-/// already shows between the panel's edge and its previews.
+/// How far a snap stops short of the docked previews: the same spacing as
+/// between two snapped windows, each inset by `inner`.
 pub fn snap_gap(inner: u32) -> u32 {
-    inner.saturating_mul(2).saturating_sub(SLOT_PADDING)
+    inner.saturating_mul(2)
 }
 
 /// The middle of `source` with the aspect ratio of a `width` × `height`
@@ -417,32 +452,31 @@ pub fn crop_to_aspect(source: Rect, width: i32, height: i32) -> Rect {
 }
 
 /// `area` with its inner side (the one facing the middle of the screen) pulled
-/// back to `pad` past the furthest of the `previews`. Windows wider or taller
-/// than their slot leave the rest of the slot empty, and snaps beside the panel
-/// should close up to what's shown. Unchanged with no previews.
-pub fn shrink_to(area: Rect, edge: DockEdge, previews: &[Rect], pad: u32) -> Rect {
-    let pad = pad as i32;
+/// back to the furthest of the `previews`, so snaps beside the panel keep their
+/// distance from what's shown rather than from the panel's full thickness.
+/// Unchanged with no previews.
+pub fn shrink_to(area: Rect, edge: DockEdge, previews: &[Rect]) -> Rect {
     let mut out = area;
     match edge {
         DockEdge::Top => {
             if let Some(bottom) = previews.iter().map(|p| p.y + p.height).max() {
-                out.height = (bottom + pad - area.y).clamp(1, area.height);
+                out.height = (bottom - area.y).clamp(1, area.height);
             }
         }
         DockEdge::Bottom => {
             if let Some(top) = previews.iter().map(|p| p.y).min() {
-                out.y = (top - pad).clamp(area.y, area.y + area.height - 1);
+                out.y = top.clamp(area.y, area.y + area.height - 1);
                 out.height = area.y + area.height - out.y;
             }
         }
         DockEdge::Left => {
             if let Some(right) = previews.iter().map(|p| p.x + p.width).max() {
-                out.width = (right + pad - area.x).clamp(1, area.width);
+                out.width = (right - area.x).clamp(1, area.width);
             }
         }
         DockEdge::Right => {
             if let Some(left) = previews.iter().map(|p| p.x).min() {
-                out.x = (left - pad).clamp(area.x, area.x + area.width - 1);
+                out.x = left.clamp(area.x, area.x + area.width - 1);
                 out.width = area.x + area.width - out.x;
             }
         }
@@ -492,6 +526,9 @@ pub fn contains(rect: Rect, (x, y): (i32, i32)) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The old fixed padding, so most layouts keep their earlier numbers.
+    const SPACING: Spacing = Spacing { edge: 12, between: 12 };
 
     const MONITOR: Rect = Rect {
         x: 0,
@@ -583,11 +620,13 @@ mod tests {
     #[test]
     fn slots_are_16_by_9_centered_and_inside_the_panel() {
         let panel = panel_rect(MONITOR, DockEdge::Bottom, 15);
-        let three = slots(panel, DockEdge::Bottom, 3);
+        let three = slots(panel, DockEdge::Bottom, 3, SPACING);
         assert_eq!(three.len(), 3);
         for slot in &three {
-            assert_eq!(slot.height, 192);
-            assert_eq!(slot.width, 341);
+            assert_eq!(slot.height, 204);
+            assert_eq!(slot.width, 362);
+            // Against the screen edge, the outer gap from it.
+            assert_eq!(slot.y + slot.height, panel.y + panel.height - 12);
             assert!(slot.y >= panel.y && slot.y + slot.height <= panel.y + panel.height);
         }
         let left = three[0].x - panel.x;
@@ -599,14 +638,14 @@ mod tests {
     #[test]
     fn many_slots_shrink_to_fit_and_side_panels_stack_vertically() {
         let panel = panel_rect(MONITOR, DockEdge::Bottom, 15);
-        let many = slots(panel, DockEdge::Bottom, 12);
+        let many = slots(panel, DockEdge::Bottom, 12, SPACING);
         let last = many.last().unwrap();
         assert!(last.x + last.width <= panel.x + panel.width);
-        assert!(many[0].width < 341);
+        assert!(many[0].width < 362);
         assert_eq!(many[0].width * 9 / 16, many[0].height);
 
         let side = panel_rect(MONITOR, DockEdge::Left, 15);
-        let column = slots(side, DockEdge::Left, 2);
+        let column = slots(side, DockEdge::Left, 2, SPACING);
         assert_eq!(column[0].x, column[1].x);
         assert!(column[1].y >= column[0].y + column[0].height);
         assert_eq!(column[0].width * 9 / 16, column[0].height);
@@ -615,39 +654,41 @@ mod tests {
     #[test]
     fn the_panel_only_takes_the_length_its_windows_need_from_the_fill_end() {
         let strip = panel_rect(MONITOR, DockEdge::Top, 10);
-        // 144 px thick: 120 px slots are 213 px long, with 12 px around each.
-        let one = occupied(strip, DockEdge::Top, DockFill::Start, 1);
+        // 144 px thick: 132 px slots, 12 px from the screen edge, are 234 px long,
+        // with 12 px at each end and between them.
+        let one = occupied(strip, DockEdge::Top, DockFill::Start, 1, SPACING);
         assert_eq!(
             one,
             Rect {
                 x: 0,
                 y: 0,
-                width: 237,
+                width: 258,
                 height: 144
             }
         );
-        let two = occupied(strip, DockEdge::Top, DockFill::End, 2);
-        assert_eq!((two.x, two.width), (2560 - 462, 462));
+        let two = occupied(strip, DockEdge::Top, DockFill::End, 2, SPACING);
+        assert_eq!((two.x, two.width), (2560 - 504, 504));
         // Too many for the edge: the whole strip is used and slots shrink.
-        assert_eq!(occupied(strip, DockEdge::Top, DockFill::Start, 20), strip);
-        assert_eq!(occupied(strip, DockEdge::Top, DockFill::Start, 0).width, 0);
+        assert_eq!(occupied(strip, DockEdge::Top, DockFill::Start, 20, SPACING), strip);
+        assert_eq!(occupied(strip, DockEdge::Top, DockFill::Start, 0, SPACING).width, 0);
         // Only a panel that needs the whole edge reserves it.
-        assert!(!fills(strip, DockEdge::Top, 1));
-        assert!(!fills(strip, DockEdge::Top, 11));
-        assert!(fills(strip, DockEdge::Top, 12));
+        assert!(!fills(strip, DockEdge::Top, 1, SPACING));
+        assert!(!fills(strip, DockEdge::Top, 10, SPACING));
+        assert!(fills(strip, DockEdge::Top, 11, SPACING));
 
         let side = panel_rect(MONITOR, DockEdge::Right, 10);
-        let column = occupied(side, DockEdge::Right, DockFill::End, 1);
+        let column = occupied(side, DockEdge::Right, DockFill::End, 1, SPACING);
         assert_eq!(column.x, side.x);
         assert_eq!(column.y + column.height, MONITOR.height);
         assert!(column.height < side.height);
 
         // Slots fill exactly, and the first window sits at the fill end.
-        let slots = slots_from(two, DockEdge::Top, DockFill::End, 2);
+        let slots = slots_from(two, DockEdge::Top, DockFill::End, 2, SPACING);
         assert_eq!(slots[0].x + slots[0].width, two.x + two.width - 12);
         assert_eq!(slots[1].x, two.x + 12);
-        assert_eq!(slots[0].height, 120);
-        assert_eq!(slots_from(one, DockEdge::Top, DockFill::Start, 1)[0].x, 12);
+        assert_eq!(slots[0].height, 132);
+        assert_eq!(slots[0].y, 12);
+        assert_eq!(slots_from(one, DockEdge::Top, DockFill::Start, 1, SPACING)[0].x, 12);
     }
 
     #[test]
@@ -828,7 +869,7 @@ mod tests {
     fn windows_the_panel_covers_stop_short_of_it_and_others_are_untouched() {
         // A one-window panel at the top of the right edge.
         let strip = panel_rect(MONITOR, DockEdge::Right, 10);
-        let panel = occupied(strip, DockEdge::Right, DockFill::Start, 1);
+        let panel = occupied(strip, DockEdge::Right, DockFill::Start, 1, SPACING);
         let right_half = Rect {
             x: 1280,
             y: 0,
@@ -909,14 +950,14 @@ mod tests {
             width: 378,
             height: 189,
         };
-        assert_eq!(shrink_to(area, DockEdge::Top, &[wide], 3).height, 195);
+        assert_eq!(shrink_to(area, DockEdge::Top, &[wide]).height, 192);
         let bottom = Rect { y: 1944, ..area };
         let shown = Rect {
             y: 1944 + 24,
             ..wide
         };
-        let shrunk = shrink_to(bottom, DockEdge::Bottom, &[shown], 3);
-        assert_eq!((shrunk.y, shrunk.y + shrunk.height), (1944 + 21, 1944 + 216));
+        let shrunk = shrink_to(bottom, DockEdge::Bottom, &[shown]);
+        assert_eq!((shrunk.y, shrunk.y + shrunk.height), (1944 + 24, 1944 + 216));
         let side = Rect {
             x: 3456,
             ..area
@@ -925,27 +966,35 @@ mod tests {
             x: 3456 + 100,
             ..wide
         };
-        let right = shrink_to(side, DockEdge::Right, &[tall], 3);
-        assert_eq!((right.x, right.x + right.width), (3456 + 97, 3456 + 384));
-        assert_eq!(shrink_to(area, DockEdge::Left, &[], 3), area);
+        let right = shrink_to(side, DockEdge::Right, &[tall]);
+        assert_eq!((right.x, right.x + right.width), (3456 + 100, 3456 + 384));
+        assert_eq!(shrink_to(area, DockEdge::Left, &[]), area);
     }
 
     #[test]
     fn snaps_leave_the_same_spacing_beside_the_panel_as_between_windows() {
-        // Two windows inset by 8 each sit 16 apart; the panel's previews
-        // already sit 3 inside its edge.
-        assert_eq!(snap_gap(8) + SLOT_PADDING, 16);
+        // Two windows inset by 8 each sit 16 apart.
+        assert_eq!(snap_gap(8), 16);
         assert_eq!(snap_gap(0), 0);
-        assert_eq!(snap_gap(1), 0);
+        let spacing = Spacing::from_gaps(crate::geometry::SnapGaps { inner: 5, outer: 20 });
+        assert_eq!(spacing, Spacing { edge: 20, between: 10 });
+        // Previews sit the outer gap from the screen edge and corner, and the
+        // spacing between snapped windows apart.
+        let strip = panel_rect(MONITOR, DockEdge::Top, 15);
+        let panel = occupied(strip, DockEdge::Top, DockFill::Start, 2, spacing);
+        let two = slots_from(panel, DockEdge::Top, DockFill::Start, 2, spacing);
+        assert_eq!((two[0].x, two[0].y), (20, 20));
+        assert_eq!(two[1].x - (two[0].x + two[0].width), 10);
+        assert_eq!(two[0].height, 216 - 20);
     }
 
     #[test]
     fn hit_testing_finds_the_slot_under_the_cursor() {
         let panel = panel_rect(MONITOR, DockEdge::Bottom, 15);
-        let two = slots(panel, DockEdge::Bottom, 2);
+        let two = slots(panel, DockEdge::Bottom, 2, SPACING);
         let inside = (two[1].x + 5, two[1].y + 5);
         assert_eq!(hit_test(&two, inside), Some(1));
         assert_eq!(hit_test(&two, (panel.x + 1, panel.y + 1)), None);
-        assert!(slots(panel, DockEdge::Bottom, 0).is_empty());
+        assert!(slots(panel, DockEdge::Bottom, 0, SPACING).is_empty());
     }
 }
