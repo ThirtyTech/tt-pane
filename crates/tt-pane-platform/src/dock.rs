@@ -378,6 +378,17 @@ pub fn intersects(a: Rect, b: Rect) -> bool {
     a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
 }
 
+/// The space between a slot's edge and the preview drawn in it. The panel is
+/// transparent, so this shows as part of the gap beside a snapped window.
+pub const SLOT_PADDING: u32 = 3;
+
+/// How far a snap stops short of the panel: the same spacing as between two
+/// snapped windows (each inset by `inner`), counting the slot padding that
+/// already shows between the panel's edge and its previews.
+pub fn snap_gap(inner: u32) -> u32 {
+    inner.saturating_mul(2).saturating_sub(SLOT_PADDING)
+}
+
 /// `rect` cut back so it stops `gap` short of the panel on `edge`, when the two
 /// overlap. A rectangle that doesn't touch the panel is returned unchanged, so a
 /// short panel only squeezes the windows it actually covers.
@@ -792,6 +803,15 @@ mod tests {
         assert_eq!(avoid(full, left, DockEdge::Left, 5).x, left.width + 5);
         let top = panel_rect(MONITOR, DockEdge::Top, 10);
         assert_eq!(avoid(full, top, DockEdge::Top, 0).y, top.height);
+    }
+
+    #[test]
+    fn snaps_leave_the_same_spacing_beside_the_panel_as_between_windows() {
+        // Two windows inset by 8 each sit 16 apart; the panel's previews
+        // already sit 3 inside its edge.
+        assert_eq!(snap_gap(8) + SLOT_PADDING, 16);
+        assert_eq!(snap_gap(0), 0);
+        assert_eq!(snap_gap(1), 0);
     }
 
     #[test]

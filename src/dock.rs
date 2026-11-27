@@ -702,7 +702,7 @@ pub fn observe(config: &crate::config::Config, path: &Path, drag: &mut DragTrack
                 &desktop,
                 area,
                 config.dock.edge,
-                config.gaps.outer,
+                platform::dock::snap_gap(config.gaps.inner),
                 &snapped,
             )
         });

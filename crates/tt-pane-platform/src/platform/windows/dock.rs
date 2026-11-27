@@ -91,6 +91,7 @@ const WM_DOCK_REPOSITION: u32 = WM_APP + 0x42;
 const TRANSPARENT_KEY: COLORREF = COLORREF(0x0001_0101);
 const SLOT: COLORREF = COLORREF(0x0042_3C3C);
 const ACCENT: COLORREF = COLORREF(0x00E8_F0F2);
+const PAD: u32 = dock::SLOT_PADDING;
 
 fn lock() -> std::sync::MutexGuard<'static, Shared> {
     SHARED
@@ -405,7 +406,7 @@ pub fn stow_window(
     let result = crate::with_snap_animation(None, || place_window(handle, target));
     if let Some((glide, slot, duration)) = glide {
         let to = fit(
-            crate::geometry::inset_rect(slot, 3, 3, 3, 3),
+            crate::geometry::inset_rect(slot, PAD, PAD, PAD, PAD),
             glide.source(),
         );
         glide.run(bounds, to, duration);
@@ -422,7 +423,7 @@ pub fn lift_window(handle: u64, slot: Rect, target: Rect) -> Result<Rect> {
     let glide = crate::snap_animation().and_then(|duration| {
         let (_, parked) = docked_window(handle)?;
         let from = fit(
-            crate::geometry::inset_rect(slot, 3, 3, 3, 3),
+            crate::geometry::inset_rect(slot, PAD, PAD, PAD, PAD),
             SIZE {
                 cx: parked.width,
                 cy: parked.height,
@@ -968,7 +969,7 @@ fn update(window: HWND) {
                         _ => continue,
                     },
                 };
-                let inner = crate::geometry::inset_rect(slot, 3, 3, 3, 3);
+                let inner = crate::geometry::inset_rect(slot, PAD, PAD, PAD, PAD);
                 let destination = fit(
                     inner,
                     DwmQueryThumbnailSourceSize(thumb).unwrap_or_default(),

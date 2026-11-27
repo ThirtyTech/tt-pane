@@ -542,7 +542,12 @@ fn apply_inner(
             {
                 let original = cycle.last;
                 cycle.last =
-                    platform::dock::avoid(original, panel, config.dock.edge, config.gaps.outer);
+                    platform::dock::avoid(
+                    original,
+                    panel,
+                    config.dock.edge,
+                    platform::dock::snap_gap(config.gaps.inner),
+                );
                 if cycle.last != original {
                     squeeze = Some((id.to_owned(), original, cycle.last));
                 }
