@@ -72,10 +72,12 @@ pub fn is_gnome_wayland() -> bool {
     is_wayland() && is_gnome()
 }
 
+/// GNOME, in an X11 or a Wayland session.
 #[cfg(target_os = "linux")]
-use linux::is_gnome;
+pub use linux::is_gnome;
+/// GNOME, in an X11 or a Wayland session.
 #[cfg(not(target_os = "linux"))]
-fn is_gnome() -> bool {
+pub fn is_gnome() -> bool {
     false
 }
 
@@ -137,6 +139,14 @@ pub struct TilingDesktop {
     pub interacting: bool,
 }
 
+/// The dock on GNOME, X11 and Wayland, through the Shell extension.
+#[cfg(target_os = "linux")]
+pub use linux::{
+    DockLayout, DockRequest, activate_handle, cursor_position, dock_layout, dock_monitor,
+    dock_parked, dock_picking, dock_running, docked_window, hide_dock, is_minimized, lift_window,
+    moving_window, park_window, pending_dock_pick, pick_dock, place_window, set_dock_picking,
+    set_docked, show_dock, stow_window, take_dock_clicks, take_dock_moves,
+};
 /// Centered groups on Linux: implemented for GNOME on Wayland, inert elsewhere.
 #[cfg(target_os = "linux")]
 pub use linux::{
@@ -153,9 +163,9 @@ pub use windows::set_window_icon;
 #[cfg(windows)]
 pub use windows::{
     DockLayout, DockRequest, activate_handle, cursor_position, dock_layout, dock_monitor,
-    dock_picking, dock_running, docked_window, hide_dock, is_minimized, lift_window, moving_window,
-    park_target, park_window, pending_dock_pick, pick_dock, place_window, set_dock_picking,
-    set_docked, show_dock, stow_window, take_dock_clicks, take_dock_moves,
+    dock_parked, dock_picking, dock_running, docked_window, hide_dock, is_minimized, lift_window,
+    moving_window, park_target, park_window, pending_dock_pick, pick_dock, place_window,
+    set_dock_picking, set_docked, show_dock, stow_window, take_dock_clicks, take_dock_moves,
 };
 #[cfg(windows)]
 pub use windows::{
@@ -168,9 +178,10 @@ pub use windows::{attach_parent_console, ctrl_c_requested, quit_on_ctrl_c};
 #[cfg(windows)]
 pub use windows::{move_tiling_window, tiling_desktop};
 
-/// The dock needs live window thumbnails, which only Windows provides so far.
+/// The dock needs live window thumbnails: DWM on Windows, and the GNOME Shell
+/// extension's window clones on GNOME, in X11 and Wayland sessions alike.
 pub fn dock_supported() -> bool {
-    cfg!(windows)
+    cfg!(windows) || is_gnome()
 }
 
 /// GNOME cannot tell a minimized window from a closed one, so unavailable

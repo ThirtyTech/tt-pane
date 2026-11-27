@@ -54,7 +54,7 @@ fn window_id(handle: u64) -> String {
 }
 
 // The tray polls centered groups ten times a second; reuse one bus connection.
-fn connection() -> Result<Connection> {
+pub(super) fn connection() -> Result<Connection> {
     static SHARED: Mutex<Option<Connection>> = Mutex::new(None);
     let mut shared = SHARED.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(connection) = shared.as_ref() {
@@ -65,7 +65,7 @@ fn connection() -> Result<Connection> {
     Ok(connection)
 }
 
-fn call<B, R>(connection: &Connection, method: &str, body: &B) -> Result<R>
+pub(super) fn call<B, R>(connection: &Connection, method: &str, body: &B) -> Result<R>
 where
     B: serde::Serialize + zbus::zvariant::DynamicType,
     R: for<'d> serde::Deserialize<'d> + zbus::zvariant::Type,

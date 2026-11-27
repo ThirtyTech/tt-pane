@@ -4,9 +4,16 @@ use crate::{
 };
 use anyhow::{Result, bail};
 
+mod dock;
 mod gnome;
 mod x11;
 
+pub use dock::{
+    DockLayout, DockRequest, activate_handle, cursor_position, dock_layout, dock_monitor,
+    dock_parked, dock_picking, dock_running, docked_window, hide_dock, is_minimized, lift_window,
+    moving_window, park_window, pending_dock_pick, pick_dock, place_window, set_dock_picking,
+    set_docked, show_dock, stow_window, take_dock_clicks, take_dock_moves,
+};
 pub use gnome::{WindowSnapshot, is_gnome};
 
 pub fn apply(resolve: &mut dyn FnMut(&str, Rect, Rect) -> Result<Rect>) -> Result<Rect> {

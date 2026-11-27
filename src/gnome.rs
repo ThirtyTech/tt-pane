@@ -14,16 +14,89 @@ use std::{
 };
 
 pub const EXTENSION_UUID: &str = "tt-pane@thirtytech.net";
-const EXTENSION_FILES: [(&str, &str); 2] = [
-    (
-        "metadata.json",
-        include_str!("../packaging/gnome/tt-pane@thirtytech.net/metadata.json"),
-    ),
-    (
-        "extension.js",
-        include_str!("../packaging/gnome/tt-pane@thirtytech.net/extension.js"),
-    ),
-];
+const METADATA: &str = include_str!("../packaging/gnome/tt-pane@thirtytech.net/metadata.json");
+const EXTENSION: &str = include_str!("../packaging/gnome/tt-pane@thirtytech.net/extension.js");
+
+/// GNOME 45 moved Shell extensions to ES modules. Older shells, such as
+/// GNOME 42 on Ubuntu 22.04 and Pop!_OS, load the same code rewritten in the
+/// format they know.
+const FIRST_MODULE_SHELL: u32 = 45;
+const LEGACY_SHELLS: [&str; 3] = ["42", "43", "44"];
+
+/// The extension's files for a shell of this major version.
+fn extension_files(shell: u32) -> Result<[(&'static str, String); 2]> {
+    if shell >= FIRST_MODULE_SHELL {
+        return Ok([
+            ("metadata.json", METADATA.to_owned()),
+            ("extension.js", EXTENSION.to_owned()),
+        ]);
+    }
+    let mut metadata: serde_json::Value =
+        serde_json::from_str(METADATA).context("Read the bundled extension metadata")?;
+    metadata["shell-version"] = serde_json::json!(LEGACY_SHELLS);
+    Ok([
+        (
+            "metadata.json",
+            serde_json::to_string_pretty(&metadata)? + "\n",
+        ),
+        ("extension.js", legacy_extension(EXTENSION)?),
+    ])
+}
+
+/// The module-format extension rewritten for GNOME 42 to 44: imports become
+/// `imports` lookups, and the default-exported class gets an `init()`.
+fn legacy_extension(source: &str) -> Result<String> {
+    let mut out = String::with_capacity(source.len());
+    let mut class = None;
+    for line in source.lines() {
+        if let Some(rest) = line.strip_prefix("import ") {
+            let (binding, from) = rest
+                .split_once(" from ")
+                .with_context(|| format!("Unexpected extension import: {line}"))?;
+            let from = from.trim_end_matches(';').trim_matches('\'');
+            if let Some(library) = from.strip_prefix("gi://") {
+                out.push_str(&format!("const {binding} = imports.gi.{library};\n"));
+            } else if let Some(module) = from
+                .strip_prefix("resource:///org/gnome/shell/ui/")
+                .and_then(|m| m.strip_suffix(".js"))
+                && let Some(name) = binding.strip_prefix("* as ")
+            {
+                out.push_str(&format!("const {name} = imports.ui.{module};\n"));
+            } else if from == "resource:///org/gnome/shell/extensions/extension.js" {
+                // The old format has no base class.
+            } else {
+                anyhow::bail!("Unexpected extension import: {line}");
+            }
+        } else if let Some(rest) = line.strip_prefix("export default class ") {
+            let name = rest
+                .split_whitespace()
+                .next()
+                .context("Unnamed extension class")?;
+            out.push_str(&format!("class {name} {{\n"));
+            class = Some(name.to_owned());
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    let class = class.context("The extension exports no class")?;
+    out.push_str(&format!(
+        "\nfunction init() {{\n    return new {class}();\n}}\n"
+    ));
+    Ok(out)
+}
+
+/// The running GNOME Shell's major version, such as 42.
+fn shell_version() -> Option<u32> {
+    let output = Command::new("gnome-shell").arg("--version").output().ok()?;
+    parse_shell_version(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// "GNOME Shell 42.9" → 42.
+fn parse_shell_version(text: &str) -> Option<u32> {
+    text.split_whitespace()
+        .find_map(|word| word.split('.').next()?.parse().ok())
+}
 
 const MEDIA_KEYS: &str = "org.gnome.settings-daemon.plugins.media-keys";
 const CUSTOM: &str = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding";
@@ -71,6 +144,18 @@ pub fn setup(config: &Config, executable: &Path, config_path: &Path) -> Result<S
     })
 }
 
+/// In a GNOME X11 session tt-pane handles its own shortcuts, but the dock is
+/// drawn by the Shell extension: install it while the dock is on. Returns a
+/// note for the user when GNOME Shell has to load it first.
+pub fn setup_dock_extension(config: &Config) -> Result<Option<&'static str>> {
+    if !config.dock.enabled {
+        return Ok(None);
+    }
+    Ok(install_extension()?.then_some(
+        "Restart GNOME Shell once (Alt+F2, type r, Enter) or log out and back in, so it loads the tt-pane extension that draws the dock.",
+    ))
+}
+
 fn extensions_dir() -> Result<PathBuf> {
     let data = match std::env::var_os("XDG_DATA_HOME").filter(|d| !d.is_empty()) {
         Some(dir) => PathBuf::from(dir),
@@ -83,13 +168,15 @@ fn extensions_dir() -> Result<PathBuf> {
 }
 
 /// Returns true when GNOME must reload the extension (installed, updated or newly enabled).
-fn install_extension() -> Result<bool> {
+pub fn install_extension() -> Result<bool> {
     let dir = extensions_dir()?;
     std::fs::create_dir_all(&dir).with_context(|| format!("Create {}", dir.display()))?;
     let mut changed = false;
-    for (name, contents) in EXTENSION_FILES {
+    // An unknown version gets the current format.
+    let shell = shell_version().unwrap_or(FIRST_MODULE_SHELL);
+    for (name, contents) in extension_files(shell)? {
         let path = dir.join(name);
-        if std::fs::read_to_string(&path).ok().as_deref() != Some(contents) {
+        if std::fs::read_to_string(&path).ok().as_deref() != Some(contents.as_str()) {
             std::fs::write(&path, contents).with_context(|| format!("Write {}", path.display()))?;
             changed = true;
         }
@@ -391,9 +478,46 @@ mod tests {
             .find(|e| e.command.ends_with(" apply focus-right"))
             .unwrap();
         assert_eq!(right.binding, "<Control><Alt>l");
-        assert_eq!(skipped, [Action::ResizeUp, Action::ResizeDown]);
+        // Modes need keys grabbed while they last, which GNOME shortcuts can't do.
+        assert_eq!(
+            skipped,
+            [Action::ResizeUp, Action::ResizeDown, Action::DockPick]
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.command.ends_with(" apply dock") && e.binding == "<Control><Alt>d")
+        );
         let paths: std::collections::HashSet<_> = entries.iter().map(|e| &e.path).collect();
         assert_eq!(paths.len(), entries.len(), "paths must be unique");
+    }
+
+    #[test]
+    fn older_shells_get_the_extension_in_their_format() {
+        let [(_, metadata), (_, code)] = extension_files(42).unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+        assert_eq!(metadata["shell-version"], serde_json::json!(LEGACY_SHELLS));
+        assert_eq!(metadata["uuid"], EXTENSION_UUID);
+        assert!(
+            !code
+                .lines()
+                .any(|l| l.starts_with("import ") || l.starts_with("export "))
+        );
+        assert!(code.contains("const Meta = imports.gi.Meta;\n"));
+        assert!(code.contains("const Main = imports.ui.main;\n"));
+        assert!(code.contains("\nclass TtPaneExtension {\n"));
+        assert!(code.ends_with("function init() {\n    return new TtPaneExtension();\n}\n"));
+        // Newer shells get the files as they are.
+        let [(_, metadata), (_, code)] = extension_files(47).unwrap();
+        assert_eq!((metadata.as_str(), code.as_str()), (METADATA, EXTENSION));
+        assert!(legacy_extension("import Foo from 'resource:///elsewhere.js';\n").is_err());
+    }
+
+    #[test]
+    fn reads_the_shell_major_version() {
+        assert_eq!(parse_shell_version("GNOME Shell 42.9\n"), Some(42));
+        assert_eq!(parse_shell_version("GNOME Shell 47.beta"), Some(47));
+        assert_eq!(parse_shell_version(""), None);
     }
 
     #[test]

@@ -399,18 +399,22 @@ fn apply_inner(
         .open(sidecar(&path, ".cycle.lock"))
         .context("Open positioning cycle lock")?;
     lock.lock().context("Lock positioning cycle")?;
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     if action == Action::Dock {
+        ensure!(
+            platform::dock_supported(),
+            "The dock needs Windows or GNOME (X11 or Wayland)"
+        );
         return crate::dock::toggle(config, &path, window);
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     ensure!(
         action != Action::Dock,
-        "The dock currently supports Windows only"
+        "The dock needs Windows or GNOME (X11 or Wayland)"
     );
     // Positioning a docked window by any other means takes it out of the dock.
-    #[cfg(windows)]
-    if !action.focuses() {
+    #[cfg(any(windows, target_os = "linux"))]
+    if !action.focuses() && platform::dock_supported() {
         crate::dock::release(&path, window)?;
     }
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -489,15 +493,15 @@ fn apply_inner(
     }
     let mut next = None;
     // Snaps stop short of the dock panel where it covers them.
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     let mut dock = if config.dock.enabled && crate::dock::Dock::exists(&path) {
         Some(crate::dock::Dock::load(&path)?)
     } else {
         None
     };
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     let dock_panel = dock.as_ref().and_then(|d| d.panel());
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     let mut squeeze: Option<(String, Rect, Rect)> = None;
     // Experimental: animate this single-window snap from its live bounds,
     // snapped or not. Tiling and group moves above and below stay instant.
@@ -536,7 +540,7 @@ fn apply_inner(
                     };
                 }
             }
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             if let Some(panel) = dock_panel
                 && platform::dock::intersects(area, panel)
             {
@@ -556,7 +560,7 @@ fn apply_inner(
             Ok(target)
         })
     })?;
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     if let (Some(dock), Some((id, original, _))) = (dock.as_mut(), squeeze)
         && let Some(handle) = id.rsplit(':').next().and_then(|s| s.parse().ok())
     {

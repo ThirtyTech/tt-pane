@@ -20,7 +20,7 @@ raw-window-handle = { version = "0.6", optional = true }
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Controls_Dialogs", "Win32_System_Console", "Win32_System_LibraryLoader", "Win32_System_Com", "Win32_System_Threading", "Win32_UI_Shell"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-x11rb = { version = "0.13", features = ["randr"] }
+x11rb = { version = "0.13", features = ["randr", "shape"] }
 zbus = "5"
 
 [target.'cfg(target_os = "macos")'.dependencies]

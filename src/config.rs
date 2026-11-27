@@ -169,7 +169,7 @@ impl Animation {
     }
 }
 
-/// Experimental dock panel with live window previews (Windows). Off by default.
+/// Experimental dock panel with live window previews (Windows and GNOME). Off by default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Dock {
@@ -328,13 +328,20 @@ impl Default for Config {
     }
 }
 
-// Windows-only defaults. Tiling uses Hyprland-style Super+Shift; the dock
-// (Windows only) uses Ctrl+Alt+D beside the positioning keys, and Ctrl+Alt+P
-// to pick a docked window. Tiling is Windows-only, and
-// Super+Shift letters belong to the shell on GNOME and to apps (Cmd) on macOS.
-// Windows reserves Win+Shift+S/T/P/R/X, so the split toggle uses O (orientation)
-// and toggle-tiling uses G (grid). Resize mode uses E, since R is taken.
+// Windows-only defaults, except the dock's. Tiling uses Hyprland-style
+// Super+Shift; the dock (Windows and GNOME) uses Ctrl+Alt+D beside the
+// positioning keys, and Ctrl+Alt+P to pick a docked window. Tiling defaults are
+// Windows-only, as Super+Shift letters belong to the shell on GNOME and to apps
+// (Cmd) on macOS. Windows reserves Win+Shift+S/T/P/R/X, so the split toggle uses
+// O (orientation) and toggle-tiling uses G (grid). Resize mode uses E, since R is taken.
 fn tiling_default_shortcut(action: Action) -> Option<&'static str> {
+    if cfg!(target_os = "linux") {
+        return match action {
+            Action::Dock => Some("Ctrl+Alt+d"),
+            Action::DockPick => Some("Ctrl+Alt+p"),
+            _ => None,
+        };
+    }
     if !cfg!(windows) {
         return None;
     }
@@ -1140,7 +1147,11 @@ duration_ms = 5000
         let dock = config.bindings.iter().find(|b| b.action == Action::Dock);
         assert_eq!(
             dock.map(|b| b.shortcut.as_str()),
-            Some(if cfg!(windows) { "Ctrl+Alt+d" } else { "" })
+            Some(if cfg!(any(windows, target_os = "linux")) {
+                "Ctrl+Alt+d"
+            } else {
+                ""
+            })
         );
         let pick = config
             .bindings
@@ -1148,7 +1159,11 @@ duration_ms = 5000
             .find(|b| b.action == Action::DockPick);
         assert_eq!(
             pick.map(|b| b.shortcut.as_str()),
-            Some(if cfg!(windows) { "Ctrl+Alt+p" } else { "" })
+            Some(if cfg!(any(windows, target_os = "linux")) {
+                "Ctrl+Alt+p"
+            } else {
+                ""
+            })
         );
         let mut invalid = Config::default();
         invalid.dock.size_percent = 4;

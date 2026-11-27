@@ -58,6 +58,38 @@ impl DockFill {
 /// The size docked windows are rendered at before they are scaled into a slot.
 pub const PREVIEW_SOURCE: (i32, i32) = (1920, 1080);
 
+/// What the dock panel should show.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockRequest {
+    pub edge: DockEdge,
+    /// The end of the edge the panel grows from.
+    pub fill: DockFill,
+    pub percent: u32,
+    /// Docked windows in slot order, from the fill end.
+    pub members: Vec<u64>,
+    /// The member currently shown in the arena.
+    pub active: Option<u64>,
+    /// A window that isn't docked is being dragged: show an empty slot to drop it on.
+    pub dragging: bool,
+    /// The dragged window is over the panel.
+    pub highlight: bool,
+    /// Dock pick mode is on: number the first nine previews.
+    pub numbered: bool,
+    /// The window gaps, which the previews are laid out with.
+    pub gaps: crate::geometry::SnapGaps,
+}
+
+/// Where the panel and its slots ended up, in screen pixels. There is no
+/// layout while the panel is hidden, with nothing docked or dragged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockLayout {
+    pub panel: Rect,
+    pub slots: Vec<(u64, Rect)>,
+    /// What the docked windows take of the edge, without a drag's drop slot:
+    /// the whole strip once they fill it. `None` while nothing is docked.
+    pub area: Option<Rect>,
+}
+
 /// Where previews sit in the panel, in physical pixels. They follow the
 /// window gaps, so the dock lines up with snapped windows: the outer gap from
 /// the screen's edge and corner, and the spacing between two snapped windows

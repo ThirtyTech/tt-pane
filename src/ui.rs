@@ -143,7 +143,7 @@ struct Settings {
     window: Option<WindowHandle<Settings>>,
     _tray: crate::tray::Tray,
     update: UpdateState,
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     dock_drag: crate::dock::DragTracker,
 }
 
@@ -326,12 +326,20 @@ impl Settings {
     /// One key of dock pick mode. The tray's next dock observation brings the
     /// chosen window out; an empty dock or an error ends the mode.
     fn pick_docked(&mut self, step: crate::dock::PickStep, cx: &mut Context<Self>) {
-        #[cfg(windows)]
-        let result = crate::dock::pick(&self.active, &self.path, step);
-        #[cfg(not(windows))]
+        #[cfg(any(windows, target_os = "linux"))]
+        let result = if platform::dock_supported() {
+            crate::dock::pick(&self.active, &self.path, step)
+        } else {
+            Err(anyhow::anyhow!(
+                "The dock needs Windows or GNOME (X11 or Wayland)"
+            ))
+        };
+        #[cfg(not(any(windows, target_os = "linux")))]
         let result: anyhow::Result<bool> = {
             let _ = step;
-            Err(anyhow::anyhow!("The dock currently supports Windows only"))
+            Err(anyhow::anyhow!(
+                "The dock needs Windows or GNOME (X11 or Wayland)"
+            ))
         };
         let ended = !matches!(result, Ok(true));
         if ended && let Some(shortcuts) = &mut self.shortcuts {
@@ -530,6 +538,19 @@ impl Settings {
         }
         if let Some(taken) = message {
             self.message(format!("Saved. {taken}"), true, cx);
+            return;
+        }
+        #[cfg(target_os = "linux")]
+        if platform::is_gnome() && !platform::is_wayland() {
+            match crate::gnome::setup_dock_extension(&self.active) {
+                Ok(Some(note)) => self.message(format!("Saved. {note}"), false, cx),
+                Ok(None) => self.message(
+                    "Saved. Your shortcuts are active across all applications.",
+                    false,
+                    cx,
+                ),
+                Err(error) => self.message(format!("Saved, but {error:#}"), true, cx),
+            }
             return;
         }
         #[cfg(target_os = "linux")]
@@ -971,8 +992,8 @@ impl Settings {
             .when(selected.focuses(), |el| el.child(div().text_xs().text_color(rgb(MINT)).child("H: left, J: down, K: up, L: right. Tap H/J/K/L to navigate background windows by default. Inside a centered group, H/L rotate continuously. Hold for 400 ms to enter covered middle windows from an edge, or exit a middle window to a background edge window. Holds are Windows only; centered groups rotate on Windows and GNOME on Wayland.")))
             .when(selected == Action::FillGap, |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Example gap after shrinking the last previewed position. To fill a real gap, shrink a window, select another on the same monitor, then press Ctrl+Alt+. (period).")))
             .when(selected.adjusts_width(), |el| el.child(help("Width change per press is set on the Snapping tab.")))
-            .when(selected == Action::Dock, |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Experimental, Windows only. Sends the focused window to the dock panel as a live preview, or takes a docked window back out. Turn the dock on and choose its edge on the Dock tab.")))
-            .when(selected == Action::DockPick, |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Experimental, Windows only. Numbers the dock previews and brings one out: press 1–9 for that preview, or the arrows, H/J/K/L or Tab to step through them, each window coming out as you go. Shift with an arrow or H/J/K/L moves the window that's out one place along the dock; dragging a preview along the panel moves it too. Pressing this shortcut again steps to the next one. Esc, Enter, any other shortcut or 10 seconds idle ends it, leaving the current window out.")))
+            .when(selected == Action::Dock, |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Experimental, Windows and GNOME (X11 and Wayland). Sends the focused window to the dock panel as a live preview, or takes a docked window back out. Turn the dock on and choose its edge on the Dock tab.")))
+            .when(selected == Action::DockPick, |el| el.child(div().text_xs().text_color(rgb(MINT)).child("Experimental, Windows and GNOME on X11. Numbers the dock previews and brings one out: press 1–9 for that preview, or the arrows, H/J/K/L or Tab to step through them, each window coming out as you go. Shift with an arrow or H/J/K/L moves the window that's out one place along the dock; dragging a preview along the panel moves it too. Pressing this shortcut again steps to the next one. Esc, Enter, any other shortcut or 10 seconds idle ends it, leaving the current window out.")))
             .child(help("Hover a shortcut to preview its first position. Green shows the window; the dark area represents the monitor’s usable space."));
         div()
             .flex()
@@ -1396,11 +1417,11 @@ impl Settings {
         let dock = &self.draft.dock;
         if !platform::dock_supported() {
             return vec![page_note(
-                "The dock shows live window previews, which tt-pane supports on Windows so far.",
+                "The dock shows live window previews, which tt-pane supports on Windows and on GNOME (X11 and Wayland) so far.",
                 MUTED,
             )];
         }
-        vec![
+        let mut page = vec![
             section(
                 "Dock panel",
                 [
@@ -1502,7 +1523,14 @@ impl Settings {
                 "Dock the focused window with Dock / undock window (Ctrl+Alt+D by default) or by dragging it onto the panel. Docked windows are rendered at 1920×1080 off screen and scaled into their previews. Turning the dock off or quitting tt-pane puts every docked window back where it was.",
                 MINT,
             ),
-        ]
+        ];
+        if platform::is_gnome() {
+            page.push(page_note(
+                "On GNOME the tt-pane Shell extension draws the dock, and its previews are always live. After turning the dock on, restart GNOME Shell once so it loads the extension: Alt+F2, then r and Enter in an X11 session, or log out and back in.",
+                MUTED,
+            ));
+        }
+        page
     }
 
     fn general_tab(&self, cx: &mut Context<Self>) -> Vec<Div> {
@@ -2091,6 +2119,18 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             status = format!("{e:#}");
             error = true;
         }
+        // On GNOME X11 the dock is drawn by the Shell extension.
+        #[cfg(target_os = "linux")]
+        if platform::is_gnome() && !platform::is_wayland() {
+            match crate::gnome::setup_dock_extension(&config) {
+                Ok(Some(note)) => status = note.to_owned(),
+                Ok(None) => {}
+                Err(e) => {
+                    status = format!("{e:#}");
+                    error = true;
+                }
+            }
+        }
         // GNOME runs tt-pane's shortcuts itself; keep them pointed at this
         // executable. Debug builds skip it, as with autostart above.
         #[cfg(target_os = "linux")]
@@ -2161,7 +2201,7 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
             window: None,
             _tray: tray,
             update: UpdateState::default(),
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             dock_drag: crate::dock::DragTracker::default(),
         });
         *reopened.borrow_mut() = Some(settings.clone());
@@ -2183,7 +2223,7 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
         }
         cx.spawn(async move |cx| {
             let mut group_observed = std::time::Instant::now();
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             let mut dock_observed = std::time::Instant::now();
             // Tiling and centered groups need window inspection: native on Windows
             // and macOS, the Shell extension on GNOME. Other Linux sessions have none.
@@ -2216,8 +2256,10 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                                 });
                             }
                             if event.id.0 == crate::tray::QUIT {
-                                #[cfg(windows)]
-                                let _ = crate::dock::shutdown(&settings.read(cx).path, true);
+                                #[cfg(any(windows, target_os = "linux"))]
+                                if platform::dock_supported() {
+                                    let _ = crate::dock::shutdown(&settings.read(cx).path, true);
+                                }
                                 cx.quit();
                                 return;
                             }
@@ -2233,15 +2275,22 @@ pub fn run(mut config: Config, path: PathBuf, open_settings: bool) -> anyhow::Re
                             this.poll_update(cx);
                             // Previews react to clicks and focus changes, so the
                             // dock observes more often than groups do.
-                            #[cfg(windows)]
-                            if dock_observed.elapsed() >= Duration::from_millis(50) {
+                            #[cfg(any(windows, target_os = "linux"))]
+                            if platform::dock_supported()
+                                && dock_observed.elapsed() >= Duration::from_millis(50)
+                            {
                                 dock_observed = std::time::Instant::now();
                                 if let Err(e) = crate::dock::observe(
                                     &this.active,
                                     &this.path,
                                     &mut this.dock_drag,
                                 ) {
-                                    this.message(format!("Dock: {e:#}"), true, cx);
+                                    // A lasting failure, such as the GNOME
+                                    // extension not loaded yet, is reported once.
+                                    let text = format!("Dock: {e:#}");
+                                    if this.status != text {
+                                        this.message(text, true, cx);
+                                    }
                                 }
                             }
                             if observe_groups

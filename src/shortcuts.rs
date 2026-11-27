@@ -284,7 +284,7 @@ impl Shortcuts {
         self.leave_resize();
         let keys = self.grab(pick_keys());
         self.pick = Some(PickMode { keys, last: now });
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         platform::set_dock_picking(true);
     }
 
@@ -292,7 +292,7 @@ impl Shortcuts {
     pub fn leave_pick(&mut self) {
         if let Some(mode) = self.pick.take() {
             self.release(mode.keys);
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             platform::set_dock_picking(false);
         }
     }

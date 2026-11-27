@@ -1,11 +1,11 @@
-//! Experimental dock (Windows): windows docked into a panel along one screen
+//! Experimental dock (Windows, and GNOME on X11 and Wayland): windows docked into a panel along one screen
 //! edge show as live previews. Clicking one brings that window into the arena
 //! (the work area the panel leaves), and focusing any other window sends it back.
 //!
 //! Membership lives in the `.dock.json` sidecar, guarded by the cycle lock like
 //! centered groups, so the CLI and the tray process share it. The tray process
 //! owns the panel and reconciles it with the saved state.
-#![cfg_attr(not(windows), allow(dead_code))]
+#![cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 use crate::geometry::{Action, Rect};
 pub use crate::platform::dock::{DockEdge, DockFill, Toward};
 use anyhow::{Context, Result};
@@ -84,14 +84,14 @@ pub(crate) fn pick_target(members: &[u64], current: Option<u64>, step: PickStep)
 
 /// The window dock pick mode chose last and its place in the dock then, so
 /// the next pick mode starts there instead of at the first preview.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LastPick {
     handle: u64,
     slot: usize,
 }
 
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 impl LastPick {
     fn of(members: &[u64], handle: u64) -> Option<Self> {
         let slot = members.iter().position(|&m| m == handle)?;
@@ -109,12 +109,12 @@ impl LastPick {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 static LAST_PICK: std::sync::Mutex<Option<LastPick>> = std::sync::Mutex::new(None);
 
 /// The window a pick step counts from: the one waiting to come out, the one
 /// out of the dock, or, as pick mode starts, the one picked last time.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 fn pick_current(
     members: &[u64],
     pending: Option<u64>,
@@ -626,7 +626,7 @@ impl DragTracker {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 mod native {
     use super::*;
     use crate::platform;
@@ -664,19 +664,7 @@ mod native {
             platform::stow_window(handle, slot, self.edge, self.fill, self.live, step).map(|_| ())
         }
         fn parked(&self, bounds: Rect, step: usize) -> bool {
-            // Position only, for the window's own size: an application may
-            // refuse the 1080p size, and a stowed window keeps its size, so
-            // comparing sizes would re-park it on every observation.
-            platform::park_target(
-                self.edge,
-                self.fill,
-                (bounds.width, bounds.height),
-                self.live,
-                step,
-            )
-            .is_ok_and(|target| {
-                target.x.abs_diff(bounds.x) <= 2 && target.y.abs_diff(bounds.y) <= 2
-            })
+            platform::dock_parked(self.edge, self.fill, bounds, self.live, step)
         }
         fn place(&self, handle: u64, target: Rect, from: Option<Rect>) -> Result<()> {
             match from {
@@ -713,7 +701,7 @@ mod native {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn cycle_lock(path: &Path) -> Result<File> {
     Ok(std::fs::OpenOptions::new()
         .create(true)
@@ -725,7 +713,7 @@ fn cycle_lock(path: &Path) -> Result<File> {
 
 /// `tt-pane apply dock`: dock the window, or undock a docked one. The caller
 /// holds the cycle lock.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub(crate) fn toggle(
     config: &crate::config::Config,
     path: &Path,
@@ -751,7 +739,7 @@ pub(crate) fn toggle(
 /// One key of dock pick mode: choose the window it names, which the tray
 /// brings out at its next observation. `Ok(false)` when the dock is empty, so
 /// the mode should end.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub(crate) fn pick(config: &crate::config::Config, path: &Path, step: PickStep) -> Result<bool> {
     use crate::platform;
     anyhow::ensure!(
@@ -798,7 +786,7 @@ pub(crate) fn pick(config: &crate::config::Config, path: &Path, step: PickStep) 
 
 /// Positioning a docked window with another action takes it out of the dock.
 /// The caller holds the cycle lock.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub(crate) fn release(path: &Path, window: Option<u64>) -> Result<()> {
     if !Dock::exists(path) {
         return Ok(());
@@ -823,7 +811,7 @@ pub(crate) fn release(path: &Path, window: Option<u64>) -> Result<()> {
 
 /// The tray's periodic dock work: show or hide the panel, activate clicked
 /// previews, return the active window when focus moves, and dock dropped windows.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub fn observe(config: &crate::config::Config, path: &Path, drag: &mut DragTracker) -> Result<()> {
     use crate::platform;
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
@@ -894,7 +882,7 @@ pub fn observe(config: &crate::config::Config, path: &Path, drag: &mut DragTrack
 
 /// Snapped windows on the dock monitor that the panel `area` covers. Automatic
 /// tiling arranges its own windows, so none are offered while it is on.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn snapped_windows(
     config: &crate::config::Config,
     path: &Path,
@@ -915,7 +903,15 @@ fn snapped_windows(
         .windows
         .into_iter()
         .map(|w| w.snapshot)
-        .filter(|s| s.area == work && platform::dock::intersects(s.bounds, area))
+        // On X11 tiling works out its own work areas, which can differ from
+        // GNOME's by the top bar, so any window on the dock monitor counts.
+        .filter(|s| {
+            (if cfg!(windows) {
+                s.area == work
+            } else {
+                platform::dock::intersects(s.area, work)
+            }) && platform::dock::intersects(s.bounds, area)
+        })
         .filter(|s| platform::is_edge_snapped(s.bounds, work, config.gaps))
         .map(|s| (s.handle, s.id, s.bounds))
         .collect()
@@ -924,7 +920,7 @@ fn snapped_windows(
 /// Put every docked window back and remove the panel, for quitting or turning
 /// the dock off. With `remember`, for quitting, the next start docks the
 /// windows again.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub fn shutdown(path: &Path, remember: bool) -> Result<()> {
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let result = (|| {

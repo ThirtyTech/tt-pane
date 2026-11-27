@@ -28,37 +28,7 @@ use windows::{
     core::{PCWSTR, w},
 };
 
-/// What the dock panel should show.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DockRequest {
-    pub edge: DockEdge,
-    /// The end of the edge the panel grows from.
-    pub fill: DockFill,
-    pub percent: u32,
-    /// Docked windows in slot order, from the fill end.
-    pub members: Vec<u64>,
-    /// The member currently shown in the arena.
-    pub active: Option<u64>,
-    /// A window that isn't docked is being dragged: show an empty slot to drop it on.
-    pub dragging: bool,
-    /// The dragged window is over the panel.
-    pub highlight: bool,
-    /// Dock pick mode is on: number the first nine previews.
-    pub numbered: bool,
-    /// The window gaps, which the previews are laid out with.
-    pub gaps: crate::geometry::SnapGaps,
-}
-
-/// Where the panel and its slots ended up, in physical screen pixels. There is
-/// no layout while the panel is hidden, with nothing docked or dragged.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DockLayout {
-    pub panel: Rect,
-    pub slots: Vec<(u64, Rect)>,
-    /// What the docked windows take of the edge, without a drag's drop slot:
-    /// the whole strip once they fill it. `None` while nothing is docked.
-    pub area: Option<Rect>,
-}
+pub use crate::dock::{DockLayout, DockRequest};
 
 struct Shared {
     request: Option<DockRequest>,
@@ -363,6 +333,15 @@ pub fn park_target(
         width: size.0,
         height: size.1,
     })
+}
+
+/// Whether a docked window at `bounds` is where the window at `step` parks.
+/// Position only, for the window's own size: an application may refuse the
+/// 1080p size, and a stowed window keeps its size, so comparing sizes would
+/// re-park it on every observation.
+pub fn dock_parked(edge: DockEdge, fill: DockFill, bounds: Rect, live: bool, step: usize) -> bool {
+    park_target(edge, fill, (bounds.width, bounds.height), live, step)
+        .is_ok_and(|target| target.x.abs_diff(bounds.x) <= 2 && target.y.abs_diff(bounds.y) <= 2)
 }
 
 /// How long a window gets to lay itself out at 1080p before it is parked.

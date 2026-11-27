@@ -2,7 +2,10 @@
 //! inspection, moves and activation automatic tiling needs.
 
 use super::WindowSnapshot;
-use crate::geometry::{Rect, monitor_for};
+use crate::{
+    dock::DockEdge,
+    geometry::{Rect, monitor_for},
+};
 use anyhow::{Context, Result, ensure};
 use std::{
     collections::HashMap,
@@ -14,10 +17,16 @@ use x11rb::{
     properties::{WmClass, WmSizeHints},
     protocol::{randr::ConnectionExt as _, xproto::*},
     rust_connection::RustConnection,
+    wrapper::ConnectionExt as _,
 };
 
 /// `_NET_WM_DESKTOP` for windows shown on every desktop.
 const ALL_DESKTOPS: u32 = 0xFFFF_FFFF;
+
+/// Marks a docked window, which tiling leaves alone in every tt-pane process.
+const DOCKED: &str = "_TT_PANE_DOCKED";
+/// On the root window: the strip the dock reserves, as `_NET_WM_STRUT_PARTIAL`.
+const DOCK_STRUT: &str = "_TT_PANE_DOCK_STRUT";
 
 struct X11 {
     connection: RustConnection,
@@ -170,11 +179,19 @@ impl X11 {
         Ok(monitors)
     }
 
+    /// Client struts, plus the dock's reserved strip: GNOME Shell reserves it
+    /// for its own chrome, which no client strut shows.
     fn struts(&self, clients: &[u32]) -> Vec<Strut> {
         clients
             .iter()
+            .chain([&self.root])
             .filter_map(|&client| {
-                let strut = self.property(client, "_NET_WM_STRUT_PARTIAL").ok()?;
+                let name = if client == self.root {
+                    DOCK_STRUT
+                } else {
+                    "_NET_WM_STRUT_PARTIAL"
+                };
+                let strut = self.property(client, name).ok()?;
                 strut.get(..12)?.try_into().ok()
             })
             .collect()
@@ -232,7 +249,9 @@ impl X11 {
             .flatten()
             .map(|class| String::from_utf8_lossy(class.class()).into_owned())
             .unwrap_or_default();
+        let docked = !self.property(window, DOCKED)?.is_empty();
         let tileable = attributes.map_state == MapState::VIEWABLE
+            && !docked
             && normal
             && !transient
             && !fixed
@@ -509,6 +528,129 @@ pub fn tiling_desktop() -> Result<crate::TilingDesktop> {
         result.windows.sort_by_key(|w| w.snapshot.handle);
         Ok(result)
     })
+}
+
+/// The id tiling and positioning know an X11 window by.
+pub fn window_id(handle: u64) -> Option<String> {
+    let window = u32::try_from(handle).ok()?;
+    with(|x| Ok(x.id(window))).ok()
+}
+
+/// Mark or unmark a docked window, so tiling in every tt-pane process skips it.
+pub fn set_docked(handle: u64, docked: bool) -> Result<()> {
+    let window = u32::try_from(handle)?;
+    with(|x| {
+        let atom = x.atom(DOCKED)?;
+        if docked {
+            x.connection.change_property32(
+                PropMode::REPLACE,
+                window,
+                atom,
+                AtomEnum::CARDINAL,
+                &[1],
+            )?;
+        } else {
+            x.connection.delete_property(window, atom)?;
+        }
+        x.connection.flush()?;
+        Ok(())
+    })
+}
+
+/// Let clicks fall through a parked window, or take them again. GNOME keeps a
+/// corner of every window on screen, so a parked window still has one there.
+pub fn set_click_through(handle: u64, through: bool) -> Result<()> {
+    use x11rb::protocol::shape::{ConnectionExt as _, SK, SO};
+    let window = u32::try_from(handle)?;
+    with(|x| {
+        let parent = x.connection.query_tree(window)?.reply()?.parent;
+        // A server-side decorated window takes clicks on its frame too.
+        let windows = [window]
+            .into_iter()
+            .chain((parent != x.root).then_some(parent));
+        for target in windows {
+            if through {
+                x.connection.shape_rectangles(
+                    SO::SET,
+                    SK::INPUT,
+                    ClipOrdering::UNSORTED,
+                    target,
+                    0,
+                    0,
+                    &[],
+                )?;
+            } else {
+                x.connection
+                    .shape_mask(SO::SET, SK::INPUT, target, 0, 0, x11rb::NONE)?;
+            }
+        }
+        x.connection.flush()?;
+        Ok(())
+    })
+}
+
+/// Publish the strip the dock reserves, or clear it. GNOME Shell reserves it
+/// for its own chrome, which tiling here only sees through this property.
+pub fn set_dock_strut(reserved: Option<(Rect, DockEdge)>) -> Result<()> {
+    with(|x| {
+        let atom = x.atom(DOCK_STRUT)?;
+        let screen = &x.connection.setup().roots[x.screen];
+        match reserved {
+            Some((rect, edge)) => {
+                let strut = strut_for(
+                    rect,
+                    edge,
+                    i32::from(screen.width_in_pixels),
+                    i32::from(screen.height_in_pixels),
+                );
+                x.connection.change_property32(
+                    PropMode::REPLACE,
+                    x.root,
+                    atom,
+                    AtomEnum::CARDINAL,
+                    &strut,
+                )?;
+            }
+            None => {
+                x.connection.delete_property(x.root, atom)?;
+            }
+        }
+        x.connection.flush()?;
+        Ok(())
+    })
+}
+
+/// `_NET_WM_STRUT_PARTIAL` reserving `rect` along `edge` of its monitor,
+/// measured from the edges of the whole screen.
+fn strut_for(rect: Rect, edge: DockEdge, root_w: i32, root_h: i32) -> Strut {
+    let mut strut = [0u32; 12];
+    let span_x = [
+        rect.x.max(0) as u32,
+        (rect.x + rect.width - 1).max(0) as u32,
+    ];
+    let span_y = [
+        rect.y.max(0) as u32,
+        (rect.y + rect.height - 1).max(0) as u32,
+    ];
+    match edge {
+        DockEdge::Left => {
+            strut[0] = (rect.x + rect.width).max(0) as u32;
+            strut[4..6].copy_from_slice(&span_y);
+        }
+        DockEdge::Right => {
+            strut[1] = (root_w - rect.x).max(0) as u32;
+            strut[6..8].copy_from_slice(&span_y);
+        }
+        DockEdge::Top => {
+            strut[2] = (rect.y + rect.height).max(0) as u32;
+            strut[8..10].copy_from_slice(&span_x);
+        }
+        DockEdge::Bottom => {
+            strut[3] = (root_h - rect.y).max(0) as u32;
+            strut[10..12].copy_from_slice(&span_x);
+        }
+    }
+    strut
 }
 
 fn workspace_key(desktop: u32) -> String {
