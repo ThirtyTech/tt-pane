@@ -106,6 +106,15 @@ fn run(cli: Cli) -> Result<()> {
         ),
         Some(Command::Apply { .. } | Command::Actions) => unreachable!(),
         command @ (None | Some(Command::Settings)) => {
+            // One tray app per configuration: a second copy would grab the same
+            // shortcuts and draw a second dock over the first. Held until exit.
+            let Some(_instance) = tt_pane::instance::InstanceLock::acquire(&path)? else {
+                eprintln!(
+                    "tt-pane is already running; open Settings from its tray icon. \
+                     Quit it first to start another copy."
+                );
+                return Ok(());
+            };
             #[cfg(feature = "gui")]
             tt_pane::ui::run(config, path, command.is_some())?;
             #[cfg(not(feature = "gui"))]

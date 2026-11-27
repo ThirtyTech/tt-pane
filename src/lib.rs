@@ -7,6 +7,7 @@ pub mod config;
 pub mod dock;
 #[cfg(target_os = "linux")]
 pub mod gnome;
+pub mod instance;
 #[cfg(all(target_os = "linux", feature = "gui"))]
 mod launcher;
 pub mod positioning;
