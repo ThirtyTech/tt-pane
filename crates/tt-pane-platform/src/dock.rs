@@ -227,6 +227,16 @@ pub fn occupied(strip: Rect, edge: DockEdge, fill: DockFill, count: usize) -> Re
     rect
 }
 
+/// Whether `count` full-size slots need the whole length of `strip`.
+pub fn fills(strip: Rect, edge: DockEdge, count: usize) -> bool {
+    let used = occupied(strip, edge, DockFill::Start, count);
+    if edge.horizontal() {
+        used.width >= strip.width
+    } else {
+        used.height >= strip.height
+    }
+}
+
 /// Slots in fill order: the first docked window sits at the `fill` end.
 pub fn slots_from(panel: Rect, edge: DockEdge, fill: DockFill, count: usize) -> Vec<Rect> {
     let mut slots = slots(panel, edge, count);
@@ -427,6 +437,10 @@ mod tests {
         // Too many for the edge: the whole strip is used and slots shrink.
         assert_eq!(occupied(strip, DockEdge::Top, DockFill::Start, 20), strip);
         assert_eq!(occupied(strip, DockEdge::Top, DockFill::Start, 0).width, 0);
+        // Only a panel that needs the whole edge reserves it.
+        assert!(!fills(strip, DockEdge::Top, 1));
+        assert!(!fills(strip, DockEdge::Top, 11));
+        assert!(fills(strip, DockEdge::Top, 12));
 
         let side = panel_rect(MONITOR, DockEdge::Right, 10);
         let column = occupied(side, DockEdge::Right, DockFill::End, 1);

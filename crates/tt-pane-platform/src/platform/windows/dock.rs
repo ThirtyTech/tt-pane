@@ -420,7 +420,7 @@ fn edge_code(edge: DockEdge) -> u32 {
 
 /// The full-length strip along the edge, kept clear of the taskbar. A
 /// registered AppBar asks the shell; otherwise the work area already excludes it.
-fn strip(window: HWND, edge: DockEdge, percent: u32, registered: bool) -> Result<Rect> {
+fn edge_strip(window: HWND, edge: DockEdge, percent: u32, registered: bool) -> Result<Rect> {
     let (monitor, work) = dock_monitor()?;
     if !registered {
         return Ok(dock::strip_within(monitor, work, edge, percent));
@@ -536,20 +536,31 @@ fn update(window: HWND) {
                 lock().layout = None;
                 return;
             }
-            if docked == 0 {
-                // Only a drop target while dragging: never move other windows mid-drag.
-                reserve(window, panel, request.edge, None);
-            } else if !panel.registered {
-                let mut data = appbar(window);
-                SHAppBarMessage(ABM_NEW, &mut data);
-                panel.registered = true;
-            }
-            let Ok(strip) = strip(window, request.edge, request.percent, panel.registered) else {
+            // Reserve space only once the docked windows fill the whole edge:
+            // Windows reserves an AppBar's thickness along the entire edge, so a
+            // shorter panel floats over its own corner instead. A drag never
+            // reserves, so other windows don't move mid-drag.
+            let Ok(mut strip) = edge_strip(window, request.edge, request.percent, panel.registered)
+            else {
                 return;
             };
-            if docked > 0 {
-                let reserved = dock::occupied(strip, request.edge, request.fill, docked);
-                reserve(window, panel, request.edge, Some(reserved));
+            let full = docked > 0 && dock::fills(strip, request.edge, docked);
+            if full != panel.registered {
+                if full {
+                    let mut data = appbar(window);
+                    SHAppBarMessage(ABM_NEW, &mut data);
+                    panel.registered = true;
+                } else {
+                    reserve(window, panel, request.edge, None);
+                }
+                let Ok(again) = edge_strip(window, request.edge, request.percent, panel.registered)
+                else {
+                    return;
+                };
+                strip = again;
+            }
+            if full {
+                reserve(window, panel, request.edge, Some(strip));
             }
             panel.rect = dock::occupied(strip, request.edge, request.fill, count);
             let _ = SetWindowPos(

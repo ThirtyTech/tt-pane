@@ -350,7 +350,13 @@ mod native {
             platform::activate_handle(handle)
         }
         fn arena(&self) -> Result<Rect> {
-            platform::dock_monitor().map(|(_, work)| work)
+            let (_, work) = platform::dock_monitor()?;
+            // A panel shorter than its edge reserves nothing, so keep the
+            // arena clear of it here; a reserved one is already outside `work`.
+            Ok(match platform::dock_layout() {
+                Some(layout) => platform::dock::arena(work, layout.panel, self.edge),
+                None => work,
+            })
         }
         fn foreground(&self) -> Option<u64> {
             platform::foreground_handle()
