@@ -20,6 +20,17 @@ struct Member {
     restore: Rect,
 }
 
+/// A snapped window cut back so it stops short of the panel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Squeezed {
+    handle: u64,
+    id: String,
+    /// Its bounds without the panel, restored once the panel no longer covers them.
+    original: Rect,
+    /// Where tt-pane put it. A window that has moved since is left alone.
+    reduced: Rect,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Dock {
     members: Vec<Member>,
@@ -29,6 +40,12 @@ pub(crate) struct Dock {
     /// foreground moves on, instead of popping straight back into the arena.
     #[serde(default)]
     settled: Option<u64>,
+    /// What the docked windows take of the edge, as the tray last laid it out.
+    /// Snaps in any process stop short of it.
+    #[serde(default)]
+    panel: Option<Rect>,
+    #[serde(default)]
+    squeezed: Vec<Squeezed>,
 }
 
 /// Native operations the dock needs, faked in tests.
@@ -95,6 +112,81 @@ impl Dock {
 
     pub fn active(&self) -> Option<u64> {
         self.active
+    }
+
+    pub fn panel(&self) -> Option<Rect> {
+        self.panel
+    }
+
+    /// Remember a snap that was cut back for the panel, so it grows back to
+    /// `original` when the panel shrinks away from it.
+    pub(crate) fn remember_squeeze(
+        &mut self,
+        handle: u64,
+        id: &str,
+        original: Rect,
+        reduced: Rect,
+    ) {
+        self.squeezed.retain(|s| s.handle != handle);
+        if original != reduced {
+            self.squeezed.push(Squeezed {
+                handle,
+                id: id.to_owned(),
+                original,
+                reduced,
+            });
+        }
+    }
+
+    /// The panel moved, grew, shrank or went away: refit the windows squeezed
+    /// beside it, and cut back `snapped` windows (handle, id, bounds) it now covers.
+    pub(crate) fn refit(
+        &mut self,
+        native: &dyn Native,
+        panel: Option<Rect>,
+        edge: DockEdge,
+        gap: u32,
+        snapped: &[(u64, String, Rect)],
+    ) {
+        use crate::platform::dock::avoid;
+        self.panel = panel;
+        let mut kept = Vec::new();
+        for mut squeezed in std::mem::take(&mut self.squeezed) {
+            let Some((id, bounds)) = native.identity(squeezed.handle) else {
+                continue;
+            };
+            // Closed, reused, or moved by the user since: no longer ours to resize.
+            if id != squeezed.id || !crate::positioning::near(bounds, squeezed.reduced) {
+                continue;
+            }
+            let target = panel.map_or(squeezed.original, |p| {
+                avoid(squeezed.original, p, edge, gap)
+            });
+            if target != squeezed.reduced && native.place(squeezed.handle, target, None).is_err() {
+                continue;
+            }
+            if target != squeezed.original {
+                squeezed.reduced = target;
+                kept.push(squeezed);
+            }
+        }
+        if let Some(panel) = panel {
+            for (handle, id, bounds) in snapped {
+                if self.contains(*handle) || kept.iter().any(|s| s.handle == *handle) {
+                    continue;
+                }
+                let target = avoid(*bounds, panel, edge, gap);
+                if target != *bounds && native.place(*handle, target, None).is_ok() {
+                    kept.push(Squeezed {
+                        handle: *handle,
+                        id: id.clone(),
+                        original: *bounds,
+                        reduced: target,
+                    });
+                }
+            }
+        }
+        self.squeezed = kept;
     }
 
     pub fn contains(&self, handle: u64) -> bool {
@@ -259,6 +351,8 @@ impl Dock {
         }
         self.active = None;
         self.settled = None;
+        // Squeezed windows get their full size back, unless they moved since.
+        self.refit(native, None, DockEdge::default(), 0, &[]);
         failure.map_or(Ok(()), Err)
     }
 }
@@ -468,6 +562,16 @@ pub fn observe(config: &crate::config::Config, path: &Path, drag: &mut DragTrack
         }
         dock.step(&desktop, &clicks)
     });
+    let area = platform::dock_layout().and_then(|layout| layout.area);
+    if area != dock.panel() {
+        dock.refit(
+            &desktop,
+            area,
+            config.dock.edge,
+            config.gaps.outer,
+            &snapped_windows(config, &path, area),
+        );
+    }
     if dock != before {
         dock.save(&path)?;
     }
@@ -481,6 +585,35 @@ pub fn observe(config: &crate::config::Config, path: &Path, drag: &mut DragTrack
         highlight: drag.over,
     })?;
     result
+}
+
+/// Snapped windows on the dock monitor that the panel `area` covers. Automatic
+/// tiling arranges its own windows, so none are offered while it is on.
+#[cfg(windows)]
+fn snapped_windows(
+    config: &crate::config::Config,
+    path: &Path,
+    area: Option<Rect>,
+) -> Vec<(u64, String, Rect)> {
+    use crate::platform;
+    let Some(area) = area else {
+        return Vec::new();
+    };
+    if config.tiling.enabled || crate::positioning::sidecar(path, ".tiling.json").exists() {
+        return Vec::new();
+    }
+    let (Ok((_, work)), Ok(desktop)) = (platform::dock_monitor(), platform::tiling_desktop())
+    else {
+        return Vec::new();
+    };
+    desktop
+        .windows
+        .into_iter()
+        .map(|w| w.snapshot)
+        .filter(|s| s.area == work && platform::dock::intersects(s.bounds, area))
+        .filter(|s| platform::is_edge_snapped(s.bounds, work, config.gaps))
+        .map(|s| (s.handle, s.id, s.bounds))
+        .collect()
 }
 
 /// Put every docked window back and remove the panel, for quitting or turning
@@ -703,6 +836,94 @@ mod tests {
         assert_eq!(fake.bounds(1), PARKED);
         // The window in the arena stays put.
         assert_eq!(fake.bounds(2), Action::Center.target(ARENA, ARENA));
+    }
+
+    #[test]
+    fn snapped_windows_the_panel_covers_shrink_and_grow_back() {
+        let fake = Fake::with(&[7, 8]);
+        let right_half = Rect {
+            x: 1000,
+            y: 0,
+            width: 1000,
+            height: 1000,
+        };
+        let left_half = Rect {
+            x: 0,
+            y: 0,
+            width: 1000,
+            height: 1000,
+        };
+        fake.windows.borrow_mut().get_mut(&7).unwrap().1 = right_half;
+        fake.windows.borrow_mut().get_mut(&8).unwrap().1 = left_half;
+        let small = Rect {
+            x: 1800,
+            y: 0,
+            width: 200,
+            height: 300,
+        };
+        let snapped = [
+            (7, "win32:1:7".to_owned(), right_half),
+            (8, "win32:1:8".to_owned(), left_half),
+        ];
+        let mut dock = Dock::default();
+        dock.refit(&fake, Some(small), DockEdge::Right, 10, &snapped);
+        assert_eq!(fake.bounds(7).width, 1800 - 10 - 1000);
+        // The panel doesn't reach the left half.
+        assert_eq!(fake.bounds(8), left_half);
+
+        // The panel grows into a full strip: the squeeze follows its new size.
+        let strip = Rect {
+            x: 1700,
+            y: 0,
+            width: 300,
+            height: 1000,
+        };
+        dock.refit(&fake, Some(strip), DockEdge::Right, 10, &[]);
+        assert_eq!(fake.bounds(7).width, 1700 - 10 - 1000);
+
+        // Nothing docked any more: the window gets its full size back.
+        dock.refit(&fake, None, DockEdge::Right, 10, &[]);
+        assert_eq!(fake.bounds(7), right_half);
+        assert_eq!(dock.panel(), None);
+    }
+
+    #[test]
+    fn squeezed_windows_the_user_moved_are_left_alone() {
+        let fake = Fake::with(&[7]);
+        let right_half = Rect {
+            x: 1000,
+            y: 0,
+            width: 1000,
+            height: 1000,
+        };
+        fake.windows.borrow_mut().get_mut(&7).unwrap().1 = right_half;
+        let panel = Rect {
+            x: 1800,
+            y: 0,
+            width: 200,
+            height: 300,
+        };
+        let mut dock = Dock::default();
+        dock.refit(
+            &fake,
+            Some(panel),
+            DockEdge::Right,
+            0,
+            &[(7, "win32:1:7".to_owned(), right_half)],
+        );
+        let moved = Rect {
+            x: 100,
+            y: 100,
+            width: 500,
+            height: 500,
+        };
+        fake.windows.borrow_mut().get_mut(&7).unwrap().1 = moved;
+        dock.restore_all(&fake).unwrap();
+        assert_eq!(fake.bounds(7), moved);
+        // A snap that tt-pane cut back itself is remembered the same way.
+        dock.remember_squeeze(7, "win32:1:7", right_half, moved);
+        dock.refit(&fake, None, DockEdge::Right, 0, &[]);
+        assert_eq!(fake.bounds(7), right_half);
     }
 
     #[test]

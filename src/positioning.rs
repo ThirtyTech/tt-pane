@@ -487,6 +487,17 @@ fn apply_inner(
         );
     }
     let mut next = None;
+    // Snaps stop short of the dock panel where it covers them.
+    #[cfg(windows)]
+    let mut dock = if config.dock.enabled && crate::dock::Dock::exists(&path) {
+        Some(crate::dock::Dock::load(&path)?)
+    } else {
+        None
+    };
+    #[cfg(windows)]
+    let dock_panel = dock.as_ref().and_then(|d| d.panel());
+    #[cfg(windows)]
+    let mut squeeze: Option<(String, Rect, Rect)> = None;
     // Experimental: animate this single-window snap from its live bounds,
     // snapped or not. Tiling and group moves above and below stay instant.
     let actual = platform::with_snap_animation(config.animation.duration(), || {
@@ -524,11 +535,29 @@ fn apply_inner(
                     };
                 }
             }
+            #[cfg(windows)]
+            if let Some(panel) = dock_panel
+                && platform::dock::intersects(area, panel)
+            {
+                let original = cycle.last;
+                cycle.last =
+                    platform::dock::avoid(original, panel, config.dock.edge, config.gaps.outer);
+                if cycle.last != original {
+                    squeeze = Some((id.to_owned(), original, cycle.last));
+                }
+            }
             let target = cycle.last;
             next = Some(cycle);
             Ok(target)
         })
     })?;
+    #[cfg(windows)]
+    if let (Some(dock), Some((id, original, _))) = (dock.as_mut(), squeeze)
+        && let Some(handle) = id.rsplit(':').next().and_then(|s| s.parse().ok())
+    {
+        dock.remember_squeeze(handle, &id, original, actual);
+        dock.save(&path)?;
+    }
     if let Some(mut cycle) = next {
         cycle.record_result(previous.as_ref(), actual);
         let mut file = tempfile::NamedTempFile::new_in(parent)?;

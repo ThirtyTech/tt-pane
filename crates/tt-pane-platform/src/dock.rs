@@ -262,6 +262,41 @@ pub fn staging_rect(current: Rect, area: Rect) -> Rect {
     }
 }
 
+/// Whether two rectangles share any area.
+pub fn intersects(a: Rect, b: Rect) -> bool {
+    a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+}
+
+/// `rect` cut back so it stops `gap` short of the panel on `edge`, when the two
+/// overlap. A rectangle that doesn't touch the panel is returned unchanged, so a
+/// short panel only squeezes the windows it actually covers.
+pub fn avoid(rect: Rect, panel: Rect, edge: DockEdge, gap: u32) -> Rect {
+    if !intersects(rect, panel) {
+        return rect;
+    }
+    let gap = gap.min(1000) as i32;
+    let mut out = rect;
+    match edge {
+        DockEdge::Top => {
+            let bottom = rect.y + rect.height;
+            out.y = rect.y.max(panel.y + panel.height + gap);
+            out.height = (bottom - out.y).max(1);
+        }
+        DockEdge::Bottom => {
+            out.height = (rect.height.min(panel.y - gap - rect.y)).max(1);
+        }
+        DockEdge::Left => {
+            let right = rect.x + rect.width;
+            out.x = rect.x.max(panel.x + panel.width + gap);
+            out.width = (right - out.x).max(1);
+        }
+        DockEdge::Right => {
+            out.width = (rect.width.min(panel.x - gap - rect.x)).max(1);
+        }
+    }
+    out
+}
+
 /// The index of the slot containing `point`.
 pub fn hit_test(slots: &[Rect], point: (i32, i32)) -> Option<usize> {
     slots.iter().position(|slot| contains(*slot, point))
@@ -485,6 +520,48 @@ mod tests {
         // A window off to the left still stages on the monitor.
         let off = Rect { x: -900, ..current };
         assert_eq!(staging_rect(off, MONITOR).x, 0);
+    }
+
+    #[test]
+    fn windows_the_panel_covers_stop_short_of_it_and_others_are_untouched() {
+        // A one-window panel at the top of the right edge.
+        let strip = panel_rect(MONITOR, DockEdge::Right, 10);
+        let panel = occupied(strip, DockEdge::Right, DockFill::Start, 1);
+        let right_half = Rect {
+            x: 1280,
+            y: 0,
+            width: 1280,
+            height: 1440,
+        };
+        assert_eq!(
+            avoid(right_half, panel, DockEdge::Right, 20),
+            Rect {
+                width: panel.x - 20 - 1280,
+                ..right_half
+            }
+        );
+        let bottom_right = Rect {
+            x: 1280,
+            y: 720,
+            width: 1280,
+            height: 720,
+        };
+        assert_eq!(
+            avoid(bottom_right, panel, DockEdge::Right, 20),
+            bottom_right
+        );
+        let bottom = panel_rect(MONITOR, DockEdge::Bottom, 10);
+        let full = Rect {
+            x: 0,
+            y: 0,
+            ..MONITOR
+        };
+        let squeezed = avoid(full, bottom, DockEdge::Bottom, 0);
+        assert_eq!(squeezed.y + squeezed.height, bottom.y);
+        let left = panel_rect(MONITOR, DockEdge::Left, 10);
+        assert_eq!(avoid(full, left, DockEdge::Left, 5).x, left.width + 5);
+        let top = panel_rect(MONITOR, DockEdge::Top, 10);
+        assert_eq!(avoid(full, top, DockEdge::Top, 0).y, top.height);
     }
 
     #[test]

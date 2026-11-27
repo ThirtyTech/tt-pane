@@ -47,6 +47,9 @@ pub struct DockRequest {
 pub struct DockLayout {
     pub panel: Rect,
     pub slots: Vec<(u64, Rect)>,
+    /// What the docked windows take of the edge, without a drag's drop slot:
+    /// the whole strip once they fill it. `None` while nothing is docked.
+    pub area: Option<Rect>,
 }
 
 struct Shared {
@@ -656,6 +659,7 @@ fn update(window: HWND) {
         let panel = &mut *panel;
         let docked = request.members.len();
         let count = docked + usize::from(request.dragging);
+        let area;
         // SAFETY: Thumbnails are registered to this thread's window and released
         // here or on destroy. Property structs are live locals.
         unsafe {
@@ -701,6 +705,13 @@ fn update(window: HWND) {
             if full {
                 reserve(window, panel, request.edge, Some(strip));
             }
+            area = (docked > 0).then(|| {
+                if full {
+                    strip
+                } else {
+                    dock::occupied(strip, request.edge, request.fill, docked)
+                }
+            });
             panel.rect = dock::occupied(strip, request.edge, request.fill, count);
             let _ = SetWindowPos(
                 window,
@@ -757,6 +768,7 @@ fn update(window: HWND) {
         lock().layout = Some(DockLayout {
             panel: panel.rect,
             slots: panel.slots.clone(),
+            area,
         });
     });
 }
