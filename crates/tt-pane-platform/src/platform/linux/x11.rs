@@ -182,7 +182,7 @@ impl X11 {
     /// Client struts, plus the dock's reserved strip: GNOME Shell reserves it
     /// for its own chrome, which no client strut shows.
     fn struts(&self, clients: &[u32]) -> Vec<Strut> {
-        clients
+        let mut struts: Vec<Strut> = clients
             .iter()
             .chain([&self.root])
             .filter_map(|&client| {
@@ -194,7 +194,33 @@ impl X11 {
                 let strut = self.property(client, name).ok()?;
                 strut.get(..12)?.try_into().ok()
             })
-            .collect()
+            .collect();
+        struts.extend(self.workarea_strut());
+        struts
+    }
+
+    /// The window manager's `_NET_WORKAREA` for the current desktop, as a
+    /// full-span strut. GNOME Shell's top bar is compositor chrome, not a
+    /// client, so only this property accounts for it.
+    fn workarea_strut(&self) -> Option<Strut> {
+        let desktop = self
+            .property(self.root, "_NET_CURRENT_DESKTOP")
+            .ok()?
+            .first()
+            .copied()
+            .unwrap_or(0) as usize;
+        let areas = self.property(self.root, "_NET_WORKAREA").ok()?;
+        let area: [u32; 4] = areas
+            .get(desktop * 4..desktop * 4 + 4)
+            .or_else(|| areas.get(..4))?
+            .try_into()
+            .ok()?;
+        let screen = &self.connection.setup().roots[self.screen];
+        workarea_strut(
+            area,
+            u32::from(screen.width_in_pixels),
+            u32::from(screen.height_in_pixels),
+        )
     }
 
     fn work_area(&self, monitor: Rect, struts: &[Strut]) -> Rect {
@@ -325,6 +351,20 @@ impl X11 {
         self.connection.flush()?;
         Ok(())
     }
+}
+
+/// `[x, y, width, height]` of a work area as reserved space at each root
+/// edge, spanning the whole root window.
+fn workarea_strut([x, y, width, height]: [u32; 4], root_w: u32, root_h: u32) -> Option<Strut> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let right = root_w.saturating_sub(x.saturating_add(width));
+    let bottom = root_h.saturating_sub(y.saturating_add(height));
+    let (last_x, last_y) = (root_w.saturating_sub(1), root_h.saturating_sub(1));
+    Some([
+        x, right, y, bottom, 0, last_y, 0, last_y, 0, last_x, 0, last_x,
+    ])
 }
 
 /// Partial struts reserve only the monitors intersecting a panel's span.
@@ -694,6 +734,34 @@ mod tests {
                 height: 1080,
             }
         );
+    }
+
+    #[test]
+    fn window_manager_work_area_covers_shell_chrome() {
+        // GNOME on X11: a 32 px top bar on a 4K monitor beside an offset 1080p one.
+        let strut = workarea_strut([0, 32, 5760, 2128], 5760, 2160).unwrap();
+        let primary = Rect {
+            x: 0,
+            y: 0,
+            width: 3840,
+            height: 2160,
+        };
+        assert_eq!(
+            work_area(primary, &[strut], 5760, 2160),
+            Rect {
+                y: 32,
+                height: 2128,
+                ..primary
+            }
+        );
+        let secondary = Rect {
+            x: 3840,
+            y: 424,
+            width: 1920,
+            height: 1080,
+        };
+        assert_eq!(work_area(secondary, &[strut], 5760, 2160), secondary);
+        assert_eq!(workarea_strut([0, 0, 0, 0], 5760, 2160), None);
     }
 
     #[test]

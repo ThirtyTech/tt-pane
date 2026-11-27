@@ -531,6 +531,19 @@ impl X11WindowState {
                         title.as_bytes(),
                     ),
                 )?;
+                // tt-pane: WM_NAME is Latin-1, so window managers show non-ASCII
+                // titles as mojibake unless the UTF-8 _NET_WM_NAME is set too,
+                // as set_title already does.
+                check_reply(
+                    || "X11 ChangeProperty8 on _NET_WM_NAME failed.",
+                    xcb.change_property8(
+                        xproto::PropMode::REPLACE,
+                        x_window,
+                        atoms._NET_WM_NAME,
+                        atoms.UTF8_STRING,
+                        title.as_bytes(),
+                    ),
+                )?;
             }
 
             if params.kind == WindowKind::PopUp {

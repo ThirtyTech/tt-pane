@@ -9,6 +9,7 @@ Changes from the release:
 - `Cargo.toml`: declare `keep-alive = []`.
 - `src/platform/windows/platform.rs`: still remove the closed window, but skip automatic `PostQuitMessage` when `keep-alive` is enabled.
 - `src/platform/linux/{x11,wayland}/client.rs`: still clean up the window, but skip stopping the event loop when `keep-alive` is enabled.
+- `src/platform/linux/x11/window.rs`: also set the UTF-8 `_NET_WM_NAME` when creating a titled window, as `set_title` already does. With only the Latin-1 `WM_NAME`, X11 window managers drew "tt-pane — Settings" with mojibake in place of the em dash.
 - `src/taffy.rs`: explicitly type the grid helper's `0.0` and `1.0` literals as `f32`, avoiding Rust's deprecated float fallback.
 
 Explicit `App::quit()` remains unchanged. macOS already keeps running without windows. No hidden application window is used to keep the process alive. Revisit this patch when upstream exposes an equivalent supported lifecycle option. The Windows lifecycle integration test covers startup without a window and closing settings without exiting.
