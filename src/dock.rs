@@ -7,7 +7,7 @@
 //! owns the panel and reconciles it with the saved state.
 #![cfg_attr(not(windows), allow(dead_code))]
 use crate::geometry::{Action, Rect};
-pub use crate::platform::dock::DockEdge;
+pub use crate::platform::dock::{DockEdge, DockFill};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{fs::File, io::Read, io::Write, path::Path};
@@ -37,6 +37,8 @@ pub(crate) trait Native {
     fn identity(&self, handle: u64) -> Option<(String, Rect)>;
     fn mark(&self, handle: u64, docked: bool) -> Result<()>;
     fn park(&self, handle: u64) -> Result<()>;
+    /// Whether `bounds` is where `park` puts windows.
+    fn parked(&self, bounds: Rect) -> bool;
     /// Move a window to `target`, gliding from `from` when animation is on.
     fn place(&self, handle: u64, target: Rect, from: Option<Rect>) -> Result<()>;
     fn focus(&self, handle: u64) -> Result<()>;
@@ -208,6 +210,17 @@ impl Dock {
     /// One observation: clicked previews, then focus changes.
     pub(crate) fn step(&mut self, native: &dyn Native, clicks: &[u64]) -> Result<()> {
         self.prune(native);
+        // Docked windows that aren't at the park spot, because the edge or fill
+        // changed or an older build parked them, move there now.
+        for member in &self.members {
+            if Some(member.handle) != self.active
+                && native
+                    .identity(member.handle)
+                    .is_some_and(|(_, bounds)| !native.parked(bounds))
+            {
+                let _ = native.park(member.handle);
+            }
+        }
         if let Some(&clicked) = clicks.iter().rev().find(|h| self.contains(**h)) {
             return self.activate(native, clicked);
         }
@@ -253,6 +266,8 @@ pub struct DragTracker {
     moving: Option<u64>,
     /// Where the moving window was when the drag was first seen.
     start: Option<Rect>,
+    /// A window that isn't docked is being dragged, so the panel offers a drop slot.
+    pub dragging: bool,
     /// The dragged window is over the panel.
     pub over: bool,
 }
@@ -282,7 +297,8 @@ impl DragTracker {
             self.start = moving.and_then(&bounds);
         }
         self.moving = moving;
-        self.over = inside && moving.is_some_and(|h| !dock.contains(h));
+        self.dragging = moving.is_some_and(|h| !dock.contains(h));
+        self.over = inside && self.dragging;
         dropped.filter(|(h, _)| !dock.contains(*h))
     }
 }
@@ -292,7 +308,20 @@ mod native {
     use super::*;
     use crate::platform;
 
-    pub(super) struct Desktop;
+    /// The live desktop, parking windows at the configured edge's fill corner.
+    pub(super) struct Desktop {
+        pub edge: DockEdge,
+        pub fill: DockFill,
+    }
+
+    impl Desktop {
+        pub fn new(config: &crate::config::Config) -> Self {
+            Self {
+                edge: config.dock.edge,
+                fill: config.dock.fill,
+            }
+        }
+    }
 
     impl Native for Desktop {
         fn identity(&self, handle: u64) -> Option<(String, Rect)> {
@@ -302,7 +331,14 @@ mod native {
             platform::set_docked(handle, docked)
         }
         fn park(&self, handle: u64) -> Result<()> {
-            platform::park_window(handle).map(|_| ())
+            platform::park_window(handle, self.edge, self.fill).map(|_| ())
+        }
+        fn parked(&self, bounds: Rect) -> bool {
+            // Position only: an application may refuse the 1080p size, and
+            // comparing sizes would re-park it on every observation.
+            platform::park_target(self.edge, self.fill).is_ok_and(|target| {
+                target.x.abs_diff(bounds.x) <= 2 && target.y.abs_diff(bounds.y) <= 2
+            })
         }
         fn place(&self, handle: u64, target: Rect, from: Option<Rect>) -> Result<()> {
             if let (Some(from), Some(_)) = (from, platform::snap_animation()) {
@@ -359,7 +395,7 @@ pub(crate) fn toggle(
         .or_else(crate::platform::foreground_handle)
         .context("No window to dock")?;
     let mut dock = Dock::load(path)?;
-    let result = dock.toggle(&native::Desktop, handle);
+    let result = dock.toggle(&native::Desktop::new(config), handle);
     dock.save(path)?;
     result
 }
@@ -376,7 +412,12 @@ pub(crate) fn release(path: &Path, window: Option<u64>) -> Result<()> {
     };
     let mut dock = Dock::load(path)?;
     if dock.contains(handle) {
-        dock.release(&native::Desktop, handle)?;
+        // Releasing never parks, so the edge and fill don't matter.
+        let desktop = native::Desktop {
+            edge: DockEdge::default(),
+            fill: DockFill::default(),
+        };
+        dock.release(&desktop, handle)?;
         dock.save(path)?;
     }
     Ok(())
@@ -412,20 +453,23 @@ pub fn observe(config: &crate::config::Config, path: &Path, drag: &mut DragTrack
         |handle| platform::docked_window(handle).map(|(_, bounds)| bounds),
     );
     let clicks = platform::take_dock_clicks();
+    let desktop = native::Desktop::new(config);
     let result = platform::with_snap_animation(config.animation.duration(), || {
         if let Some((handle, start)) = dropped {
-            dock.dock_dropped(&native::Desktop, handle, start)?;
+            dock.dock_dropped(&desktop, handle, start)?;
         }
-        dock.step(&native::Desktop, &clicks)
+        dock.step(&desktop, &clicks)
     });
     if dock != before {
         dock.save(&path)?;
     }
     platform::show_dock(platform::DockRequest {
         edge: config.dock.edge,
+        fill: config.dock.fill,
         percent: config.dock.size_percent,
         members: dock.handles(),
         active: dock.active(),
+        dragging: drag.dragging,
         highlight: drag.over,
     })?;
     result
@@ -443,7 +487,12 @@ pub fn shutdown(path: &Path) -> Result<()> {
         let lock = cycle_lock(&path)?;
         lock.lock().context("Lock positioning cycle")?;
         let mut dock = Dock::load(&path)?;
-        let result = dock.restore_all(&native::Desktop);
+        // Restoring never parks, so the edge and fill don't matter.
+        let desktop = native::Desktop {
+            edge: DockEdge::default(),
+            fill: DockFill::default(),
+        };
+        let result = dock.restore_all(&desktop);
         dock.save(&path)?;
         result
     })();
@@ -517,6 +566,9 @@ mod tests {
                 marked.push(handle);
             }
             Ok(())
+        }
+        fn parked(&self, bounds: Rect) -> bool {
+            bounds == PARKED
         }
         fn park(&self, handle: u64) -> Result<()> {
             self.parked.borrow_mut().push(handle);
@@ -614,6 +666,26 @@ mod tests {
         fake.set_foreground(Some(2));
         dock.step(&fake, &[]).unwrap();
         assert_eq!(dock.active(), Some(2));
+        assert_eq!(fake.bounds(2), Action::Center.target(ARENA, ARENA));
+    }
+
+    #[test]
+    fn docked_windows_away_from_the_park_spot_are_parked_again() {
+        let fake = Fake::with(&[1, 2]);
+        let mut dock = Dock::default();
+        dock.toggle(&fake, 1).unwrap();
+        dock.toggle(&fake, 2).unwrap();
+        dock.step(&fake, &[2]).unwrap();
+        let stray = Rect {
+            x: 50_000,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        fake.windows.borrow_mut().get_mut(&1).unwrap().1 = stray;
+        dock.step(&fake, &[]).unwrap();
+        assert_eq!(fake.bounds(1), PARKED);
+        // The window in the arena stays put.
         assert_eq!(fake.bounds(2), Action::Center.target(ARENA, ARENA));
     }
 

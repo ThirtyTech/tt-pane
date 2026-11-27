@@ -31,6 +31,30 @@ impl DockEdge {
     }
 }
 
+/// The end of the edge the panel grows from as windows are docked: the left or
+/// top end (`Start`), or the right or bottom end (`End`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockFill {
+    #[default]
+    Start,
+    End,
+}
+
+impl DockFill {
+    pub const ALL: [Self; 2] = [Self::Start, Self::End];
+
+    /// The end's name along `edge`: left/right on top and bottom, top/bottom on the sides.
+    pub fn label(self, edge: DockEdge) -> &'static str {
+        match (self, edge.horizontal()) {
+            (Self::Start, true) => "Left",
+            (Self::End, true) => "Right",
+            (Self::Start, false) => "Top",
+            (Self::End, false) => "Bottom",
+        }
+    }
+}
+
 /// The size docked windows are rendered at before they are scaled into a slot.
 pub const PREVIEW_SOURCE: (i32, i32) = (1920, 1080);
 
@@ -144,6 +168,112 @@ pub fn slots(panel: Rect, edge: DockEdge, count: usize) -> Vec<Rect> {
             }
         })
         .collect()
+}
+
+/// The strip a panel with `percent` of `monitor` would take along `edge` of
+/// `area`, such as the work area beside a taskbar.
+pub fn strip_within(monitor: Rect, area: Rect, edge: DockEdge, percent: u32) -> Rect {
+    let full = panel_rect(monitor, edge, percent);
+    let mut strip = area;
+    match edge {
+        DockEdge::Top => strip.height = full.height,
+        DockEdge::Bottom => {
+            strip.y = area.y + area.height - full.height;
+            strip.height = full.height;
+        }
+        DockEdge::Left => strip.width = full.width,
+        DockEdge::Right => {
+            strip.x = area.x + area.width - full.width;
+            strip.width = full.width;
+        }
+    }
+    strip
+}
+
+/// The part of `strip` that `count` full-size slots need, starting from the
+/// `fill` end. Past the strip's length the whole strip is used and slots shrink.
+pub fn occupied(strip: Rect, edge: DockEdge, fill: DockFill, count: usize) -> Rect {
+    let pad = i64::from(PADDING);
+    let (along, across) = if edge.horizontal() {
+        (i64::from(strip.width), i64::from(strip.height))
+    } else {
+        (i64::from(strip.height), i64::from(strip.width))
+    };
+    let thickness = (across - 2 * pad).max(1);
+    let (source_w, source_h) = (i64::from(PREVIEW_SOURCE.0), i64::from(PREVIEW_SOURCE.1));
+    let natural = if edge.horizontal() {
+        thickness * source_w / source_h
+    } else {
+        thickness * source_h / source_w
+    };
+    let n = count as i64;
+    let length = if n == 0 {
+        0
+    } else {
+        (n * natural + (n + 1) * pad).clamp(0, along) as i32
+    };
+    let mut rect = strip;
+    if edge.horizontal() {
+        rect.width = length;
+        if fill == DockFill::End {
+            rect.x = strip.x + strip.width - length;
+        }
+    } else {
+        rect.height = length;
+        if fill == DockFill::End {
+            rect.y = strip.y + strip.height - length;
+        }
+    }
+    rect
+}
+
+/// Slots in fill order: the first docked window sits at the `fill` end.
+pub fn slots_from(panel: Rect, edge: DockEdge, fill: DockFill, count: usize) -> Vec<Rect> {
+    let mut slots = slots(panel, edge, count);
+    if fill == DockFill::End {
+        slots.reverse();
+    }
+    slots
+}
+
+/// How much of a parked window stays on the monitor, in each direction.
+pub const PARK_SLIVER: i32 = 8;
+
+/// Where to park a docked window: nearly off the monitor past the panel's fill
+/// corner, with a `PARK_SLIVER` square left on screen under the panel (or the
+/// taskbar). Applications such as Explorer stop drawing a window that is on no
+/// monitor at all, which freezes its preview. `None` when that spot would show
+/// part of the window on one of the `others` monitors.
+pub fn park_rect(monitor: Rect, edge: DockEdge, fill: DockFill, others: &[Rect]) -> Option<Rect> {
+    let (w, h) = PREVIEW_SOURCE;
+    // The monitor corner at the fill end of the edge.
+    let (right, bottom) = match (edge, fill) {
+        (DockEdge::Top, DockFill::Start) | (DockEdge::Left, DockFill::Start) => (false, false),
+        (DockEdge::Top, DockFill::End) | (DockEdge::Right, DockFill::Start) => (true, false),
+        (DockEdge::Bottom, DockFill::Start) | (DockEdge::Left, DockFill::End) => (false, true),
+        (DockEdge::Bottom, DockFill::End) | (DockEdge::Right, DockFill::End) => (true, true),
+    };
+    let rect = Rect {
+        x: if right {
+            monitor.x + monitor.width - PARK_SLIVER
+        } else {
+            monitor.x - w + PARK_SLIVER
+        },
+        y: if bottom {
+            monitor.y + monitor.height - PARK_SLIVER
+        } else {
+            monitor.y - h + PARK_SLIVER
+        },
+        width: w,
+        height: h,
+    };
+    let overlaps = |o: &Rect| {
+        rect.x < o.x + o.width
+            && o.x < rect.x + rect.width
+            && rect.y < o.y + o.height
+            && o.y < rect.y + rect.height
+    };
+    (!others.iter().any(overlaps)).then_some(rect)
 }
 
 /// The index of the slot containing `point`.
@@ -276,6 +406,83 @@ mod tests {
         assert_eq!(column[0].x, column[1].x);
         assert!(column[1].y >= column[0].y + column[0].height);
         assert_eq!(column[0].width * 9 / 16, column[0].height);
+    }
+
+    #[test]
+    fn the_panel_only_takes_the_length_its_windows_need_from_the_fill_end() {
+        let strip = panel_rect(MONITOR, DockEdge::Top, 10);
+        // 144 px thick: 120 px slots are 213 px long, with 12 px around each.
+        let one = occupied(strip, DockEdge::Top, DockFill::Start, 1);
+        assert_eq!(
+            one,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 237,
+                height: 144
+            }
+        );
+        let two = occupied(strip, DockEdge::Top, DockFill::End, 2);
+        assert_eq!((two.x, two.width), (2560 - 462, 462));
+        // Too many for the edge: the whole strip is used and slots shrink.
+        assert_eq!(occupied(strip, DockEdge::Top, DockFill::Start, 20), strip);
+        assert_eq!(occupied(strip, DockEdge::Top, DockFill::Start, 0).width, 0);
+
+        let side = panel_rect(MONITOR, DockEdge::Right, 10);
+        let column = occupied(side, DockEdge::Right, DockFill::End, 1);
+        assert_eq!(column.x, side.x);
+        assert_eq!(column.y + column.height, MONITOR.height);
+        assert!(column.height < side.height);
+
+        // Slots fill exactly, and the first window sits at the fill end.
+        let slots = slots_from(two, DockEdge::Top, DockFill::End, 2);
+        assert_eq!(slots[0].x + slots[0].width, two.x + two.width - 12);
+        assert_eq!(slots[1].x, two.x + 12);
+        assert_eq!(slots[0].height, 120);
+        assert_eq!(slots_from(one, DockEdge::Top, DockFill::Start, 1)[0].x, 12);
+    }
+
+    #[test]
+    fn strips_stay_inside_the_work_area_beside_a_taskbar() {
+        let work = Rect {
+            height: 1392,
+            ..MONITOR
+        };
+        let strip = strip_within(MONITOR, work, DockEdge::Bottom, 10);
+        assert_eq!(
+            strip,
+            Rect {
+                x: 0,
+                y: 1392 - 144,
+                width: 2560,
+                height: 144
+            }
+        );
+        assert_eq!(DockFill::Start.label(DockEdge::Top), "Left");
+        assert_eq!(DockFill::End.label(DockEdge::Left), "Bottom");
+    }
+
+    #[test]
+    fn parked_windows_keep_a_covered_corner_on_the_monitor() {
+        let park = park_rect(MONITOR, DockEdge::Bottom, DockFill::Start, &[]).unwrap();
+        assert_eq!((park.x, park.y), (8 - 1920, 1440 - 8));
+        assert_eq!((park.width, park.height), PREVIEW_SOURCE);
+        let park = park_rect(MONITOR, DockEdge::Right, DockFill::End, &[]).unwrap();
+        assert_eq!((park.x, park.y), (2560 - 8, 1440 - 8));
+        let park = park_rect(MONITOR, DockEdge::Top, DockFill::Start, &[]).unwrap();
+        assert_eq!((park.x, park.y), (8 - 1920, 8 - 1080));
+        // A monitor beside that corner would show the window: park elsewhere.
+        let left = Rect {
+            x: -1920,
+            y: 1000,
+            width: 1920,
+            height: 1080,
+        };
+        assert_eq!(
+            park_rect(MONITOR, DockEdge::Bottom, DockFill::Start, &[left]),
+            None
+        );
+        assert!(park_rect(MONITOR, DockEdge::Bottom, DockFill::End, &[left]).is_some());
     }
 
     #[test]

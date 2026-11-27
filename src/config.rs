@@ -175,6 +175,8 @@ impl Animation {
 pub struct Dock {
     pub enabled: bool,
     pub edge: crate::dock::DockEdge,
+    /// The end of the edge the panel grows from as windows are docked.
+    pub fill: crate::dock::DockFill,
     /// The panel's share of the monitor's height (top, bottom) or width (sides).
     pub size_percent: u32,
 }
@@ -184,7 +186,8 @@ impl Default for Dock {
         Self {
             enabled: false,
             edge: crate::dock::DockEdge::Bottom,
-            size_percent: 15,
+            fill: crate::dock::DockFill::Start,
+            size_percent: 10,
         }
     }
 }
@@ -1107,18 +1110,20 @@ duration_ms = 5000
         let config: Config = toml::from_str("version = 1\nbindings = []").unwrap();
         assert!(!config.dock.enabled);
         assert_eq!(config.dock.edge, crate::dock::DockEdge::Bottom);
-        assert_eq!(config.dock.size_percent, 15);
+        assert_eq!(config.dock.fill, crate::dock::DockFill::Start);
+        assert_eq!(config.dock.size_percent, 10);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(
             &path,
-            "version = 1\nbindings = []\n[dock]\nenabled = true\nedge = \"left\"\nsize_percent = 90\n",
+            "version = 1\nbindings = []\n[dock]\nenabled = true\nedge = \"left\"\nfill = \"end\"\nsize_percent = 90\n",
         )
         .unwrap();
         let (config, warnings) = Config::load_with_warnings(&path).unwrap();
         assert!(config.dock.enabled);
         assert_eq!(config.dock.edge, crate::dock::DockEdge::Left);
-        assert_eq!(config.dock.size_percent, 15);
+        assert_eq!(config.dock.fill, crate::dock::DockFill::End);
+        assert_eq!(config.dock.size_percent, 10);
         assert!(warnings.iter().any(|w| w.contains("dock.size_percent")));
         // Older configs gain the dock shortcut without losing their own.
         let dock = config.bindings.iter().find(|b| b.action == Action::Dock);

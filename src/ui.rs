@@ -1408,8 +1408,31 @@ impl Settings {
                         })),
                     )),
                     nested(setting(
+                        "Fill from",
+                        "The panel only takes as much of the edge as its docked windows need, starting from this end. It disappears when nothing is docked.",
+                        segments(crate::dock::DockFill::ALL.map(|fill| {
+                            segment(
+                                ("dock-fill", fill as usize),
+                                fill.label(dock.edge),
+                                dock.fill == fill,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    if this.draft.dock.fill != fill {
+                                        this.draft.dock.fill = fill;
+                                        this.message(
+                                            "Dock fill updated. Save to activate.",
+                                            false,
+                                            cx,
+                                        );
+                                    }
+                                },
+                            ))
+                        })),
+                    )),
+                    nested(setting(
                         "Size",
-                        "The panel’s share of the screen height (top, bottom) or width (sides). Default 15%.",
+                        "The panel’s thickness: its share of the screen height (top, bottom) or width (sides). Default 10%.",
                         stepper(
                             step_button("dock-size-less", "−").on_click(cx.listener(
                                 |this, _, _, cx| {
