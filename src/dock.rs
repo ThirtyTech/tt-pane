@@ -377,8 +377,8 @@ impl Dock {
         self.prune(native);
         // Before anything parks: parking would restore a minimized window.
         self.follow_minimized(native);
-        // Docked windows that aren't at the park spot, such as ones an older
-        // build parked elsewhere, move there now.
+        // Docked windows that aren't at the park spot, because the edge or fill
+        // changed or an older build parked them elsewhere, move there now.
         for member in &self.members {
             if Some(member.handle) != self.active
                 && native
@@ -477,15 +477,18 @@ mod native {
     use super::*;
     use crate::platform;
 
-    /// The live desktop. The edge keeps arena windows clear of the panel.
+    /// The live desktop. The edge keeps arena windows clear of the panel, and
+    /// with the fill end picks the corner docked windows are parked at.
     pub(super) struct Desktop {
         pub edge: DockEdge,
+        pub fill: DockFill,
     }
 
     impl Desktop {
         pub fn new(config: &crate::config::Config) -> Self {
             Self {
                 edge: config.dock.edge,
+                fill: config.dock.fill,
             }
         }
     }
@@ -498,16 +501,18 @@ mod native {
             platform::set_docked(handle, docked)
         }
         fn park(&self, handle: u64) -> Result<()> {
-            platform::park_window(handle).map(|_| ())
+            platform::park_window(handle, self.edge, self.fill).map(|_| ())
         }
         fn stow(&self, handle: u64, slot: Option<Rect>) -> Result<()> {
-            platform::stow_window(handle, slot).map(|_| ())
+            platform::stow_window(handle, slot, self.edge, self.fill).map(|_| ())
         }
         fn parked(&self, bounds: Rect) -> bool {
-            // Position only: an application may refuse the 1080p size, and
+            // Position only, for the window's own size: an application may
+            // refuse the 1080p size, and a stowed window keeps its size, so
             // comparing sizes would re-park it on every observation.
-            let target = platform::park_target();
-            target.x.abs_diff(bounds.x) <= 2 && target.y.abs_diff(bounds.y) <= 2
+            platform::park_target(self.edge, self.fill, (bounds.width, bounds.height)).is_ok_and(
+                |target| target.x.abs_diff(bounds.x) <= 2 && target.y.abs_diff(bounds.y) <= 2,
+            )
         }
         fn place(&self, handle: u64, target: Rect, from: Option<Rect>) -> Result<()> {
             match from {
@@ -615,9 +620,11 @@ pub(crate) fn release(path: &Path, window: Option<u64>) -> Result<()> {
     };
     let mut dock = Dock::load(path)?;
     if dock.contains(handle) {
-        // Releasing never parks or enters the arena, so the edge doesn't matter.
+        // Releasing never parks or enters the arena, so the edge and fill
+        // don't matter.
         let desktop = native::Desktop {
             edge: DockEdge::default(),
+            fill: DockFill::default(),
         };
         dock.release(&desktop, handle)?;
         dock.save(path)?;
@@ -733,9 +740,11 @@ pub fn shutdown(path: &Path) -> Result<()> {
         let lock = cycle_lock(&path)?;
         lock.lock().context("Lock positioning cycle")?;
         let mut dock = Dock::load(&path)?;
-        // Restoring never parks or enters the arena, so the edge doesn't matter.
+        // Restoring never parks or enters the arena, so the edge and fill
+        // don't matter.
         let desktop = native::Desktop {
             edge: DockEdge::default(),
+            fill: DockFill::default(),
         };
         let result = dock.restore_all(&desktop);
         dock.save(&path)?;

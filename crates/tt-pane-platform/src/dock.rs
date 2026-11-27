@@ -246,6 +246,46 @@ pub fn slots_from(panel: Rect, edge: DockEdge, fill: DockFill, count: usize) -> 
     slots
 }
 
+/// How much of a parked window stays on the monitor, in each direction.
+pub const PARK_SLIVER: i32 = 8;
+
+/// Where to park a docked window of `size`: nearly off the monitor past the
+/// panel's fill corner, with a `PARK_SLIVER` square left on screen under the
+/// panel. Chrome (and other Chromium apps) treat a window that is on no screen
+/// at all as hidden and stop drawing it, which freezes its preview; a covered
+/// sliver keeps them drawing. `None` when that spot would show part of the
+/// window on one of the `others` monitors.
+pub fn park_rect(
+    monitor: Rect,
+    edge: DockEdge,
+    fill: DockFill,
+    (width, height): (i32, i32),
+    others: &[Rect],
+) -> Option<Rect> {
+    // The monitor corner at the fill end of the edge.
+    let (right, bottom) = match (edge, fill) {
+        (DockEdge::Top, DockFill::Start) | (DockEdge::Left, DockFill::Start) => (false, false),
+        (DockEdge::Top, DockFill::End) | (DockEdge::Right, DockFill::Start) => (true, false),
+        (DockEdge::Bottom, DockFill::Start) | (DockEdge::Left, DockFill::End) => (false, true),
+        (DockEdge::Bottom, DockFill::End) | (DockEdge::Right, DockFill::End) => (true, true),
+    };
+    let rect = Rect {
+        x: if right {
+            monitor.x + monitor.width - PARK_SLIVER
+        } else {
+            monitor.x - width + PARK_SLIVER
+        },
+        y: if bottom {
+            monitor.y + monitor.height - PARK_SLIVER
+        } else {
+            monitor.y - height + PARK_SLIVER
+        },
+        width,
+        height,
+    };
+    (!others.iter().any(|other| intersects(rect, *other))).then_some(rect)
+}
+
 /// Where a window grows to the preview's source size before it is parked: at
 /// its own top-left corner, pulled back inside `area` so all of it is on
 /// screen. Explorer, for one, only lays out the part of its file list that is
@@ -485,6 +525,33 @@ mod tests {
         );
         assert_eq!(DockFill::Start.label(DockEdge::Top), "Left");
         assert_eq!(DockFill::End.label(DockEdge::Left), "Bottom");
+    }
+
+    #[test]
+    fn parked_windows_keep_a_covered_corner_on_the_monitor() {
+        let size = PREVIEW_SOURCE;
+        let park = park_rect(MONITOR, DockEdge::Bottom, DockFill::Start, size, &[]).unwrap();
+        assert_eq!((park.x, park.y), (8 - 1920, 1440 - 8));
+        assert_eq!((park.width, park.height), PREVIEW_SOURCE);
+        let park = park_rect(MONITOR, DockEdge::Right, DockFill::End, size, &[]).unwrap();
+        assert_eq!((park.x, park.y), (2560 - 8, 1440 - 8));
+        let park = park_rect(MONITOR, DockEdge::Top, DockFill::Start, size, &[]).unwrap();
+        assert_eq!((park.x, park.y), (8 - 1920, 8 - 1080));
+        // A window stowed at its own size still leaves just the sliver on screen.
+        let park = park_rect(MONITOR, DockEdge::Left, DockFill::Start, (800, 600), &[]).unwrap();
+        assert_eq!((park.x, park.y), (8 - 800, 8 - 600));
+        // A monitor beside that corner would show the window: park elsewhere.
+        let left = Rect {
+            x: -1920,
+            y: 1000,
+            width: 1920,
+            height: 1080,
+        };
+        assert_eq!(
+            park_rect(MONITOR, DockEdge::Bottom, DockFill::Start, size, &[left]),
+            None
+        );
+        assert!(park_rect(MONITOR, DockEdge::Bottom, DockFill::End, size, &[left]).is_some());
     }
 
     #[test]

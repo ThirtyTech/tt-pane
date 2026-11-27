@@ -1,6 +1,6 @@
 //! The dock panel: a topmost AppBar on the primary monitor that shows live DWM
-//! thumbnails of docked windows. Docked windows are parked off screen at 1080p,
-//! where DWM keeps composing them, and carry a property so every other
+//! thumbnails of docked windows. Docked windows are parked at 1080p nearly off
+//! screen, with a sliver under the panel so they keep drawing, and carry a property so every other
 //! tt-pane feature (tiling, centered groups, focus) leaves them alone.
 use super::{DpiContext, from_rect};
 use crate::{
@@ -272,9 +272,45 @@ pub fn place_window(handle: u64, target: Rect) -> Result<Rect> {
     super::apply(Some(handle), &mut |_, _, _| Ok(target))
 }
 
-/// Where docked windows are parked: past every monitor, at the preview's
-/// source size, where DWM keeps composing them.
-pub fn park_target() -> Rect {
+/// Every monitor's bounds, in physical pixels.
+fn monitor_rects() -> Vec<Rect> {
+    unsafe extern "system" fn collect(
+        _monitor: HMONITOR,
+        _dc: HDC,
+        rect: *mut RECT,
+        data: LPARAM,
+    ) -> windows::core::BOOL {
+        // SAFETY: EnumDisplayMonitors passes a valid rect and our live Vec synchronously.
+        unsafe { (*(data.0 as *mut Vec<Rect>)).push(from_rect(*rect)) };
+        true.into()
+    }
+    let _dpi = DpiContext::enter();
+    let mut rects = Vec::new();
+    // SAFETY: The callback only borrows `rects` for the duration of this call.
+    unsafe {
+        let _ = EnumDisplayMonitors(
+            None,
+            None,
+            Some(collect),
+            LPARAM(&mut rects as *mut _ as isize),
+        );
+    }
+    rects
+}
+
+/// Where a docked window of `size` is parked: mostly off the dock's monitor at
+/// the panel's fill corner, with a sliver left on screen under the panel.
+/// Chrome stops drawing a window that is on no screen at all, which freezes its
+/// preview. Past every monitor if that corner touches another display.
+pub fn park_target(edge: DockEdge, fill: DockFill, size: (i32, i32)) -> Result<Rect> {
+    let (monitor, _) = dock_monitor()?;
+    let others: Vec<Rect> = monitor_rects()
+        .into_iter()
+        .filter(|rect| *rect != monitor)
+        .collect();
+    if let Some(rect) = dock::park_rect(monitor, edge, fill, size, &others) {
+        return Ok(rect);
+    }
     let _dpi = DpiContext::enter();
     // SAFETY: GetSystemMetrics takes no pointers.
     let (x, y) = unsafe {
@@ -283,12 +319,12 @@ pub fn park_target() -> Rect {
             GetSystemMetrics(SM_YVIRTUALSCREEN),
         )
     };
-    Rect {
+    Ok(Rect {
         x,
         y,
-        width: dock::PREVIEW_SOURCE.0,
-        height: dock::PREVIEW_SOURCE.1,
-    }
+        width: size.0,
+        height: size.1,
+    })
 }
 
 /// How long a window gets to lay itself out at 1080p before it is parked.
@@ -299,8 +335,8 @@ const STAGING_SETTLE: std::time::Duration = std::time::Duration::from_millis(200
 /// monitor first and gets a moment to redraw, because some applications
 /// (Explorer) leave content they lay out off screen blank. Moving an already
 /// laid-out window off screen keeps its content.
-pub fn park_window(handle: u64) -> Result<Rect> {
-    let target = park_target();
+pub fn park_window(handle: u64, edge: DockEdge, fill: DockFill) -> Result<Rect> {
+    let target = park_target(edge, fill, dock::PREVIEW_SOURCE)?;
     crate::with_snap_animation(None, || {
         let current = docked_window(handle).map(|(_, bounds)| bounds);
         let sized = current.is_some_and(|bounds| {
@@ -317,20 +353,20 @@ pub fn park_window(handle: u64) -> Result<Rect> {
     })
 }
 
-/// Send a window in the arena back to the dock. It moves off screen at its
-/// current size, which keeps its content (resizing it off screen would not).
+/// Send a window in the arena back to the dock. It moves to the park spot at
+/// its current size, which keeps its content (resizing it off screen would not).
 /// With animation on (`with_snap_animation`) and a `slot`, a live thumbnail
 /// stands in for it and glides into the slot on the same curve that brought
 /// it out.
-pub fn stow_window(handle: u64, slot: Option<Rect>) -> Result<Rect> {
+pub fn stow_window(
+    handle: u64,
+    slot: Option<Rect>,
+    edge: DockEdge,
+    fill: DockFill,
+) -> Result<Rect> {
     let (_, bounds) =
         docked_window(handle).ok_or_else(|| anyhow::anyhow!("Window is no longer available"))?;
-    let park = park_target();
-    let target = Rect {
-        x: park.x,
-        y: park.y,
-        ..bounds
-    };
+    let target = park_target(edge, fill, (bounds.width, bounds.height))?;
     let glide = match (slot, crate::snap_animation()) {
         (Some(slot), Some(duration)) => {
             Glide::new(handle, bounds).ok().map(|g| (g, slot, duration))
