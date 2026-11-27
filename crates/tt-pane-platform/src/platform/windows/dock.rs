@@ -261,6 +261,161 @@ pub fn park_window(handle: u64) -> Result<Rect> {
     })
 }
 
+/// Send a window in the arena back to the dock. It moves off screen at its
+/// current size, which keeps its content (resizing it off screen would not).
+/// With animation on (`with_snap_animation`) and a `slot`, a live thumbnail
+/// stands in for it and glides into the slot on the same curve that brought
+/// it out.
+pub fn stow_window(handle: u64, slot: Option<Rect>) -> Result<Rect> {
+    let (_, bounds) =
+        docked_window(handle).ok_or_else(|| anyhow::anyhow!("Window is no longer available"))?;
+    let park = park_target();
+    let target = Rect {
+        x: park.x,
+        y: park.y,
+        ..bounds
+    };
+    let glide = match (slot, crate::snap_animation()) {
+        (Some(slot), Some(duration)) => {
+            Glide::new(handle, bounds).ok().map(|g| (g, slot, duration))
+        }
+        _ => None,
+    };
+    let result = crate::with_snap_animation(None, || place_window(handle, target));
+    if let Some((glide, slot, duration)) = glide {
+        glide.run(bounds, slot, duration);
+    }
+    result
+}
+
+const GLIDE_CLASS: PCWSTR = w!("tt-pane.dock-glide");
+
+/// # Safety
+/// Called by Win32 with the glide window's messages.
+unsafe extern "system" fn glide_procedure(
+    window: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match message {
+        // Never activate, and leave the client unpainted: the thumbnail covers it.
+        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        WM_ERASEBKGND => LRESULT(1),
+        // SAFETY: Forwards this window's own message unchanged.
+        _ => unsafe { DefWindowProcW(window, message, wparam, lparam) },
+    }
+}
+
+/// A short-lived topmost window showing a live thumbnail of a docked window,
+/// moved frame by frame on the calling thread.
+struct Glide {
+    window: HWND,
+    thumb: isize,
+}
+
+impl Glide {
+    fn new(handle: u64, bounds: Rect) -> Result<Self> {
+        let _dpi = DpiContext::enter();
+        // SAFETY: Static class name and DefWindowProcW; the window and its
+        // thumbnail are released by Drop on this same thread.
+        unsafe {
+            let instance = GetModuleHandleW(None)?;
+            let class = WNDCLASSW {
+                lpfnWndProc: Some(glide_procedure),
+                hInstance: instance.into(),
+                lpszClassName: GLIDE_CLASS,
+                ..Default::default()
+            };
+            RegisterClassW(&class);
+            let window = CreateWindowExW(
+                WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+                GLIDE_CLASS,
+                w!("tt-pane dock glide"),
+                WS_POPUP,
+                bounds.x,
+                bounds.y,
+                bounds.width,
+                bounds.height,
+                None,
+                None,
+                Some(instance.into()),
+                None,
+            )?;
+            let mut glide = Self { window, thumb: 0 };
+            SetPropW(window, PANEL_PROP, Some(HANDLE(std::ptr::dangling_mut())))?;
+            glide.thumb = DwmRegisterThumbnail(window, hwnd(handle)?)?;
+            glide.show(bounds)?;
+            let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
+            // Composite the stand-in before the real window leaves.
+            let _ = DwmFlush();
+            Ok(glide)
+        }
+    }
+
+    fn show(&self, rect: Rect) -> Result<()> {
+        let properties = DWM_THUMBNAIL_PROPERTIES {
+            dwFlags: DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY,
+            rcDestination: RECT {
+                left: 0,
+                top: 0,
+                right: rect.width,
+                bottom: rect.height,
+            },
+            opacity: 255,
+            fVisible: true.into(),
+            ..Default::default()
+        };
+        // SAFETY: The thumbnail and window belong to this glide; the property
+        // struct is a live local.
+        unsafe {
+            DwmUpdateThumbnailProperties(self.thumb, &properties)?;
+            SetWindowPos(
+                self.window,
+                Some(HWND_TOPMOST),
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                SWP_NOACTIVATE,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Glide to where the preview sits in `slot`, then disappear.
+    fn run(self, from: Rect, slot: Rect, duration: std::time::Duration) {
+        let _dpi = DpiContext::enter();
+        // SAFETY: Reads the size of this glide's own thumbnail.
+        let source = unsafe { DwmQueryThumbnailSourceSize(self.thumb) }.unwrap_or_default();
+        let to = fit(crate::geometry::inset_rect(slot, 3, 3, 3, 3), source);
+        crate::animation::run(
+            from,
+            to,
+            duration,
+            &mut |frame| self.show(frame),
+            &mut || {
+                // SAFETY: DwmFlush takes no arguments.
+                if unsafe { DwmFlush() }.is_err() {
+                    std::thread::sleep(std::time::Duration::from_millis(8));
+                }
+            },
+        );
+    }
+}
+
+impl Drop for Glide {
+    fn drop(&mut self) {
+        // SAFETY: Both handles were created by this glide on this thread.
+        unsafe {
+            if self.thumb != 0 {
+                let _ = DwmUnregisterThumbnail(self.thumb);
+            }
+            let _ = DestroyWindow(self.window);
+        }
+    }
+}
+
 /// Bring a window to the foreground and wait until Windows confirms it.
 pub fn activate_handle(handle: u64) -> Result<()> {
     super::activate_window(hwnd(handle)?)

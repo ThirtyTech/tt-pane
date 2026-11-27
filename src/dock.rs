@@ -37,6 +37,9 @@ pub(crate) trait Native {
     fn identity(&self, handle: u64) -> Option<(String, Rect)>;
     fn mark(&self, handle: u64, docked: bool) -> Result<()>;
     fn park(&self, handle: u64) -> Result<()>;
+    /// Send a window in the arena back to the dock, gliding into `slot` when
+    /// animation is on.
+    fn stow(&self, handle: u64, slot: Option<Rect>) -> Result<()>;
     /// Whether `bounds` is where `park` puts windows.
     fn parked(&self, bounds: Rect) -> bool;
     /// Move a window to `target`, gliding from `from` when animation is on.
@@ -190,7 +193,7 @@ impl Dock {
             return native.focus(handle);
         }
         if let Some(previous) = self.active.take() {
-            native.park(previous)?;
+            native.stow(previous, native.slot(previous))?;
         }
         let arena = native.arena()?;
         let target = Action::Center.target(arena, arena);
@@ -202,7 +205,7 @@ impl Dock {
 
     fn return_active(&mut self, native: &dyn Native) -> Result<()> {
         match self.active.take() {
-            Some(handle) => native.park(handle),
+            Some(handle) => native.stow(handle, native.slot(handle)),
             None => Ok(()),
         }
     }
@@ -330,6 +333,9 @@ mod native {
         }
         fn park(&self, handle: u64) -> Result<()> {
             platform::park_window(handle).map(|_| ())
+        }
+        fn stow(&self, handle: u64, slot: Option<Rect>) -> Result<()> {
+            platform::stow_window(handle, slot).map(|_| ())
         }
         fn parked(&self, bounds: Rect) -> bool {
             // Position only: an application may refuse the 1080p size, and
@@ -571,6 +577,12 @@ mod tests {
         fn parked(&self, bounds: Rect) -> bool {
             bounds == PARKED
         }
+        fn stow(&self, handle: u64, slot: Option<Rect>) -> Result<()> {
+            self.log
+                .borrow_mut()
+                .push(format!("stow {handle} to {}", slot.is_some()));
+            self.park(handle)
+        }
         fn park(&self, handle: u64) -> Result<()> {
             self.parked.borrow_mut().push(handle);
             self.windows.borrow_mut().get_mut(&handle).unwrap().1 = PARKED;
@@ -644,6 +656,8 @@ mod tests {
         dock.step(&fake, &[2]).unwrap();
         assert_eq!(dock.active(), Some(2));
         assert_eq!(fake.bounds(1), PARKED);
+        // The previous window glides back into its slot.
+        assert!(fake.log.borrow().contains(&"stow 1 to true".to_owned()));
         assert_eq!(fake.bounds(2), Action::Center.target(ARENA, ARENA));
     }
 
@@ -662,6 +676,7 @@ mod tests {
         dock.step(&fake, &[]).unwrap();
         assert_eq!(dock.active(), None);
         assert_eq!(fake.bounds(1), PARKED);
+        assert_eq!(fake.log.borrow().last().unwrap(), "stow 1 to true");
 
         // Choosing a docked window some other way (Alt+Tab) activates it too.
         fake.set_foreground(Some(2));
