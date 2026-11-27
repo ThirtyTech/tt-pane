@@ -1163,18 +1163,9 @@ unsafe fn paint_panel(dc: HDC, panel: &Panel) {
         };
         FillRect(dc, &whole, background);
         // Hidden under the thumbnails, but keeps those pixels clickable.
-        for &(handle, preview) in &panel.previews {
+        // The active preview's outline is drawn over it by the overlay.
+        for &(_, preview) in &panel.previews {
             FillRect(dc, &local(preview), slot);
-            // The outline hugs the preview, in the padding around it.
-            let mut frame = local(preview);
-            let pad = PAD as i32;
-            let _ = InflateRect(&mut frame, pad, pad);
-            if panel.active == Some(handle) {
-                for _ in 0..3 {
-                    FrameRect(dc, &frame, accent);
-                    let _ = InflateRect(&mut frame, -1, -1);
-                }
-            }
         }
         if let Some(rect) = panel.drop {
             let mut frame = local(rect);
@@ -1197,8 +1188,18 @@ unsafe fn paint_panel(dc: HDC, panel: &Panel) {
     }
 }
 
-/// Places the pick-mode overlay over the panel while its previews are
-/// numbered, and hides it otherwise.
+/// The preview of the window that's out in the arena, if it has one.
+fn active_preview(panel: &Panel) -> Option<Rect> {
+    let active = panel.active?;
+    panel
+        .previews
+        .iter()
+        .find(|(handle, _)| *handle == active)
+        .map(|&(_, rect)| rect)
+}
+
+/// Places the overlay over the panel while it has something to draw (pick-mode
+/// numbers or the active preview's outline), and hides it otherwise.
 ///
 /// # Safety
 /// Called on the panel's thread, which owns the overlay.
@@ -1208,7 +1209,8 @@ unsafe fn place_overlay(panel: &Panel) {
     }
     // SAFETY: The overlay belongs to this thread.
     unsafe {
-        if panel.numbered && !panel.slots.is_empty() {
+        let numbers = panel.numbered && !panel.slots.is_empty();
+        if numbers || active_preview(panel).is_some() {
             let _ = SetWindowPos(
                 panel.overlay,
                 Some(HWND_TOPMOST),
@@ -1251,8 +1253,9 @@ unsafe extern "system" fn overlay_procedure(
     }
 }
 
-/// Paints the overlay: white numbers outlined in black, centred on the first
-/// nine previews, over a transparent background.
+/// Paints the overlay over a transparent background: the active preview's
+/// outline, inside its edges so the preview keeps its exact size, and in pick
+/// mode white numbers outlined in black, centred on the first nine previews.
 ///
 /// # Safety
 /// `dc` is the overlay's paint DC on the panel's thread.
@@ -1269,6 +1272,22 @@ unsafe fn paint_numbers(dc: HDC, panel: &Panel) {
         };
         FillRect(dc, &whole, clear);
         let _ = DeleteObject(clear.into());
+        if let Some(rect) = active_preview(panel) {
+            let accent = CreateSolidBrush(ACCENT);
+            let mut frame = to_rect(Rect {
+                x: rect.x - panel.rect.x,
+                y: rect.y - panel.rect.y,
+                ..rect
+            });
+            for _ in 0..3 {
+                FrameRect(dc, &frame, accent);
+                let _ = InflateRect(&mut frame, -1, -1);
+            }
+            let _ = DeleteObject(accent.into());
+        }
+        if !panel.numbered {
+            return;
+        }
         let Some(&(_, first)) = panel.slots.first() else {
             return;
         };
