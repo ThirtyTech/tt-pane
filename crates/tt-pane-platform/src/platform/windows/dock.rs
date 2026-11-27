@@ -405,7 +405,7 @@ pub fn stow_window(
     };
     let result = crate::with_snap_animation(None, || place_window(handle, target));
     if let Some((glide, slot, duration)) = glide {
-        let to = preview(slot, glide.source(), edge);
+        let to = preview(slot);
         glide.run(bounds, to, duration);
     }
     result
@@ -418,24 +418,23 @@ pub fn stow_window(
 /// flickers, and stretches its preview in the panel as it goes.
 pub fn lift_window(handle: u64, slot: Rect, target: Rect) -> Result<Rect> {
     let glide = crate::snap_animation().and_then(|duration| {
-        let (_, parked) = docked_window(handle)?;
-        let from = preview(
-            slot,
-            SIZE {
-                cx: parked.width,
-                cy: parked.height,
-            },
-            current_edge(),
-        );
+        docked_window(handle)?;
+        let from = preview(slot);
         Glide::new(handle, from)
             .ok()
             .map(|glide| (glide, from, duration))
     });
     let Some((glide, from, duration)) = glide else {
-        return place_window(handle, target);
+        let result = place_window(handle, target);
+        refresh_now();
+        return result;
     };
     glide.run(from, target, duration);
     let result = crate::with_snap_animation(None, || place_window(handle, target));
+    // The window's preview is cropped for its docked size: recrop it for the
+    // new size before the next frame composites, or it shows the wrong part of
+    // the window, at the wrong size, until the panel catches up.
+    refresh_now();
     // Let the real window composite at its new size before the stand-in goes.
     // SAFETY: DwmFlush takes no arguments.
     unsafe {
@@ -443,21 +442,25 @@ pub fn lift_window(handle: u64, slot: Rect, target: Rect) -> Result<Rect> {
         let _ = DwmFlush();
     }
     drop(glide);
-    refresh();
     result
 }
 
-/// Lay the panel out again, refitting previews to their windows' sizes.
-fn refresh() {
+/// Lay the panel out again and wait for it, briefly, so previews are recropped
+/// in the same frame as a docked window's resize.
+fn refresh_now() {
     let window = lock().window;
     if window != 0 {
-        // SAFETY: Posting carries no pointers; a stale HWND is rejected by Win32.
+        // SAFETY: The message carries no pointers; a stale HWND is rejected by
+        // Win32, and the timeout bounds the wait if the panel is busy.
         unsafe {
-            let _ = PostMessageW(
-                Some(HWND(window as *mut _)),
+            let _ = SendMessageTimeoutW(
+                HWND(window as *mut _),
                 WM_DOCK_UPDATE,
                 WPARAM(0),
                 LPARAM(0),
+                SMTO_ABORTIFHUNG,
+                100,
+                None,
             );
         }
     }
@@ -487,6 +490,8 @@ unsafe extern "system" fn glide_procedure(
 struct Glide {
     window: HWND,
     thumb: isize,
+    /// The docked window shown.
+    source: HWND,
 }
 
 impl Glide {
@@ -517,9 +522,14 @@ impl Glide {
                 Some(instance.into()),
                 None,
             )?;
-            let mut glide = Self { window, thumb: 0 };
+            let source = hwnd(handle)?;
+            let mut glide = Self {
+                window,
+                thumb: 0,
+                source,
+            };
             SetPropW(window, PANEL_PROP, Some(HANDLE(std::ptr::dangling_mut())))?;
-            glide.thumb = DwmRegisterThumbnail(window, hwnd(handle)?)?;
+            glide.thumb = DwmRegisterThumbnail(window, source)?;
             glide.show(bounds)?;
             let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
             // Composite the stand-in before the real window leaves.
@@ -528,15 +538,22 @@ impl Glide {
         }
     }
 
+    /// Show the glide at `rect`. The window is cropped to each frame's shape,
+    /// as its preview is, so the glide starts exactly where the preview was
+    /// and ends showing the whole window, with no jump at either end.
     fn show(&self, rect: Rect) -> Result<()> {
         let properties = DWM_THUMBNAIL_PROPERTIES {
-            dwFlags: DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY,
+            dwFlags: DWM_TNP_RECTDESTINATION
+                | DWM_TNP_RECTSOURCE
+                | DWM_TNP_VISIBLE
+                | DWM_TNP_OPACITY,
             rcDestination: RECT {
                 left: 0,
                 top: 0,
                 right: rect.width,
                 bottom: rect.height,
             },
+            rcSource: thumbnail_source(self.source, rect.width, rect.height),
             opacity: 255,
             fVisible: true.into(),
             ..Default::default()
@@ -556,12 +573,6 @@ impl Glide {
             )?;
         }
         Ok(())
-    }
-
-    /// The size of the window this glide shows.
-    fn source(&self) -> SIZE {
-        // SAFETY: Reads the size of this glide's own thumbnail.
-        unsafe { DwmQueryThumbnailSourceSize(self.thumb) }.unwrap_or_default()
     }
 
     /// Glide from `from` to `to` on the snap animation curve.
@@ -843,48 +854,56 @@ fn reserve(window: HWND, panel: &mut Panel, edge: DockEdge, rect: Option<Rect>) 
     }
 }
 
-/// Fit the source window's aspect ratio inside `slot`, centered.
-fn fit(slot: Rect, source: SIZE) -> Rect {
-    if source.cx <= 0 || source.cy <= 0 {
-        return slot;
-    }
-    let (sw, sh) = (i64::from(source.cx), i64::from(source.cy));
-    let (w, h) = (i64::from(slot.width), i64::from(slot.height));
-    let (width, height) = if w * sh <= h * sw {
-        (w, (w * sh / sw).max(1))
-    } else {
-        ((h * sw / sh).max(1), h)
+/// Where a window's preview is drawn in `slot`: the whole slot inside its
+/// padding. The thumbnail is cropped to this shape (see `thumbnail_source`), so
+/// a preview keeps the same size whatever shape its window takes, for example
+/// when it comes back from the arena at a different size than it was docked.
+fn preview(slot: Rect) -> Rect {
+    crate::geometry::inset_rect(slot, PAD, PAD, PAD, PAD)
+}
+
+/// The part of `source` a thumbnail drawn at `width` × `height` shows, relative
+/// to the source window's own rectangle: its visible frame, without the
+/// invisible resize borders, cropped to that shape around the middle.
+fn thumbnail_source(source: HWND, width: i32, height: i32) -> RECT {
+    let mut bounds = RECT::default();
+    let mut visible = RECT::default();
+    // SAFETY: Both out-params are live locals of the right size; Win32 rejects
+    // a stale handle.
+    let (bounds_ok, visible_ok) = unsafe {
+        (
+            GetWindowRect(source, &mut bounds).is_ok(),
+            DwmGetWindowAttribute(
+                source,
+                DWMWA_EXTENDED_FRAME_BOUNDS,
+                (&mut visible as *mut RECT).cast(),
+                std::mem::size_of::<RECT>() as u32,
+            )
+            .is_ok(),
+        )
     };
-    Rect {
-        x: slot.x + ((w - width) / 2) as i32,
-        y: slot.y + ((h - height) / 2) as i32,
-        width: width as i32,
-        height: height as i32,
-    }
-}
-
-/// Where a window's preview is drawn in `slot`: its own aspect ratio inside the
-/// slot's padding, pushed against the screen edge. The panel is transparent, so
-/// any space the shape leaves goes on the inner side, where the snaps beside the
-/// panel close it up, instead of showing as a gap above and below.
-fn preview(slot: Rect, source: SIZE, edge: DockEdge) -> Rect {
-    let inner = crate::geometry::inset_rect(slot, PAD, PAD, PAD, PAD);
-    let mut out = fit(inner, source);
-    match edge {
-        DockEdge::Top => out.y = inner.y,
-        DockEdge::Bottom => out.y = inner.y + inner.height - out.height,
-        DockEdge::Left => out.x = inner.x,
-        DockEdge::Right => out.x = inner.x + inner.width - out.width,
-    }
-    out
-}
-
-/// The edge the panel is on now, for previews drawn outside an update.
-fn current_edge() -> DockEdge {
-    lock()
-        .request
-        .as_ref()
-        .map_or(DockEdge::Bottom, |request| request.edge)
+    let whole = Rect {
+        x: 0,
+        y: 0,
+        width: bounds.right - bounds.left,
+        height: bounds.bottom - bounds.top,
+    };
+    let shown = if bounds_ok && visible_ok {
+        let inside = Rect {
+            x: visible.left - bounds.left,
+            y: visible.top - bounds.top,
+            width: visible.right - visible.left,
+            height: visible.bottom - visible.top,
+        };
+        if inside.width > 0 && inside.height > 0 {
+            inside
+        } else {
+            whole
+        }
+    } else {
+        whole
+    };
+    to_rect(dock::crop_to_aspect(shown, width, height))
 }
 
 fn update(window: HWND) {
@@ -991,13 +1010,13 @@ fn update(window: HWND) {
                         _ => continue,
                     },
                 };
-                let destination = preview(
-                    slot,
-                    DwmQueryThumbnailSourceSize(thumb).unwrap_or_default(),
-                    request.edge,
-                );
+                let destination = preview(slot);
+                let Ok(source) = hwnd(handle) else {
+                    continue;
+                };
                 let properties = DWM_THUMBNAIL_PROPERTIES {
                     dwFlags: DWM_TNP_RECTDESTINATION
+                        | DWM_TNP_RECTSOURCE
                         | DWM_TNP_VISIBLE
                         | DWM_TNP_OPACITY
                         | DWM_TNP_SOURCECLIENTAREAONLY,
@@ -1006,10 +1025,10 @@ fn update(window: HWND) {
                         y: destination.y - panel.rect.y,
                         ..destination
                     }),
+                    rcSource: thumbnail_source(source, destination.width, destination.height),
                     opacity: 255,
                     fVisible: true.into(),
                     fSourceClientAreaOnly: false.into(),
-                    ..Default::default()
                 };
                 let _ = DwmUpdateThumbnailProperties(thumb, &properties);
                 panel.previews.push((handle, destination));
@@ -1315,17 +1334,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn previews_keep_the_source_aspect_ratio() {
+    fn previews_fill_their_slot_inside_the_padding() {
         let slot = Rect {
             x: 10,
             y: 20,
             width: 320,
             height: 180,
         };
-        assert_eq!(fit(slot, SIZE { cx: 1920, cy: 1080 }), slot);
-        let tall = fit(slot, SIZE { cx: 1000, cy: 1000 });
-        assert_eq!((tall.width, tall.height), (180, 180));
-        assert_eq!(tall.x, 10 + 70);
-        assert_eq!(fit(slot, SIZE::default()), slot);
+        let pad = PAD as i32;
+        assert_eq!(
+            preview(slot),
+            Rect {
+                x: 10 + pad,
+                y: 20 + pad,
+                width: 320 - 2 * pad,
+                height: 180 - 2 * pad,
+            }
+        );
     }
 }

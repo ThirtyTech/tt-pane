@@ -389,6 +389,33 @@ pub fn snap_gap(inner: u32) -> u32 {
     inner.saturating_mul(2).saturating_sub(SLOT_PADDING)
 }
 
+/// The middle of `source` with the aspect ratio of a `width` × `height`
+/// destination, so a preview fills its slot without stretching, whatever shape
+/// the window has. A wide window loses a little of its sides, a tall one a
+/// little of its top and bottom.
+pub fn crop_to_aspect(source: Rect, width: i32, height: i32) -> Rect {
+    if source.width <= 0 || source.height <= 0 || width <= 0 || height <= 0 {
+        return source;
+    }
+    let (sw, sh) = (i64::from(source.width), i64::from(source.height));
+    let (w, h) = (i64::from(width), i64::from(height));
+    if sw * h > w * sh {
+        let cropped = (sh * w / h).max(1);
+        Rect {
+            x: source.x + ((sw - cropped) / 2) as i32,
+            width: cropped as i32,
+            ..source
+        }
+    } else {
+        let cropped = (sw * h / w).max(1);
+        Rect {
+            y: source.y + ((sh - cropped) / 2) as i32,
+            height: cropped as i32,
+            ..source
+        }
+    }
+}
+
 /// `area` with its inner side (the one facing the middle of the screen) pulled
 /// back to `pad` past the furthest of the `previews`. Windows wider or taller
 /// than their slot leave the rest of the slot empty, and snaps beside the panel
@@ -837,6 +864,34 @@ mod tests {
         assert_eq!(avoid(full, left, DockEdge::Left, 5).x, left.width + 5);
         let top = panel_rect(MONITOR, DockEdge::Top, 10);
         assert_eq!(avoid(full, top, DockEdge::Top, 0).y, top.height);
+    }
+
+    #[test]
+    fn previews_crop_the_middle_of_the_window_to_the_slot_shape() {
+        let wide = Rect {
+            x: 7,
+            y: 0,
+            width: 1920,
+            height: 960,
+        };
+        let cropped = crop_to_aspect(wide, 16, 9);
+        assert_eq!((cropped.width, cropped.height), (1706, 960));
+        assert_eq!(cropped.x, 7 + (1920 - 1706) / 2);
+        let tall = Rect {
+            x: 0,
+            y: 0,
+            width: 900,
+            height: 1200,
+        };
+        let cropped = crop_to_aspect(tall, 16, 9);
+        assert_eq!((cropped.width, cropped.height), (900, 506));
+        assert_eq!(cropped.y, (1200 - 506) / 2);
+        let exact = Rect {
+            width: 1920,
+            height: 1080,
+            ..tall
+        };
+        assert_eq!(crop_to_aspect(exact, 384, 216), exact);
     }
 
     #[test]
