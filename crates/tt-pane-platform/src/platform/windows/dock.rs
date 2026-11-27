@@ -339,9 +339,64 @@ pub fn stow_window(handle: u64, slot: Option<Rect>) -> Result<Rect> {
     };
     let result = crate::with_snap_animation(None, || place_window(handle, target));
     if let Some((glide, slot, duration)) = glide {
-        glide.run(bounds, slot, duration);
+        let to = fit(
+            crate::geometry::inset_rect(slot, 3, 3, 3, 3),
+            glide.source(),
+        );
+        glide.run(bounds, to, duration);
     }
     result
+}
+
+/// Bring a docked window from its preview `slot` to `target`. With animation
+/// on, a live thumbnail of the parked window grows out of the slot and the real
+/// window takes its place once, at full size, at the end. Growing the real
+/// window from the slot instead makes it relayout on every frame, which
+/// flickers, and stretches its preview in the panel as it goes.
+pub fn lift_window(handle: u64, slot: Rect, target: Rect) -> Result<Rect> {
+    let glide = crate::snap_animation().and_then(|duration| {
+        let (_, parked) = docked_window(handle)?;
+        let from = fit(
+            crate::geometry::inset_rect(slot, 3, 3, 3, 3),
+            SIZE {
+                cx: parked.width,
+                cy: parked.height,
+            },
+        );
+        Glide::new(handle, from)
+            .ok()
+            .map(|glide| (glide, from, duration))
+    });
+    let Some((glide, from, duration)) = glide else {
+        return place_window(handle, target);
+    };
+    glide.run(from, target, duration);
+    let result = crate::with_snap_animation(None, || place_window(handle, target));
+    // Let the real window composite at its new size before the stand-in goes.
+    // SAFETY: DwmFlush takes no arguments.
+    unsafe {
+        let _ = DwmFlush();
+        let _ = DwmFlush();
+    }
+    drop(glide);
+    refresh();
+    result
+}
+
+/// Lay the panel out again, refitting previews to their windows' sizes.
+fn refresh() {
+    let window = lock().window;
+    if window != 0 {
+        // SAFETY: Posting carries no pointers; a stale HWND is rejected by Win32.
+        unsafe {
+            let _ = PostMessageW(
+                Some(HWND(window as *mut _)),
+                WM_DOCK_UPDATE,
+                WPARAM(0),
+                LPARAM(0),
+            );
+        }
+    }
 }
 
 const GLIDE_CLASS: PCWSTR = w!("tt-pane.dock-glide");
@@ -439,12 +494,15 @@ impl Glide {
         Ok(())
     }
 
-    /// Glide to where the preview sits in `slot`, then disappear.
-    fn run(self, from: Rect, slot: Rect, duration: std::time::Duration) {
-        let _dpi = DpiContext::enter();
+    /// The size of the window this glide shows.
+    fn source(&self) -> SIZE {
         // SAFETY: Reads the size of this glide's own thumbnail.
-        let source = unsafe { DwmQueryThumbnailSourceSize(self.thumb) }.unwrap_or_default();
-        let to = fit(crate::geometry::inset_rect(slot, 3, 3, 3, 3), source);
+        unsafe { DwmQueryThumbnailSourceSize(self.thumb) }.unwrap_or_default()
+    }
+
+    /// Glide from `from` to `to` on the snap animation curve.
+    fn run(&self, from: Rect, to: Rect, duration: std::time::Duration) {
+        let _dpi = DpiContext::enter();
         crate::animation::run(
             from,
             to,

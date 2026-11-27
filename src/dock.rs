@@ -510,10 +510,11 @@ mod native {
             target.x.abs_diff(bounds.x) <= 2 && target.y.abs_diff(bounds.y) <= 2
         }
         fn place(&self, handle: u64, target: Rect, from: Option<Rect>) -> Result<()> {
-            if let (Some(from), Some(_)) = (from, platform::snap_animation()) {
-                platform::with_snap_animation(None, || platform::place_window(handle, from))?;
+            match from {
+                Some(slot) => platform::lift_window(handle, slot, target),
+                None => platform::place_window(handle, target),
             }
-            platform::place_window(handle, target).map(|_| ())
+            .map(|_| ())
         }
         fn focus(&self, handle: u64) -> Result<()> {
             platform::activate_handle(handle)
